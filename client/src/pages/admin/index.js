@@ -1,0 +1,9 @@
+export { default as AdminDashboard } from './AdminDashboard';
+export { default as ManageCompanies } from './ManageCompanies';
+export { default as ManageDrives } from './ManageDrives';
+export { default as ManageApplications } from './ManageApplications';
+export { default as ManageStudents } from './ManageStudents';
+export { default as ManagePlacements } from './ManagePlacements';
+export { default as ManageDriveRequests } from './ManageTpoDriveRequests';
+export { default as Analytics } from './Analytics';
+export { default as ManageEmailLogs } from './ManageEmailLogs';

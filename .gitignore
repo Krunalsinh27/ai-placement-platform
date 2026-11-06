@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Environment files (keep the examples)
+.env
+.env.*
+!.env.example
+
+# Uploaded files (resumes contain personal data)
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Build output
+client/dist/
+dist/
+build/
+.vite/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test and coverage output
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Python (for the AI service later)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Temporary and backup files
+*.tmp
+*.bak
+*.zip

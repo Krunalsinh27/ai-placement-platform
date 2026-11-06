@@ -1,0 +1,51 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "Backend API for College Placement Record Management System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "seed": "node utils/seedData.js",
+    "seed:admin": "node utils/seedAdmin.js",
+    "test:auth": "node tests/testAuth.js",
+    "test:colleges": "node tests/testColleges.js",
+    "test:notifications": "node tests/testNotifications.js",
+    "test:pipeline": "node tests/testPipeline.js",
+    "test:interviews": "node tests/testInterviews.js",
+    "test:emails": "node tests/testEmails.js",
+    "test:delivery": "node tests/testDeliveryModes.js",
+    "test:aptitude": "node tests/testAptitude.js",
+    "test:analyst": "node tests/testAnalyst.js",
+    "test:superadmin": "node tests/testSuperadmin.js",
+    "test:aspirant": "node tests/testAspirant.js",
+    "mail:test": "node utils/mailTest.js",
+    "cleanup:test": "node utils/cleanupTestLeftovers.js"
+  },
+  "keywords": [
+    "mern",
+    "placement-management",
+    "express",
+    "mongodb"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.1",
+    "express-rate-limit": "^8.7.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.8.0",
+    "morgan": "^1.10.0",
+    "multer": "^2.5.0",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^10.3.1",
+    "pdfkit": "^0.20.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
