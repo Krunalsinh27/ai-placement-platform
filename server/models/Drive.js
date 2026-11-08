@@ -106,6 +106,13 @@ const driveSchema = new mongoose.Schema(
   }
 );
 
+// Indexes for drive querying by college/company and student eligibility
+driveSchema.index({ college: 1, status: 1 });
+driveSchema.index({ company: 1, status: 1 });
+driveSchema.index({ college: 1, applicationsClosed: 1, status: 1 });
+driveSchema.index({ college: 1, createdAt: -1 });
+driveSchema.index({ company: 1, createdAt: -1 });
+
 const Drive = mongoose.model('Drive', driveSchema);
 
 module.exports = Drive;

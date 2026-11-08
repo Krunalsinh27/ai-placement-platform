@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
+import Pagination from '../../components/common/Pagination';
 import {
   Users,
   Building2,
@@ -24,6 +25,8 @@ const SuperadminPendingAccounts = () => {
   const [roleFilter, setRoleFilter] = useState('all'); // 'all' | 'tpo' | 'student' | 'recruiter'
   const [search, setSearch] = useState('');
   const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   const fetchPendingAccounts = async () => {
     setLoading(true);
@@ -93,6 +96,10 @@ const SuperadminPendingAccounts = () => {
       a.company?.industry?.toLowerCase().includes(q);
     return nameMatch || emailMatch || collegeMatch || enrollmentMatch || branchMatch || companyMatch;
   });
+
+  const totalAccounts = filteredAccounts.length;
+  const totalPages = Math.ceil(totalAccounts / limit) || 1;
+  const paginatedAccounts = filteredAccounts.slice((page - 1) * limit, page * limit);
 
   const tpoCount = accounts.filter((a) => a.role === 'tpo').length;
   const studentCount = accounts.filter((a) => a.role === 'student').length;
@@ -216,7 +223,7 @@ const SuperadminPendingAccounts = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredAccounts.map((account) => {
+                {paginatedAccounts.map((account) => {
                   const isTpo = account.role === 'tpo';
                   const isStudent = account.role === 'student';
                   const isRecruiter = account.role === 'recruiter';
@@ -365,6 +372,13 @@ const SuperadminPendingAccounts = () => {
                 })}
               </tbody>
             </table>
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              totalItems={totalAccounts}
+              itemsPerPage={limit}
+              onPageChange={(newPage) => setPage(newPage)}
+            />
           </div>
         )}
       </div>

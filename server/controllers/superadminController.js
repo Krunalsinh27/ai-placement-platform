@@ -121,13 +121,25 @@ const getAnalysts = async (req, res, next) => {
       query.isApproved = true;
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await User.countDocuments(query);
     const analysts = await User.find(query)
-      .select('_id name email organisation designation isApproved isEmailVerified createdAt')
+      .select('_id name email organisation organisationType purpose designation isApproved isEmailVerified createdAt')
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
       .lean();
 
     res.status(200).json({
       success: true,
+      data: analysts,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: analysts.length,
       analysts,
     });
@@ -192,7 +204,16 @@ const getColleges = async (req, res, next) => {
       query.status = status;
     }
 
-    const colleges = await College.find(query).sort({ createdAt: -1 }).lean();
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await College.countDocuments(query);
+    const colleges = await College.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
 
     // Attach TPO information if present
     const collegesWithTpo = await Promise.all(
@@ -211,6 +232,11 @@ const getColleges = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      data: collegesWithTpo,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: collegesWithTpo.length,
       colleges: collegesWithTpo,
     });
@@ -278,7 +304,16 @@ const getCompanies = async (req, res, next) => {
     if (verified === 'true') query.verified = true;
     if (verified === 'false') query.verified = false;
 
-    const companies = await Company.find(query).sort({ createdAt: -1 }).lean();
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await Company.countDocuments(query);
+    const companies = await Company.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
 
     const companiesWithStats = await Promise.all(
       companies.map(async (company) => {
@@ -292,6 +327,11 @@ const getCompanies = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      data: companiesWithStats,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: companiesWithStats.length,
       companies: companiesWithStats,
     });
@@ -425,10 +465,20 @@ const getPendingAccounts = async (req, res, next) => {
       };
     });
 
+    const total = accounts.length;
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const paginatedAccounts = accounts.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
     res.status(200).json({
       success: true,
-      count: accounts.length,
-      accounts,
+      data: paginatedAccounts,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      count: paginatedAccounts.length,
+      accounts: paginatedAccounts,
     });
   } catch (error) {
     next(error);

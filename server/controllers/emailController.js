@@ -83,9 +83,11 @@ const getCollegeEmailLogs = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      data: logs,
       count: logs.length,
       total,
       page,
+      limit,
       totalPages: Math.ceil(total / limit) || 1,
       stats,
       logs,

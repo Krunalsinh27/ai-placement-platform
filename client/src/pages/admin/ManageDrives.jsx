@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import Table from '../../components/common/Table';
 import Modal from '../../components/common/Modal';
+import Pagination from '../../components/common/Pagination';
 import {
   Briefcase,
   Plus,
@@ -36,6 +37,8 @@ const ManageDrives = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   // Modals
   const [modalOpen, setModalOpen] = useState(false);
@@ -203,6 +206,10 @@ const ManageDrives = () => {
     return matchesSearch && matchesStatus;
   });
 
+  const totalDrives = filteredDrives.length;
+  const totalPages = Math.ceil(totalDrives / limit) || 1;
+  const paginatedDrives = filteredDrives.slice((page - 1) * limit, page * limit);
+
   const columns = [
     {
       header: 'Company & Role',
@@ -359,12 +366,21 @@ const ManageDrives = () => {
       </div>
 
       {/* Drives Table */}
-      <Table
-        columns={columns}
-        data={filteredDrives}
-        loading={loading}
-        emptyMessage="No drives found. Click 'Create Drive' to launch a new recruitment drive."
-      />
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+        <Table
+          columns={columns}
+          data={paginatedDrives}
+          loading={loading}
+          emptyMessage="No drives found. Click 'Create Drive' to launch a new recruitment drive."
+        />
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={totalDrives}
+          itemsPerPage={limit}
+          onPageChange={(newPage) => setPage(newPage)}
+        />
+      </div>
 
       {/* Create / Edit Drive Modal */}
       <Modal

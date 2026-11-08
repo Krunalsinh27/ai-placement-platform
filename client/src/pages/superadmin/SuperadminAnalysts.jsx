@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
+import Pagination from '../../components/common/Pagination';
 import {
   Users,
   CheckCircle2,
@@ -17,6 +18,8 @@ const SuperadminAnalysts = () => {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'pending' | 'approved'
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   const fetchAnalysts = async () => {
     setLoading(true);
@@ -57,6 +60,10 @@ const SuperadminAnalysts = () => {
     a.email.toLowerCase().includes(search.toLowerCase()) ||
     (a.organisation && a.organisation.toLowerCase().includes(search.toLowerCase()))
   );
+
+  const totalAnalysts = filteredAnalysts.length;
+  const totalPages = Math.ceil(totalAnalysts / limit) || 1;
+  const paginatedAnalysts = filteredAnalysts.slice((page - 1) * limit, page * limit);
 
   return (
     <div className="space-y-6">
@@ -133,7 +140,7 @@ const SuperadminAnalysts = () => {
                   </td>
                 </tr>
               ) : (
-                filteredAnalysts.map((a) => (
+                paginatedAnalysts.map((a) => (
                   <tr key={a._id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4 font-bold text-slate-900">{a.name}</td>
                     <td className="py-3 px-4 text-slate-600 font-mono text-[11px]">{a.email}</td>
@@ -205,6 +212,13 @@ const SuperadminAnalysts = () => {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={totalAnalysts}
+          itemsPerPage={limit}
+          onPageChange={(newPage) => setPage(newPage)}
+        />
       </div>
     </div>
   );

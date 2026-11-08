@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../services/api';
 import Modal from '../../components/common/Modal';
+import Pagination from '../../components/common/Pagination';
 import {
   Briefcase,
   Plus,
@@ -31,6 +32,8 @@ const ManageRequirements = () => {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -270,6 +273,10 @@ const ManageRequirements = () => {
     return matchesStatus && matchesSearch;
   });
 
+  const totalReqs = filteredRequirements.length;
+  const totalPages = Math.ceil(totalReqs / limit) || 1;
+  const paginatedRequirements = filteredRequirements.slice((page - 1) * limit, page * limit);
+
   const publishedCount = requirements.filter((r) => r.status === 'published').length;
   const draftCount = requirements.filter((r) => r.status === 'draft').length;
   const closedCount = requirements.filter((r) => r.status === 'closed').length;
@@ -420,7 +427,7 @@ const ManageRequirements = () => {
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredRequirements.map((req) => (
+          {paginatedRequirements.map((req) => (
             <div
               key={req._id}
               className="bg-white rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-md transition-all p-5 sm:p-6 space-y-4"
@@ -648,6 +655,14 @@ const ManageRequirements = () => {
               )}
             </div>
           ))}
+
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            totalItems={totalReqs}
+            itemsPerPage={limit}
+            onPageChange={(newPage) => setPage(newPage)}
+          />
         </div>
       )}
 

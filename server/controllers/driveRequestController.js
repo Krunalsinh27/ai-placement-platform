@@ -282,6 +282,11 @@ const getDriveRequests = async (req, res, next) => {
       filter.jobRequirement = jobRequirement;
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await DriveRequest.countDocuments(filter);
     const requests = await DriveRequest.find(filter)
       .populate('jobRequirement')
       .populate('company', 'name logoUrl industry website hrContact')
@@ -289,7 +294,9 @@ const getDriveRequests = async (req, res, next) => {
       .populate('drive', 'role driveDate status')
       .populate('messages.sender', 'name role email')
       .populate('timeline.updatedBy', 'name role')
-      .sort({ updatedAt: -1, createdAt: -1 });
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
 
     const formattedRequests = requests.map((r) => {
       const doc = r.toObject();
@@ -299,6 +306,11 @@ const getDriveRequests = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      data: formattedRequests,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: formattedRequests.length,
       requests: formattedRequests,
     });

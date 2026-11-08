@@ -78,6 +78,8 @@ const interviewSlotSchema = new mongoose.Schema(
 interviewSlotSchema.index({ panel: 1, startTime: 1, endTime: 1 });
 interviewSlotSchema.index({ student: 1, startTime: 1, endTime: 1 });
 interviewSlotSchema.index({ round: 1, student: 1 });
+interviewSlotSchema.index({ panel: 1, status: 1, startTime: 1 });
+interviewSlotSchema.index({ round: 1, status: 1 });
 
 const InterviewSlot = mongoose.model('InterviewSlot', interviewSlotSchema);
 

@@ -33,7 +33,7 @@ const RecruiterDashboard = () => {
     const fetchDashboardData = async () => {
       try {
         const [compRes, reqRes] = await Promise.allSettled([
-          api.get('/company/me'),
+          api.get('/companies/me'),
           api.get('/job-requirements'),
         ]);
 

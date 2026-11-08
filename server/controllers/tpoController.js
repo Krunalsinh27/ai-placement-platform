@@ -26,15 +26,26 @@ const getPendingTPOs = async (req, res, next) => {
       query.college = collegeId;
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await User.countDocuments(query);
     const pendingTpos = await User.find(query)
       .select('-password')
       .populate('college', 'name code city state')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
 
     res.status(200).json({
       success: true,
-      count: pendingTpos.length,
       data: pendingTpos,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      count: pendingTpos.length,
       pendingTpos,
     });
   } catch (error) {
@@ -212,15 +223,26 @@ const getPendingStudents = async (req, res, next) => {
     const unapprovedUsers = await User.find(userQuery).select('-password');
     const userIds = unapprovedUsers.map((u) => u._id);
 
+    const total = await Student.countDocuments({ user: { $in: userIds } });
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
     const pendingStudents = await Student.find({ user: { $in: userIds } })
       .populate('user', 'name email phone isApproved isEmailVerified createdAt')
       .populate('college', 'name code')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
 
     res.status(200).json({
       success: true,
-      count: pendingStudents.length,
       data: pendingStudents,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      count: pendingStudents.length,
       pendingStudents,
     });
   } catch (error) {

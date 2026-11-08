@@ -91,6 +91,7 @@ const testAttemptSchema = new mongoose.Schema(
 );
 
 testAttemptSchema.index({ round: 1, student: 1 });
+testAttemptSchema.index({ status: 1, deadlineAt: 1 });
 
 const TestAttempt = mongoose.model('TestAttempt', testAttemptSchema);
 

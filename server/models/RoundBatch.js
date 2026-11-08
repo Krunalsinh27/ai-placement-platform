@@ -60,6 +60,7 @@ const roundBatchSchema = new mongoose.Schema(
 
 // Indexes for clash detection & schedule queries
 roundBatchSchema.index({ drive: 1, startTime: 1 });
+roundBatchSchema.index({ round: 1, startTime: 1 });
 roundBatchSchema.index({ venueOrLink: 1, startTime: 1, endTime: 1 });
 
 const RoundBatch = mongoose.model('RoundBatch', roundBatchSchema);

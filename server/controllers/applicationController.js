@@ -168,15 +168,27 @@ const getMyApplications = async (req, res, next) => {
       });
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await Application.countDocuments({ student: student._id });
     const applications = await Application.find({ student: student._id })
       .populate({
         path: 'drive',
         populate: { path: 'company' },
       })
-      .sort({ appliedOn: -1 });
+      .sort({ appliedOn: -1 })
+      .skip(skip)
+      .limit(limitNum);
 
     res.status(200).json({
       success: true,
+      data: applications,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: applications.length,
       applications,
     });
@@ -209,6 +221,11 @@ const getDriveApplications = async (req, res, next) => {
       appQuery.student = { $in: collegeStudents.map((s) => s._id) };
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await Application.countDocuments(appQuery);
     const applications = await Application.find(appQuery)
       .populate({
         path: 'student',
@@ -217,11 +234,18 @@ const getDriveApplications = async (req, res, next) => {
           { path: 'college', select: 'name code' },
         ],
       })
-      .sort({ appliedOn: -1 });
+      .sort({ appliedOn: -1 })
+      .skip(skip)
+      .limit(limitNum);
 
     res.status(200).json({
       success: true,
       drive,
+      data: applications,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: applications.length,
       applications,
     });

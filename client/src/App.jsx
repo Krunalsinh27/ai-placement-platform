@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import ErrorBoundary from './components/common/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/layout/Layout';
 import RecruiterLayout from './components/layout/RecruiterLayout';
@@ -119,7 +120,8 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
-        <Routes>
+        <ErrorBoundary>
+          <Routes>
           {/* Public Routes */}
           <Route path="/" element={<RootRedirect />} />
           <Route path="/login" element={<Login />} />
@@ -259,8 +261,9 @@ function App() {
           {/* 404 Route */}
           <Route path="*" element={<NotFound />} />
         </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+      </ErrorBoundary>
+    </AuthProvider>
+  </BrowserRouter>
   );
 }
 
