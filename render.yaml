@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: placement-management-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: STORAGE_DRIVER
+        value: gridfs
+      - key: EMAIL_PROVIDER
+        value: brevo
+      - key: EMAIL_MODE
+        value: brevo
+      - key: CLIENT_URL
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: Placement Portal
+

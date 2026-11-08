@@ -136,6 +136,10 @@ const COMPANIES_DATA = [
 ];
 
 const seedData = async () => {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PRODUCTION_SEED !== 'true') {
+    console.error('REFUSING TO SEED DATABASE IN PRODUCTION: Set ALLOW_PRODUCTION_SEED=true to override.');
+    process.exit(1);
+  }
   try {
     const mongoUri =
       process.env.MONGO_URI || 'mongodb://localhost:27017/placement_management';

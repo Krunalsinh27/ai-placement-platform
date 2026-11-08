@@ -6,6 +6,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
+const mongoose = require('mongoose');
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 const { initCronJobs } = require('./utils/cronJobs');
@@ -15,6 +16,12 @@ const { publicApiLimiter } = require('./middleware/rateLimitMiddleware');
 
 // Load environment variables
 dotenv.config();
+
+// Fail fast in production if MONGO_URI is missing
+if (process.env.NODE_ENV === 'production' && !process.env.MONGO_URI) {
+  console.error('FATAL: MONGO_URI environment variable is required in production');
+  process.exit(1);
+}
 
 // Fail fast in production if JWT_SECRET is missing or insufficiently long
 if (
@@ -30,6 +37,9 @@ connectDB();
 
 const app = express();
 
+// Trust reverse proxy (Render, Heroku, etc.) for accurate client IP and secure cookies
+app.set('trust proxy', 1);
+
 // Security Middlewares
 app.use(
   helmet({
@@ -38,11 +48,30 @@ app.use(
 );
 app.use(mongoSanitize());
 
-// Restricted CORS with credentials
-const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+// Restricted CORS with credentials (supports comma-separated list of origins for preview URLs)
+const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((url) => url.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: clientUrl,
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      const normalizedOrigin = origin.replace(/\/+$/, '');
+      const isAllowed = allowedOrigins.some((allowed) => {
+        if (allowed === '*' || allowed === normalizedOrigin) return true;
+        if (allowed.includes('*')) {
+          const regex = new RegExp('^' + allowed.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+          return regex.test(normalizedOrigin);
+        }
+        return false;
+      });
+      if (isAllowed) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
     credentials: true,
   })
 );
@@ -60,7 +89,11 @@ if (process.env.NODE_ENV !== 'test') {
 
 // Health check route
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  const isDbConnected = mongoose.connection.readyState === 1;
+  res.status(200).json({
+    status: 'ok',
+    db: isDbConnected ? 'connected' : 'disconnected',
+  });
 });
 
 // API Routes

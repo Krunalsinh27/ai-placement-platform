@@ -147,18 +147,50 @@ const isBlockedDomain = (email) => {
 };
 
 /**
- * Check if real SMTP delivery is permitted for the given recipient.
- * Returns { allowed: true } or { allowed: false, reason: string, mode: 'console' | 'skipped' }
+ * Get active email delivery provider ('smtp' or 'brevo')
  */
-const shouldSendRealSmtp = (recipientEmail) => {
+const getEmailProvider = () => {
+  return (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase().trim();
+};
+
+/**
+ * Check if SMTP is configured and allowed by EMAIL_MODE
+ */
+const isSmtpConfigured = () => {
+  const emailMode = (process.env.EMAIL_MODE || '').toLowerCase();
+  if (emailMode === 'console') return false;
+
+  return Boolean(
+    process.env.SMTP_HOST &&
+    process.env.SMTP_USER &&
+    process.env.SMTP_PASS
+  );
+};
+
+/**
+ * Check if the active email provider is properly configured
+ */
+const isEmailProviderConfigured = () => {
+  const provider = getEmailProvider();
+  if (provider === 'brevo') {
+    return Boolean(process.env.BREVO_API_KEY);
+  }
+  return isSmtpConfigured();
+};
+
+/**
+ * Check if real email delivery (SMTP or Brevo HTTP API) is permitted for the given recipient.
+ * Returns { allowed: true, provider: 'smtp' | 'brevo' } or { allowed: false, reason: string, mode: 'console' | 'skipped' }
+ */
+const shouldSendRealEmail = (recipientEmail) => {
   // 1. Never send real email in test environment
   if (process.env.NODE_ENV === 'test') {
     return { allowed: false, reason: 'NODE_ENV is test', mode: 'console' };
   }
 
-  // 2. EMAIL_MODE must be explicitly "smtp"
+  // 2. EMAIL_MODE must be explicitly "smtp" or "brevo" (or "live")
   const emailMode = (process.env.EMAIL_MODE || '').trim().toLowerCase();
-  if (emailMode !== 'smtp') {
+  if (emailMode !== 'smtp' && emailMode !== 'brevo' && emailMode !== 'live') {
     return {
       allowed: false,
       reason: `EMAIL_MODE is "${emailMode || 'unset'}"`,
@@ -166,9 +198,16 @@ const shouldSendRealSmtp = (recipientEmail) => {
     };
   }
 
-  // 3. SMTP must be configured
-  if (!isSmtpConfigured()) {
-    return { allowed: false, reason: 'SMTP is not configured', mode: 'console' };
+  // 3. Active provider must be configured
+  const provider = getEmailProvider();
+  if (provider === 'brevo') {
+    if (!process.env.BREVO_API_KEY) {
+      return { allowed: false, reason: 'BREVO_API_KEY is not configured', mode: 'console' };
+    }
+  } else {
+    if (!isSmtpConfigured()) {
+      return { allowed: false, reason: 'SMTP is not configured', mode: 'console' };
+    }
   }
 
   // 4. Validate email and check blocked domains (applies in ALL environments including production)
@@ -204,7 +243,7 @@ const shouldSendRealSmtp = (recipientEmail) => {
     }
   }
 
-  // 6. Real SMTP per-minute rate limit cap
+  // 6. Real email per-minute rate limit cap
   const maxPerMinute = Number(process.env.EMAIL_MAX_PER_MINUTE) || 20;
   const now = Date.now();
   smtpSendTimestamps = smtpSendTimestamps.filter((ts) => now - ts < 60000);
@@ -216,8 +255,11 @@ const shouldSendRealSmtp = (recipientEmail) => {
     };
   }
 
-  return { allowed: true };
+  return { allowed: true, provider };
 };
+
+// Backwards-compatible alias
+const shouldSendRealSmtp = (recipientEmail) => shouldSendRealEmail(recipientEmail);
 
 const recordRealSmtpSend = () => {
   smtpSendTimestamps.push(Date.now());
@@ -228,21 +270,76 @@ const resetSmtpRateLimit = () => {
 };
 
 /**
- * Check if SMTP is configured and allowed by EMAIL_MODE
+ * Dispatch transactional email via Brevo HTTP API (no third-party SDK)
  */
-const isSmtpConfigured = () => {
-  const emailMode = (process.env.EMAIL_MODE || '').toLowerCase();
-  if (emailMode === 'console') return false;
+const sendViaBrevo = async ({ to, name, subject, text, html, attachments, replyTo }) => {
+  const senderEmail =
+    process.env.BREVO_SENDER_EMAIL ||
+    process.env.MAIL_FROM_ADDRESS ||
+    process.env.SMTP_USER ||
+    'no-reply@placementportal.edu';
+  const senderName = process.env.BREVO_SENDER_NAME || 'Placement Portal';
 
-  return Boolean(
-    process.env.SMTP_HOST &&
-    process.env.SMTP_USER &&
-    process.env.SMTP_PASS
-  );
+  const payload = {
+    sender: { name: senderName, email: senderEmail },
+    to: [{ email: to, name: name || to }],
+    subject,
+    htmlContent: html,
+    textContent: text || 'Please view this notification in an HTML-compatible email client.',
+  };
+
+  if (replyTo) {
+    payload.replyTo = { email: replyTo };
+  }
+
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    const fs = require('fs');
+    payload.attachment = attachments.map((att) => {
+      let contentBase64;
+      if (Buffer.isBuffer(att.content)) {
+        contentBase64 = att.content.toString('base64');
+      } else if (typeof att.content === 'string') {
+        contentBase64 = Buffer.from(att.content).toString('base64');
+      } else if (att.path && fs.existsSync(att.path)) {
+        contentBase64 = fs.readFileSync(att.path).toString('base64');
+      } else {
+        contentBase64 = Buffer.from(String(att.content || '')).toString('base64');
+      }
+      return {
+        name: att.filename || 'attachment.pdf',
+        content: contentBase64,
+      };
+    });
+  }
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'api-key': process.env.BREVO_API_KEY,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorMsg = data.message || `Brevo API HTTP error ${response.status}`;
+    const err = new Error(errorMsg);
+    err.responseCode = response.status;
+    err.code = data.code || String(response.status);
+    throw err;
+  }
+
+  return {
+    success: true,
+    messageId: data.messageId || `<brevo-${Date.now()}@placementportal>`,
+  };
 };
 
 /**
- * Verify transporter connectivity on server boot
+ * Verify transporter/provider connectivity on server boot
  */
 const verifyTransporter = async () => {
   if (process.env.NODE_ENV === 'test') {
@@ -252,6 +349,14 @@ const verifyTransporter = async () => {
   const emailMode = (process.env.EMAIL_MODE || '').toLowerCase();
   if (emailMode === 'console') {
     return { ok: false, mode: 'console', reason: 'EMAIL_MODE=console configured' };
+  }
+
+  const provider = getEmailProvider();
+  if (provider === 'brevo') {
+    if (!process.env.BREVO_API_KEY) {
+      return { ok: false, mode: 'console', reason: 'BREVO_API_KEY missing' };
+    }
+    return { ok: true, mode: 'brevo', provider: 'brevo' };
   }
 
   const hasConfig = Boolean(
@@ -340,9 +445,9 @@ const sendEmail = async ({
 
   const text = `Placement Portal Verification Code: ${otp}\n\nHello ${name || 'there'},\n${purposeText}\nYour code is: ${otp}\nThis code is valid for 10 minutes.\nNever share this code with anyone.`;
 
-  const guard = shouldSendRealSmtp(to);
+  const guard = shouldSendRealEmail(to);
 
-  // If real SMTP is not allowed by policy
+  // If real delivery is not allowed by policy
   if (!guard.allowed) {
     console.log(`[EmailService:Simulated] To: ${to} | Mode: ${guard.mode} (${guard.reason})`);
     if (otp) {
@@ -371,22 +476,29 @@ const sendEmail = async ({
     return { success: true, mode: guard.mode, reason: guard.reason };
   }
 
-  // Use SMTP when guard permits
+  const provider = getEmailProvider();
   try {
-    const transporter = createTransporter();
-    const mailFrom = process.env.MAIL_FROM || `"Placement Portal" <${process.env.SMTP_USER}>`;
+    let messageId;
+    if (provider === 'brevo') {
+      const info = await sendViaBrevo({ to, name, subject, text, html });
+      messageId = info.messageId;
+    } else {
+      const transporter = createTransporter();
+      const mailFrom = process.env.MAIL_FROM || `"Placement Portal" <${process.env.SMTP_USER}>`;
 
-    const info = await sendWithTimeout(
-      transporter,
-      {
-        from: mailFrom,
-        to,
-        subject,
-        text,
-        html,
-      },
-      10000
-    );
+      const info = await sendWithTimeout(
+        transporter,
+        {
+          from: mailFrom,
+          to,
+          subject,
+          text,
+          html,
+        },
+        10000
+      );
+      messageId = info.messageId;
+    }
 
     recordRealSmtpSend();
 
@@ -404,14 +516,14 @@ const sendEmail = async ({
           status: 'sent',
           attempts: 1,
           sentAt: new Date(),
-          metadata: { messageId: info.messageId, mode: 'smtp' },
+          metadata: { messageId, mode: provider },
         });
       } catch (_) {}
     }
 
-    return { success: true, messageId: info.messageId, mode: 'smtp' };
+    return { success: true, messageId, mode: provider };
   } catch (error) {
-    console.error(`[EmailService] Failed to send email via SMTP to ${to}:`, error.message);
+    console.error(`[EmailService] Failed to send email via ${provider} to ${to}:`, error.message);
 
     // Log failure in EmailLog
     if (user && user._id) {
@@ -427,7 +539,7 @@ const sendEmail = async ({
           status: 'failed',
           attempts: 1,
           error: error.message,
-          metadata: { mode: 'smtp' },
+          metadata: { mode: provider },
         });
       } catch (_) {}
     }
@@ -474,7 +586,7 @@ const sendPasswordResetEmail = async (to, name, otp, user = null) => {
  * Send raw email with support for attachments and reply-to (used by background queue)
  */
 const sendRawEmail = async ({ to, subject, text, html, attachments, replyTo }) => {
-  const guard = shouldSendRealSmtp(to);
+  const guard = shouldSendRealEmail(to);
 
   if (!guard.allowed) {
     console.log(
@@ -483,28 +595,37 @@ const sendRawEmail = async ({ to, subject, text, html, attachments, replyTo }) =
     return { success: true, mode: guard.mode, reason: guard.reason };
   }
 
+  const provider = getEmailProvider();
   try {
-    const transporter = createTransporter();
-    const mailOptions = {
-      from: process.env.MAIL_FROM || `"Placement Portal" <${process.env.SMTP_USER}>`,
-      to,
-      subject,
-      text: text || 'Please view this notification in an HTML-compatible email client.',
-      html,
-    };
+    let messageId;
+    if (provider === 'brevo') {
+      const info = await sendViaBrevo({ to, subject, text, html, attachments, replyTo });
+      messageId = info.messageId;
+    } else {
+      const transporter = createTransporter();
+      const mailOptions = {
+        from: process.env.MAIL_FROM || `"Placement Portal" <${process.env.SMTP_USER}>`,
+        to,
+        subject,
+        text: text || 'Please view this notification in an HTML-compatible email client.',
+        html,
+      };
 
-    if (replyTo) {
-      mailOptions.replyTo = replyTo;
-    }
-    if (attachments && Array.isArray(attachments) && attachments.length > 0) {
-      mailOptions.attachments = attachments;
+      if (replyTo) {
+        mailOptions.replyTo = replyTo;
+      }
+      if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+        mailOptions.attachments = attachments;
+      }
+
+      const info = await sendWithTimeout(transporter, mailOptions, 10000);
+      messageId = info.messageId;
     }
 
-    const info = await sendWithTimeout(transporter, mailOptions, 10000);
     recordRealSmtpSend();
-    return { success: true, messageId: info.messageId, mode: 'smtp' };
+    return { success: true, messageId, mode: provider };
   } catch (error) {
-    console.error(`[EmailService] Failed to send email via SMTP to ${to}:`, error.message);
+    console.error(`[EmailService] Failed to send email via ${provider} to ${to}:`, error.message);
     return { success: false, error: error.message };
   }
 };
@@ -580,7 +701,11 @@ module.exports = {
   createTransporter,
   verifyTransporter,
   isSmtpConfigured,
+  isEmailProviderConfigured,
+  getEmailProvider,
+  shouldSendRealEmail,
   shouldSendRealSmtp,
+  sendViaBrevo,
   isBlockedDomain,
   BLOCKED_DOMAINS,
   resetSmtpRateLimit,
