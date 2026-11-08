@@ -6,6 +6,7 @@ const path = require('path');
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
+const { getTestDbUri } = require('./testHelper');
 
 const {
   User,
@@ -26,7 +27,7 @@ const {
 
 async function runPipelineTests() {
   console.log('Connecting to MongoDB...');
-  await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/placement_management');
+  await mongoose.connect(getTestDbUri());
   console.log('Connected to MongoDB successfully:', mongoose.connection.name);
 
   const app = express();
@@ -598,7 +599,7 @@ async function runPipelineTests() {
       role: 'Future Deadline Software Engineer',
       packageLpa: 18,
       location: 'Bangalore',
-      allowedBranches: ['CSE', 'IT', 'ECE'],
+      allowedBranches: ['CSE', 'IT', 'ECE', student1.branch.toUpperCase(), student2.branch.toUpperCase()],
       minCgpa: 6.0,
       maxBacklogs: 2,
       driveDate: futureDriveDate,

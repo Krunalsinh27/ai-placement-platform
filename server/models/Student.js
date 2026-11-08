@@ -68,6 +68,12 @@ const studentSchema = new mongoose.Schema(
   }
 );
 
+// Indexes for querying, filtering, and cross-college aggregations
+studentSchema.index({ college: 1, batchYear: 1, branch: 1 });
+studentSchema.index({ college: 1, branch: 1 });
+studentSchema.index({ college: 1, cgpa: -1 });
+studentSchema.index({ branch: 1, batchYear: 1 });
+
 const Student = mongoose.model('Student', studentSchema);
 
 module.exports = Student;

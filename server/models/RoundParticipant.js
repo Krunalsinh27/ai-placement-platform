@@ -65,6 +65,9 @@ const roundParticipantSchema = new mongoose.Schema(
 // Unique compound index: a student can only be registered once per round
 roundParticipantSchema.index({ round: 1, student: 1 }, { unique: true });
 roundParticipantSchema.index({ student: 1, batch: 1 });
+roundParticipantSchema.index({ round: 1, result: 1 });
+roundParticipantSchema.index({ round: 1, attendance: 1 });
+roundParticipantSchema.index({ drive: 1, student: 1 });
 
 const RoundParticipant = mongoose.model('RoundParticipant', roundParticipantSchema);
 

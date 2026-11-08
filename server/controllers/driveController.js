@@ -190,14 +190,26 @@ const getDrives = async (req, res, next) => {
       ];
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await Drive.countDocuments(query);
     const drives = await Drive.find(query)
       .populate('company', 'name logoUrl industry website hrContact')
       .populate('college', 'name code city state contactEmail contactPhone')
       .populate('jobRequirement', 'title packageLpa selectionRounds')
-      .sort({ driveDate: 1 });
+      .sort({ driveDate: 1 })
+      .skip(skip)
+      .limit(limitNum);
 
     res.status(200).json({
       success: true,
+      data: drives,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: drives.length,
       drives,
     });
@@ -262,15 +274,25 @@ const getEligibleDrives = async (req, res, next) => {
         applicationsClosed: Boolean(d.applicationsClosed),
       }));
 
+    const total = eligibleDrives.length;
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const paginatedDrives = eligibleDrives.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
     res.status(200).json({
       success: true,
-      count: eligibleDrives.length,
+      data: paginatedDrives,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      count: paginatedDrives.length,
       studentCriteria: {
         cgpa: student.cgpa,
         backlogs: student.backlogs,
         branch: student.branch,
       },
-      drives: eligibleDrives,
+      drives: paginatedDrives,
     });
   } catch (error) {
     next(error);

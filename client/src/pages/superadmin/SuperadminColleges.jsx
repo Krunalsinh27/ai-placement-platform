@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
+import Pagination from '../../components/common/Pagination';
 import {
   Building2,
   CheckCircle2,
@@ -17,6 +18,8 @@ const SuperadminColleges = () => {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'pending' | 'approved' | 'rejected'
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   const fetchColleges = async () => {
     setLoading(true);
@@ -58,6 +61,10 @@ const SuperadminColleges = () => {
     c.city.toLowerCase().includes(search.toLowerCase()) ||
     c.state.toLowerCase().includes(search.toLowerCase())
   );
+
+  const totalColleges = filteredColleges.length;
+  const totalPages = Math.ceil(totalColleges / limit) || 1;
+  const paginatedColleges = filteredColleges.slice((page - 1) * limit, page * limit);
 
   return (
     <div className="space-y-6">
@@ -134,7 +141,7 @@ const SuperadminColleges = () => {
                   </td>
                 </tr>
               ) : (
-                filteredColleges.map((c) => (
+                paginatedColleges.map((c) => (
                   <tr key={c._id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4 font-bold text-slate-900">
                       <div>{c.name}</div>
@@ -210,6 +217,13 @@ const SuperadminColleges = () => {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={totalColleges}
+          itemsPerPage={limit}
+          onPageChange={(newPage) => setPage(newPage)}
+        />
       </div>
     </div>
   );

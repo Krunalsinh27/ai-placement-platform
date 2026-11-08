@@ -88,6 +88,9 @@ const offerSchema = new mongoose.Schema(
 // A student can only receive one active offer per drive
 offerSchema.index({ drive: 1, student: 1 });
 offerSchema.index({ student: 1, status: 1 });
+offerSchema.index({ college: 1, status: 1 });
+offerSchema.index({ company: 1, status: 1 });
+offerSchema.index({ status: 1, expiryDate: 1 });
 
 const Offer = mongoose.model('Offer', offerSchema);
 

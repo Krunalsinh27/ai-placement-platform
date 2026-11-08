@@ -103,6 +103,7 @@ const emailLogSchema = new mongoose.Schema(
 );
 
 emailLogSchema.index({ college: 1, createdAt: -1 });
+emailLogSchema.index({ user: 1, createdAt: -1 });
 emailLogSchema.index({ status: 1, attempts: 1 });
 
 const EmailLog = mongoose.model('EmailLog', emailLogSchema);

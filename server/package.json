@@ -20,6 +20,7 @@
     "test:superadmin": "node tests/testSuperadmin.js",
     "test:aspirant": "node tests/testAspirant.js",
     "test:emailguard": "node tests/testEmailGuard.js",
+    "test:all": "node tests/runAllTests.js",
     "mail:test": "node utils/mailTest.js",
     "cleanup:test": "node utils/cleanupTestLeftovers.js"
   },

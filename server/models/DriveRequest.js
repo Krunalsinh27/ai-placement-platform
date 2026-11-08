@@ -157,6 +157,8 @@ const driveRequestSchema = new mongoose.Schema(
 driveRequestSchema.index({ company: 1, status: 1 });
 driveRequestSchema.index({ college: 1, status: 1 });
 driveRequestSchema.index({ jobRequirement: 1, college: 1, status: 1 });
+driveRequestSchema.index({ college: 1, createdAt: -1 });
+driveRequestSchema.index({ company: 1, createdAt: -1 });
 
 const DriveRequest = mongoose.model('DriveRequest', driveRequestSchema);
 

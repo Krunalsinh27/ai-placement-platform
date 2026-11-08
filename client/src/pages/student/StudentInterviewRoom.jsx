@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   Video,
   Clock,
@@ -54,6 +54,7 @@ const formatISTTime = (dateStr) => {
 
 export default function StudentInterviewRoom() {
   const { slotId } = useParams();
+  const navigate = useNavigate();
   const [slot, setSlot] = useState(null);
   const [candidatesAhead, setCandidatesAhead] = useState(0);
   const [currentCalledSlot, setCurrentCalledSlot] = useState(null);

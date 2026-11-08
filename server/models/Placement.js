@@ -34,6 +34,8 @@ const placementSchema = new mongoose.Schema(
 
 // Optional compound index: prevents duplicate placement records for the same student in the same drive
 placementSchema.index({ student: 1, drive: 1 }, { unique: true });
+placementSchema.index({ company: 1, packageLpa: -1 });
+placementSchema.index({ student: 1 });
 
 const Placement = mongoose.model('Placement', placementSchema);
 

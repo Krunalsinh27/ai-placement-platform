@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import Table from '../../components/common/Table';
+import Pagination from '../../components/common/Pagination';
 import { openResumeInNewTab } from '../../utils/resumeViewer';
 import {
   FileCheck2,
@@ -33,6 +34,8 @@ const ManageApplications = () => {
   const [loadingApps, setLoadingApps] = useState(false);
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState(null);
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   // Fetch drives list
   useEffect(() => {
@@ -132,6 +135,10 @@ const ManageApplications = () => {
       name.includes(term) || enrollment.includes(term) || branch.includes(term)
     );
   });
+
+  const totalApps = filteredApplications.length;
+  const totalPages = Math.ceil(totalApps / limit) || 1;
+  const paginatedApplications = filteredApplications.slice((page - 1) * limit, page * limit);
 
   const serverOrigin = (
     import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
@@ -317,12 +324,21 @@ const ManageApplications = () => {
       )}
 
       {/* Applicants Table */}
-      <Table
-        columns={columns}
-        data={filteredApplications}
-        loading={loadingApps}
-        emptyMessage="No students have applied to this drive yet."
-      />
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+        <Table
+          columns={columns}
+          data={paginatedApplications}
+          loading={loadingApps}
+          emptyMessage="No students have applied to this drive yet."
+        />
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={totalApps}
+          itemsPerPage={limit}
+          onPageChange={(newPage) => setPage(newPage)}
+        />
+      </div>
     </div>
   );
 };

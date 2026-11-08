@@ -22,11 +22,14 @@ const getMyNotifications = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      count: notifications.length,
+      data: notifications,
+      page,
+      limit,
       total,
+      totalPages: Math.ceil(total / limit) || 1,
+      count: notifications.length,
       unreadCount,
       notifications,
-      data: notifications,
     });
   } catch (error) {
     next(error);

@@ -33,6 +33,9 @@ const applicationSchema = new mongoose.Schema(
 
 // Unique compound index: a student can only apply once to a specific drive
 applicationSchema.index({ student: 1, drive: 1 }, { unique: true });
+applicationSchema.index({ drive: 1, status: 1 });
+applicationSchema.index({ student: 1, status: 1 });
+applicationSchema.index({ drive: 1, appliedOn: -1 });
 
 const Application = mongoose.model('Application', applicationSchema);
 

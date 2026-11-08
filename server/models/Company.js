@@ -62,6 +62,10 @@ const companySchema = new mongoose.Schema(
   }
 );
 
+// Indexes for superadmin verification filters and recruiter company lookup
+companySchema.index({ verified: 1 });
+companySchema.index({ owner: 1 });
+
 const Company = mongoose.model('Company', companySchema);
 
 module.exports = Company;

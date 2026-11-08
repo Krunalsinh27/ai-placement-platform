@@ -137,6 +137,8 @@ const roundSchema = new mongoose.Schema(
 
 // Compound index on drive and order
 roundSchema.index({ drive: 1, order: 1 });
+roundSchema.index({ drive: 1, status: 1 });
+roundSchema.index({ deliveryMode: 1, testWindowEnd: 1 });
 
 const Round = mongoose.model('Round', roundSchema);
 

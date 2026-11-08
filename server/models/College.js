@@ -64,6 +64,9 @@ const collegeSchema = new mongoose.Schema(
   }
 );
 
+// Index for public and aspirant college discovery and state filtering
+collegeSchema.index({ status: 1, state: 1 });
+
 const College = mongoose.model('College', collegeSchema);
 
 module.exports = College;

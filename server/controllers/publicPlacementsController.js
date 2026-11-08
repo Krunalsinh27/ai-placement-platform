@@ -162,10 +162,20 @@ const getPublicCollegesPlacements = async (req, res, next) => {
 
     const cleanRows = rows.map(({ _rawStudents, _rawPlaced, _rawRate, _rawAvg, ...rest }) => rest);
 
+    const total = cleanRows.length;
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const paginatedRows = cleanRows.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
     res.status(200).json({
       success: true,
-      count: cleanRows.length,
-      colleges: cleanRows,
+      data: paginatedRows,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      count: paginatedRows.length,
+      colleges: paginatedRows,
     });
   } catch (error) {
     next(error);

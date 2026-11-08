@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
+import Pagination from '../../components/common/Pagination';
 import {
   Briefcase,
   CheckCircle2,
@@ -17,6 +18,8 @@ const SuperadminCompanies = () => {
   const [loading, setLoading] = useState(true);
   const [verifiedFilter, setVerifiedFilter] = useState('all'); // 'all' | 'true' | 'false'
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   const fetchCompanies = async () => {
     setLoading(true);
@@ -56,6 +59,10 @@ const SuperadminCompanies = () => {
     c.name.toLowerCase().includes(search.toLowerCase()) ||
     (c.industry && c.industry.toLowerCase().includes(search.toLowerCase()))
   );
+
+  const totalCompanies = filteredCompanies.length;
+  const totalPages = Math.ceil(totalCompanies / limit) || 1;
+  const paginatedCompanies = filteredCompanies.slice((page - 1) * limit, page * limit);
 
   return (
     <div className="space-y-6">
@@ -136,7 +143,7 @@ const SuperadminCompanies = () => {
                   </td>
                 </tr>
               ) : (
-                filteredCompanies.map((c) => (
+                paginatedCompanies.map((c) => (
                   <tr key={c._id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4 font-bold text-slate-900">
                       <div>{c.name}</div>
@@ -197,6 +204,13 @@ const SuperadminCompanies = () => {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={totalCompanies}
+          itemsPerPage={limit}
+          onPageChange={(newPage) => setPage(newPage)}
+        />
       </div>
     </div>
   );

@@ -337,8 +337,8 @@ const getStudents = async (req, res, next) => {
       ];
     }
 
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.max(1, parseInt(limit, 10));
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (pageNum - 1) * limitNum;
 
     const total = await Student.countDocuments(query);
@@ -351,10 +351,11 @@ const getStudents = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      data: students,
       total,
       page: pageNum,
       limit: limitNum,
-      totalPages: Math.ceil(total / limitNum),
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: students.length,
       students,
     });

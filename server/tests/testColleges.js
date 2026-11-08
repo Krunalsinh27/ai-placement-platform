@@ -6,6 +6,7 @@ const path = require('path');
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
+const { getTestDbUri } = require('./testHelper');
 
 const User = require('../models/User');
 const College = require('../models/College');
@@ -13,7 +14,7 @@ const Drive = require('../models/Drive');
 
 async function runTests() {
   console.log('Connecting to MongoDB...');
-  await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/placement_management');
+  await mongoose.connect(getTestDbUri());
   console.log('Connected to MongoDB successfully:', mongoose.connection.name);
 
   const app = express();

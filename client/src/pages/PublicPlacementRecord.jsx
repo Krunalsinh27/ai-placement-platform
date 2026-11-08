@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import Pagination from '../components/common/Pagination';
 import {
   GraduationCap,
   Award,
@@ -48,6 +49,8 @@ const PublicPlacementRecord = () => {
   const [sortBy, setSortBy] = useState('placementPercentage');
   const [order, setOrder] = useState('desc');
   const [stateCounts, setStateCounts] = useState({});
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   // Aspirant Shortlist & Recommendations State
   const [shortlistedSet, setShortlistedSet] = useState(new Set());
@@ -222,6 +225,10 @@ const PublicPlacementRecord = () => {
   const statesList = Array.from(
     new Set(colleges.map((c) => c.state).filter(Boolean))
   ).sort();
+
+  const totalColleges = colleges.length;
+  const totalPages = Math.ceil(totalColleges / limit) || 1;
+  const paginatedColleges = colleges.slice((page - 1) * limit, page * limit);
 
   const renderMetric = (val, suffix = '') => {
     if (val === 'lt5') {
@@ -737,7 +744,7 @@ const PublicPlacementRecord = () => {
                     </td>
                   </tr>
                 ) : (
-                  colleges.map((c) => {
+                  paginatedColleges.map((c) => {
                     const isSelected = selectedForCompare.some((col) => col._id === c._id);
                     const isUnderFive =
                       c.placementPercentage === 'lt5' ||
@@ -850,6 +857,13 @@ const PublicPlacementRecord = () => {
               </tbody>
             </table>
           </div>
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            totalItems={totalColleges}
+            itemsPerPage={limit}
+            onPageChange={(newPage) => setPage(newPage)}
+          />
         </div>
 
         <PrivacyFootnote className="mt-4" />

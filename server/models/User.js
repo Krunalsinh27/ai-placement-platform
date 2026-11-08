@@ -143,6 +143,11 @@ userSchema.post('init', function () {
   }
 });
 
+// Indexes for common queries
+userSchema.index({ role: 1, isApproved: 1 });
+userSchema.index({ college: 1, role: 1, isApproved: 1 });
+userSchema.index({ company: 1, role: 1 });
+
 const User = mongoose.model('User', userSchema);
 
 module.exports = User;

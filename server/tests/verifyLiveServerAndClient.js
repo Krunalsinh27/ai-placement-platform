@@ -62,6 +62,29 @@ async function testLiveLogin() {
         });
         const meData = await meRes.json();
         console.log(`✓ GET /api/auth/me Status: ${meRes.status} (Verified as ${meData.user?.email || meData.data?.email})`);
+
+        // Test pagination for TPO
+        if (cred.role === 'tpo') {
+          console.log('\n--- Verifying Paginated Endpoint: GET /api/drives?page=1&limit=2 ---');
+          const pageRes = await fetch(`${BASE_URL}/drives?page=1&limit=2`, {
+            headers: { Authorization: `Bearer ${data.token}` },
+          });
+          const pageData = await pageRes.json();
+          if (pageRes.status === 200 && pageData.success) {
+            console.log(`✓ Status: 200 OK`);
+            console.log(`✓ Pagination Metadata: page=${pageData.page}, limit=${pageData.limit}, total=${pageData.total}, totalPages=${pageData.totalPages}, count=${pageData.count}`);
+            console.log(`✓ Returned items in data: ${pageData.data?.length}, in legacy drives: ${pageData.drives?.length}`);
+            if (pageData.page === 1 && pageData.limit === 2 && Array.isArray(pageData.data)) {
+              console.log('✓ Paginated API contract verified successfully!');
+            } else {
+              console.log('✗ Pagination format mismatch:', pageData);
+              process.exitCode = 1;
+            }
+          } else {
+            console.log('✗ Failed to fetch paginated drives:', pageData);
+            process.exitCode = 1;
+          }
+        }
       } else {
         console.log(`✗ Login failed (${res.status}):`, data);
         process.exitCode = 1;

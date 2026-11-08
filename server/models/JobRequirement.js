@@ -82,6 +82,10 @@ const jobRequirementSchema = new mongoose.Schema(
   }
 );
 
+// Indexes for recruiter requirements queries
+jobRequirementSchema.index({ company: 1, status: 1 });
+jobRequirementSchema.index({ company: 1, createdAt: -1 });
+
 const JobRequirement = mongoose.model('JobRequirement', jobRequirementSchema);
 
 module.exports = JobRequirement;

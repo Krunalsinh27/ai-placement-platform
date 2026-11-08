@@ -171,12 +171,24 @@ const getJobRequirements = async (req, res, next) => {
       ];
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await JobRequirement.countDocuments(query);
     const requirements = await JobRequirement.find(query)
       .populate('company', 'name industry website logoUrl verified')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
 
     res.status(200).json({
       success: true,
+      data: requirements,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
       count: requirements.length,
       requirements,
     });
