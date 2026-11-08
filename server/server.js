@@ -3,32 +3,59 @@ const cors = require('cors');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
 const path = require('path');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const mongoSanitize = require('express-mongo-sanitize');
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 const { initCronJobs } = require('./utils/cronJobs');
 const { migrateAuthUsers } = require('./utils/migrateAuth');
 const { verifyTransporter } = require('./utils/emailService');
+const { publicApiLimiter } = require('./middleware/rateLimitMiddleware');
 
 // Load environment variables
 dotenv.config();
+
+// Fail fast in production if JWT_SECRET is missing or insufficiently long
+if (
+  process.env.NODE_ENV === 'production' &&
+  (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)
+) {
+  console.error('FATAL: JWT_SECRET must be at least 32 characters long in production');
+  process.exit(1);
+}
 
 // Connect to MongoDB
 connectDB();
 
 const app = express();
 
-// Middlewares
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Security Middlewares
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
+app.use(mongoSanitize());
 
-// Serve static uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Restricted CORS with credentials
+const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+app.use(
+  cors({
+    origin: clientUrl,
+    credentials: true,
+  })
+);
+
+app.use(cookieParser());
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
+
+// Static uploads route removed for security: resumes are served via protected streaming route GET /api/students/:studentId/resume
 
 // HTTP request logger
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev', { skip: (req, res) => res.statusCode < 400 }));
-  // app.use(morgan('dev'));
 }
 
 // Health check route
@@ -38,16 +65,15 @@ app.get('/api/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/colleges/public', publicApiLimiter);
 app.use('/api/colleges', require('./routes/collegeRoutes'));
 app.use('/api/students', require('./routes/studentRoutes'));
 app.use('/api/companies', require('./routes/companyRoutes'));
-app.use('/api/company', require('./routes/companyRoutes'));
 app.use('/api/drives', require('./routes/driveRoutes'));
 app.use('/api/applications', require('./routes/applicationRoutes'));
 app.use('/api/placements', require('./routes/placementRoutes'));
 app.use('/api/stats', require('./routes/statsRoutes'));
 app.use('/api/job-requirements', require('./routes/jobRequirementRoutes'));
-app.use('/api/requirements', require('./routes/jobRequirementRoutes'));
 app.use('/api/drive-requests', require('./routes/driveRequestRoutes'));
 app.use('/api/tpo', require('./routes/tpoRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
@@ -60,7 +86,7 @@ app.use('/api/tests', require('./routes/testRoutes'));
 app.use('/api/questions', require('./routes/questionRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/superadmin', require('./routes/superadminRoutes'));
-app.use('/api/aspirant', require('./routes/aspirantRoutes'));
+app.use('/api/aspirant', publicApiLimiter, require('./routes/aspirantRoutes'));
 
 // 404 Handler
 app.use(notFound);

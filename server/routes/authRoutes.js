@@ -12,6 +12,8 @@ const {
   forgotPassword,
   resetPassword,
   login,
+  refreshToken,
+  logout,
   getMe,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
@@ -43,6 +45,10 @@ router.post('/reset-password', otpVerifyLimiter, resetPassword);
 
 // Authentication route (rate-limited & lockout enabled)
 router.post('/login', loginLimiter, login);
+
+// Token refresh & session termination
+router.post('/refresh', refreshToken);
+router.post('/logout', logout);
 
 // Protected routes
 router.get('/me', protect, getMe);

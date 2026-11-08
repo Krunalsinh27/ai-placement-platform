@@ -43,3 +43,7 @@ venv/
 *.tmp
 *.bak
 *.zip
+
+# Agent working notes (keep local only)
+PROGRESS.md
+PROJECT_CONTEXT.md

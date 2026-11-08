@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
+import { openResumeInNewTab, downloadResumePdf } from '../../utils/resumeViewer';
 import {
   User,
   Mail,
@@ -153,15 +154,6 @@ const StudentProfile = () => {
     }
   };
 
-  // Compute full resume URL for viewing
-  const serverOrigin =
-    (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace('/api', '');
-  const fullResumeUrl = student?.resumeUrl
-    ? student.resumeUrl.startsWith('http')
-      ? student.resumeUrl
-      : `${serverOrigin}${student.resumeUrl}`
-    : null;
-
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
@@ -196,32 +188,34 @@ const StudentProfile = () => {
               <span>Placement Resume</span>
             </div>
 
-            {fullResumeUrl ? (
+            {student?.resumeUrl ? (
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
                 <div className="flex items-center gap-2 text-emerald-800 text-xs font-semibold">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span>Resume Attached</span>
                 </div>
                 <div className="flex gap-2 pt-1">
-                  <a
-                    href={fullResumeUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+                  <button
+                    type="button"
+                    onClick={() => openResumeInNewTab('me', 'My Resume')}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors cursor-pointer"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                     <span>View</span>
-                  </a>
-                  <a
-                    href={fullResumeUrl}
-                    download
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center justify-center p-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      downloadResumePdf(
+                        'me',
+                        `${user?.name ? user.name.replace(/\s+/g, '_') + '_Resume.pdf' : 'Resume.pdf'}`
+                      )
+                    }
+                    className="inline-flex items-center justify-center p-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
                     title="Download"
                   >
                     <Download className="w-3.5 h-3.5" />
-                  </a>
+                  </button>
                 </div>
               </div>
             ) : (

@@ -13,13 +13,15 @@ import {
   RotateCw,
   Mail,
   Calendar,
+  Briefcase,
+  CheckCircle2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const SuperadminPendingAccounts = () => {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [roleFilter, setRoleFilter] = useState('all'); // 'all' | 'tpo' | 'student'
+  const [roleFilter, setRoleFilter] = useState('all'); // 'all' | 'tpo' | 'student' | 'recruiter'
   const [search, setSearch] = useState('');
   const [actionLoadingId, setActionLoadingId] = useState(null);
 
@@ -86,11 +88,15 @@ const SuperadminPendingAccounts = () => {
     const enrollmentMatch =
       a.studentProfile?.enrollmentNo?.toLowerCase().includes(q);
     const branchMatch = a.studentProfile?.branch?.toLowerCase().includes(q);
-    return nameMatch || emailMatch || collegeMatch || enrollmentMatch || branchMatch;
+    const companyMatch =
+      a.company?.name?.toLowerCase().includes(q) ||
+      a.company?.industry?.toLowerCase().includes(q);
+    return nameMatch || emailMatch || collegeMatch || enrollmentMatch || branchMatch || companyMatch;
   });
 
   const tpoCount = accounts.filter((a) => a.role === 'tpo').length;
   const studentCount = accounts.filter((a) => a.role === 'student').length;
+  const recruiterCount = accounts.filter((a) => a.role === 'recruiter').length;
 
   return (
     <div className="space-y-6">
@@ -152,6 +158,16 @@ const SuperadminPendingAccounts = () => {
           >
             Pending Students ({studentCount})
           </button>
+          <button
+            onClick={() => setRoleFilter('recruiter')}
+            className={`flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              roleFilter === 'recruiter'
+                ? 'bg-white text-amber-700 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Pending Recruiters ({recruiterCount})
+          </button>
         </div>
 
         {/* Search */}
@@ -193,7 +209,7 @@ const SuperadminPendingAccounts = () => {
                 <tr className="border-b border-slate-200/80 bg-slate-50/75 text-slate-500 uppercase tracking-wider font-semibold text-[11px]">
                   <th className="py-3 px-4">User</th>
                   <th className="py-3 px-4">Role</th>
-                  <th className="py-3 px-4">Institution / College</th>
+                  <th className="py-3 px-4">Institution / Company</th>
                   <th className="py-3 px-4">Registered On</th>
                   <th className="py-3 px-4">Notice / Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -203,6 +219,7 @@ const SuperadminPendingAccounts = () => {
                 {filteredAccounts.map((account) => {
                   const isTpo = account.role === 'tpo';
                   const isStudent = account.role === 'student';
+                  const isRecruiter = account.role === 'recruiter';
                   const regDate = account.createdAt
                     ? new Date(account.createdAt).toLocaleDateString('en-US', {
                         month: 'short',
@@ -238,33 +255,60 @@ const SuperadminPendingAccounts = () => {
                           className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold text-[10px] ${
                             isTpo
                               ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                              : isStudent
+                              ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                              : 'bg-amber-50 text-amber-800 border border-amber-300'
                           }`}
                         >
                           {isTpo ? (
                             <Building2 className="w-3 h-3 text-purple-600" />
-                          ) : (
+                          ) : isStudent ? (
                             <GraduationCap className="w-3 h-3 text-indigo-600" />
+                          ) : (
+                            <Briefcase className="w-3 h-3 text-amber-600" />
                           )}
                           <span className="uppercase">{account.role}</span>
                         </span>
                       </td>
 
-                      {/* College Info */}
+                      {/* Institution / Company Info */}
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-800">
-                          {account.college?.name || 'Unassigned College'}
-                        </div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                          {account.college?.code && (
-                            <span className="font-mono font-medium text-slate-600 uppercase">
-                              [{account.college.code}]
-                            </span>
-                          )}
-                          {account.college?.city && (
-                            <span>{account.college.city}, {account.college.state}</span>
-                          )}
-                        </div>
+                        {isRecruiter ? (
+                          <div>
+                            <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+                              <span>{account.company?.name || 'Unassigned Company'}</span>
+                              {account.company?.verified ? (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-medium">
+                                  <CheckCircle2 className="w-2.5 h-2.5" /> Verified
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+                                  Unverified Company
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                              {account.company?.industry && <span>{account.company.industry}</span>}
+                              {account.company?.location && <span>• {account.company.location}</span>}
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="font-semibold text-slate-800">
+                              {account.college?.name || 'Unassigned College'}
+                            </div>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                              {account.college?.code && (
+                                <span className="font-mono font-medium text-slate-600 uppercase">
+                                  [{account.college.code}]
+                                </span>
+                              )}
+                              {account.college?.city && (
+                                <span>{account.college.city}, {account.college.state}</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </td>
 
                       {/* Registered Date */}

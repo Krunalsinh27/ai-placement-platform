@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import Table from '../../components/common/Table';
+import { openResumeInNewTab } from '../../utils/resumeViewer';
 import {
   FileCheck2,
   Search,
@@ -196,20 +197,17 @@ const ManageApplications = () => {
           return <span className="text-slate-400 text-[11px]">Not uploaded</span>;
         }
 
-        const fullUrl = row.student.resumeUrl.startsWith('http')
-          ? row.student.resumeUrl
-          : `${serverOrigin}${row.student.resumeUrl}`;
+        const studentId = row.student._id || row.student;
 
         return (
-          <a
-            href={fullUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-semibold text-xs"
+          <button
+            type="button"
+            onClick={() => openResumeInNewTab(studentId, `${row.student?.user?.name || 'Student'}'s Resume`)}
+            className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-semibold text-xs cursor-pointer"
           >
             <span>PDF</span>
             <ExternalLink className="w-3 h-3" />
-          </a>
+          </button>
         );
       },
     },

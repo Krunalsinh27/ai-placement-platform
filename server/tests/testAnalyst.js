@@ -5,6 +5,8 @@ const path = require('path');
 const jwt = require('jsonwebtoken');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
+process.env.NODE_ENV = 'test';
+process.env.EMAIL_MODE = 'console';
 
 const {
   User,

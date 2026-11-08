@@ -100,7 +100,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Logout handler
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch (_) {}
     setToken(null);
     setUser(null);
     setStudent(null);

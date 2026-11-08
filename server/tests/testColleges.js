@@ -4,6 +4,8 @@ const dotenv = require('dotenv');
 const path = require('path');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
+process.env.NODE_ENV = 'test';
+process.env.EMAIL_MODE = 'console';
 
 const User = require('../models/User');
 const College = require('../models/College');

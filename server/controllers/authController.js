@@ -1,7 +1,27 @@
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { User, Student, College, Company, Aspirant, Notification } = require('../models');
-const generateToken = require('../utils/generateToken');
+const generateTokenHelper = require('../utils/generateToken');
 const emailService = require('../utils/emailService');
+
+const generateToken = generateTokenHelper.generateToken || generateTokenHelper;
+const generateRefreshToken = generateTokenHelper.generateRefreshToken;
+const hashToken = generateTokenHelper.hashToken;
+
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? (process.env.COOKIE_SAME_SITE || 'none') : 'lax',
+  path: '/',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
+
+const CLEAR_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? (process.env.COOKIE_SAME_SITE || 'none') : 'lax',
+  path: '/',
+};
 
 /**
  * Password validation rule:
@@ -134,6 +154,37 @@ const notifyApproversForPendingAccount = async ({ registrant, college, role, det
     }
   } catch (err) {
     console.error('[notifyApproversForPendingAccount] Error:', err.message);
+  }
+};
+
+/**
+ * Notify platform superadmin when a new recruiter registers and requires approval
+ */
+const notifySuperadminForPendingRecruiter = async (recruiterUser, companyDoc) => {
+  try {
+    const superadmins = await User.find({ role: 'superadmin' });
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const compName = companyDoc?.name || 'Company';
+
+    for (const sa of superadmins) {
+      await Notification.create({
+        user: sa._id,
+        type: 'pending_approval',
+        message: `New recruiter registration: ${recruiterUser.name} (${compName}) requires approval.`,
+        link: '/superadmin/pending-accounts',
+      }).catch(() => {});
+
+      await emailService.sendApprovalNoticeEmail({
+        to: sa.email,
+        approverName: sa.name,
+        registrantName: recruiterUser.name,
+        registrantRole: 'recruiter',
+        collegeName: compName,
+        reviewLink: `${clientUrl}/superadmin/pending-accounts`,
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.error('[notifySuperadminForPendingRecruiter] Error:', err.message);
   }
 };
 
@@ -812,7 +863,7 @@ const registerRecruiter = async (req, res, next) => {
             description: description ? description.trim() : '',
             logoUrl: logoUrl ? logoUrl.trim() : '',
             owner: existingUser._id,
-            verified: true,
+            verified: false,
             hrContact: {
               name: hrContact?.name || name.trim(),
               email: hrContact?.email || email.trim().toLowerCase(),
@@ -827,9 +878,11 @@ const registerRecruiter = async (req, res, next) => {
       existingUser.role = 'recruiter';
       existingUser.company = targetCompany._id;
       existingUser.phone = phone ? phone.trim() : '';
-      existingUser.isApproved = true;
+      existingUser.isApproved = false;
       existingUser.isEmailVerified = false;
       await existingUser.save();
+
+      notifySuperadminForPendingRecruiter(existingUser, targetCompany).catch(() => {});
 
       const otpResult = await generateAndSendOtp(existingUser, 'verify_email');
       if (!otpResult.success) {
@@ -891,7 +944,7 @@ const registerRecruiter = async (req, res, next) => {
           description: description ? description.trim() : '',
           logoUrl: logoUrl ? logoUrl.trim() : '',
           owner: null,
-          verified: true, // TODO: superadmin verification workflow
+          verified: false,
           hrContact: {
             name: hrContact?.name || name.trim(),
             email: hrContact?.email || email.trim().toLowerCase(),
@@ -908,7 +961,7 @@ const registerRecruiter = async (req, res, next) => {
       role: 'recruiter',
       company: targetCompany._id,
       phone: phone ? phone.trim() : '',
-      isApproved: true,
+      isApproved: false,
       isEmailVerified: false,
     });
 
@@ -916,6 +969,8 @@ const registerRecruiter = async (req, res, next) => {
       targetCompany.owner = user._id;
       await targetCompany.save();
     }
+
+    notifySuperadminForPendingRecruiter(user, targetCompany).catch(() => {});
 
     const otpResult = await generateAndSendOtp(user, 'verify_email');
     if (!otpResult.success) {
@@ -1543,7 +1598,10 @@ const resetPassword = async (req, res, next) => {
     user.failedLoginAttempts = 0;
     user.lockUntil = null;
     user.isEmailVerified = true;
+    user.refreshTokenHash = null; // Revoke all active refresh sessions
     await user.save();
+
+    res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
 
     res.status(200).json({
       success: true,
@@ -1707,8 +1765,16 @@ const login = async (req, res, next) => {
       student = await Student.findOne({ user: user._id }).populate('college');
     }
 
-    // Generate JWT token
+    // Generate 15-minute access token and 7-day refresh token
     const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Save hashed refresh token to user document
+    user.refreshTokenHash = hashToken(refreshToken);
+    await user.save();
+
+    // Set secure httpOnly refresh cookie
+    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
 
     res.status(200).json({
       success: true,
@@ -1752,6 +1818,93 @@ const getMe = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Refresh access token using httpOnly refresh token cookie
+ * @route   POST /api/auth/refresh
+ * @access  Public (Cookie required)
+ */
+const refreshToken = async (req, res, next) => {
+  try {
+    const token = req.cookies?.refreshToken;
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'No refresh token provided',
+      });
+    }
+
+    const secret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+    let decoded;
+    try {
+      decoded = jwt.verify(token, secret);
+    } catch (err) {
+      res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired refresh token',
+      });
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user || !user.refreshTokenHash) {
+      res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token has been revoked',
+      });
+    }
+
+    const tokenHash = hashToken(token);
+    if (user.refreshTokenHash !== tokenHash) {
+      // Possible reuse/tampering: revoke user session
+      user.refreshTokenHash = null;
+      await user.save();
+      res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid refresh token session',
+      });
+    }
+
+    // Issue a fresh 15-minute access token
+    const newAccessToken = generateToken(user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Access token refreshed successfully',
+      token: newAccessToken,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Logout user, revoke stored refresh token hash, and clear cookie
+ * @route   POST /api/auth/logout
+ * @access  Public / Authenticated
+ */
+const logout = async (req, res, next) => {
+  try {
+    const token = req.cookies?.refreshToken;
+    if (token) {
+      const tokenHash = hashToken(token);
+      await User.updateOne({ refreshTokenHash: tokenHash }, { $set: { refreshTokenHash: null } });
+    } else if (req.user) {
+      await User.findByIdAndUpdate(req.user._id, { $set: { refreshTokenHash: null } });
+    }
+
+    res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   registerTPO,
@@ -1764,6 +1917,8 @@ module.exports = {
   forgotPassword,
   resetPassword,
   login,
+  refreshToken,
+  logout,
   getMe,
   isValidPassword,
   generateAndSendOtp,
