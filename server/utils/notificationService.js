@@ -13,6 +13,7 @@ const {
   renderScheduleUpdatedTemplate,
   generateIcsCalendar,
   formatIST,
+  formatISTDateOnly,
   FRONTEND_URL,
 } = require('./emailTemplates');
 
@@ -498,7 +499,7 @@ const notifyDrivePublished = async (drive) => {
           maxBacklogs: drive.maxBacklogs,
           lastDateToApply: drive.lastDateToApply,
           driveId: drive._id,
-          message: `New campus drive published: ${companyName} is hiring for ${drive.role} (${drive.packageLpa} LPA)! Apply by ${new Date(drive.lastDateToApply).toLocaleDateString()}.`,
+          message: `New campus drive published: ${companyName} is hiring for ${drive.role} (${drive.packageLpa} LPA)! Apply by ${formatISTDateOnly(drive.lastDateToApply)}.`,
           link: '/student/drives',
         }).catch((err) => console.error('Failed to notify student of drive published:', err));
       }

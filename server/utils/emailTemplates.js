@@ -3,13 +3,14 @@
  */
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const { parseISTDateTime } = require('./dateTime');
 
 /**
  * Format timestamp into clean IST date and time string
  */
 const formatIST = (date) => {
   if (!date) return 'TBA';
-  const d = new Date(date);
+  const d = parseISTDateTime(date);
   if (isNaN(d.getTime())) return 'TBA';
   return d.toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -23,7 +24,7 @@ const formatIST = (date) => {
  */
 const formatISTDateOnly = (date) => {
   if (!date) return 'TBA';
-  const d = new Date(date);
+  const d = parseISTDateTime(date);
   if (isNaN(d.getTime())) return 'TBA';
   return d.toLocaleDateString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -37,7 +38,7 @@ const formatISTDateOnly = (date) => {
  * Format UTC string for .ics calendar (YYYYMMDDTHHMMSSZ)
  */
 const formatIcsDate = (date) => {
-  const d = new Date(date);
+  const d = parseISTDateTime(date);
   return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
 };
 
@@ -56,7 +57,7 @@ const generateIcsCalendar = ({
   organizerEmail = 'placements@college.edu',
 }) => {
   const dtStart = formatIcsDate(startTime);
-  const dtEnd = formatIcsDate(endTime || new Date(new Date(startTime).getTime() + 30 * 60 * 1000));
+  const dtEnd = formatIcsDate(endTime || new Date(parseISTDateTime(startTime).getTime() + 30 * 60 * 1000));
   const dtStamp = formatIcsDate(new Date());
   const eventUid = uid || `interview-${Date.now()}@placementportal.edu`;
 

@@ -52,6 +52,78 @@ async function runPipelineTests() {
     // 1. Authenticate TPO, Recruiter, and Students
     console.log('--- 1. Authenticating test users ---');
 
+    let college = await College.findOne({ code: 'NITD' });
+    if (!college) {
+      college = await College.create({
+        name: 'National Institute of Technology Delhi',
+        code: 'NITD',
+        city: 'New Delhi',
+        state: 'Delhi',
+        status: 'approved',
+      });
+    }
+
+    let company = await Company.findOne({ name: 'Google' });
+    if (!company) {
+      company = await Company.create({
+        name: 'Google',
+        industry: 'Technology',
+        verified: true,
+      });
+    }
+
+    let tpoUser = await User.findOne({ email: 'admin@college.com' });
+    if (!tpoUser) {
+      tpoUser = await User.create({
+        name: 'TPO Administrator',
+        email: 'admin@college.com',
+        password: 'Admin@123',
+        role: 'tpo',
+        college: college._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+    }
+
+    let recUser = await User.findOne({ email: 'recruiter@google.com' });
+    if (!recUser) {
+      recUser = await User.create({
+        name: 'Google Recruiter',
+        email: 'recruiter@google.com',
+        password: 'Recruiter@123',
+        role: 'recruiter',
+        company: company._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+    }
+
+    let nitdStudents = await Student.find({ college: college._id }).populate('user').limit(5);
+    while (nitdStudents.length < 3) {
+      const idx = nitdStudents.length + 1;
+      const u = await User.create({
+        name: `Pipeline Student ${idx}`,
+        email: `pipeline.student${idx}@nitd.edu`,
+        password: 'Student@123',
+        role: 'student',
+        college: college._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+      const s = await Student.create({
+        user: u._id,
+        college: college._id,
+        enrollmentNo: `NITD_PIPE_${idx}`,
+        branch: 'CSE',
+        batchYear: 2026,
+        cgpa: 8.5,
+        backlogs: 0,
+        phone: '9876543210',
+      });
+      s.user = u;
+      nitdStudents.push(s);
+    }
+
     // TPO (admin@college.com)
     const tpoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
@@ -73,10 +145,6 @@ async function runPipelineTests() {
     const recToken = recData.token;
     if (!recToken) throw new Error('Recruiter login failed');
     console.log('✓ Recruiter authenticated:', recData.user.name, `(${recData.user.company?.name || 'Google'})`);
-
-    const college = await College.findOne({ code: 'NITD' });
-    const nitdStudents = await Student.find({ college: college._id }).populate('user').limit(5);
-    if (nitdStudents.length < 3) throw new Error('Need at least 3 students in NITD for test');
 
     const student1 = nitdStudents[0];
     const student2 = nitdStudents[1];
@@ -117,7 +185,7 @@ async function runPipelineTests() {
 
     // 2. Setup a dedicated Test Drive with a Job Requirement
     console.log('\n--- 2. Setting up dedicated test drive & applications ---');
-    const company = await Company.findOne({ name: 'Google' });
+    company = await Company.findOne({ name: 'Google' });
 
     // Clean up past test runs for this test drive
     await RoundBatch.deleteMany({ venueOrLink: /CSE Lab 101/i });
@@ -979,7 +1047,21 @@ async function runPipelineTests() {
     await Application.deleteMany({ drive: drive29A._id });
     await Drive.deleteOne({ _id: drive29A._id });
     await JobRequirement.deleteOne({ _id: jobReq29A._id });
-    console.log('✓ Cleaned up Task 29A test records');
+
+    // Clean up testDrive and futureDrive
+    if (typeof testDrive !== 'undefined' && testDrive?._id) {
+      await RoundParticipant.deleteMany({ drive: testDrive._id });
+      await RoundBatch.deleteMany({ round: { $in: await Round.find({ drive: testDrive._id }).distinct('_id') } });
+      await Round.deleteMany({ drive: testDrive._id });
+      await Application.deleteMany({ drive: testDrive._id });
+      await Placement.deleteMany({ drive: testDrive._id });
+      await Offer.deleteMany({ drive: testDrive._id });
+      await Drive.deleteOne({ _id: testDrive._id });
+    }
+    if (typeof futureDrive !== 'undefined' && futureDrive?._id) {
+      await Drive.deleteOne({ _id: futureDrive._id });
+    }
+    console.log('✓ Cleaned up Task 29A and test drive records');
 
     console.log('\n======================================================');
     console.log('  ALL RECRUITMENT PIPELINE TESTS PASSED SUCCESSFULLY!  ');

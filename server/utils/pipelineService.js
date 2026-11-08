@@ -11,6 +11,7 @@ const {
   User,
 } = require('../models');
 const { createNotification, notifyUser } = require('./notificationService');
+const { parseISTDateTime } = require('./dateTime');
 
 /**
  * Calculate the exact end of day in India Standard Time (IST, UTC+05:30)
@@ -25,7 +26,7 @@ const getEndOfDayIST = (dateInput) => {
     return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999) - (5.5 * 3600 * 1000));
   }
 
-  const d = new Date(dateInput);
+  const d = parseISTDateTime(dateInput);
   if (isNaN(d.getTime())) return null;
 
   // Format in Asia/Kolkata timezone to get the calendar date in IST
@@ -206,8 +207,8 @@ const checkStudentClash = async (studentId, startTime, endTime, excludeBatchId =
       populate: { path: 'user', select: 'name' },
     });
 
-  const start = new Date(startTime).getTime();
-  const end = new Date(endTime).getTime();
+  const start = parseISTDateTime(startTime).getTime();
+  const end = parseISTDateTime(endTime).getTime();
 
   for (const record of participantRecords) {
     const b = record.batch;
@@ -242,8 +243,8 @@ const checkVenueClash = async (venueOrLink, startTime, endTime, mode = 'offline'
   if (!venueOrLink || !venueOrLink.trim()) return { hasClash: false, clashInfo: null };
 
   const trimmedVenue = venueOrLink.trim();
-  const start = new Date(startTime);
-  const end = new Date(endTime);
+  const start = parseISTDateTime(startTime);
+  const end = parseISTDateTime(endTime);
 
   const query = {
     venueOrLink: { $regex: new RegExp(`^${trimmedVenue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
@@ -319,7 +320,7 @@ const autoSplitParticipants = async ({
     const brk = parseInt(breakMinutes, 10) || 0;
     const totalBatches = Math.ceil(participants.length / cap);
 
-    let currentStart = new Date(startTime || round.date || new Date());
+    let currentStart = parseISTDateTime(startTime || round.date || new Date());
 
     for (let i = 0; i < totalBatches; i++) {
       const currentEnd = new Date(currentStart.getTime() + dur * 60 * 1000);
@@ -509,10 +510,17 @@ const advanceClearedStudentsToNextRound = async (roundId) => {
  * Generate daily clash report for a college across all drives and offline venues
  */
 const generateDailyClashReport = async (collegeId, targetDate) => {
-  const dayStart = new Date(targetDate);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(targetDate);
-  dayEnd.setHours(23, 59, 59, 999);
+  const dayStart = parseISTDateTime(targetDate);
+  if (isNaN(dayStart.getTime())) {
+    return {
+      date: targetDate,
+      totalBatches: 0,
+      studentClashes: [],
+      venueClashes: [],
+      totalClashes: 0,
+    };
+  }
+  const dayEnd = getEndOfDayIST(targetDate) || new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
 
   // 1. Find all drives belonging to this college
   const collegeDrives = await Drive.find({ college: collegeId }).select('_id role company');

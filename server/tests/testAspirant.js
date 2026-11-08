@@ -1250,16 +1250,17 @@ async function runAspirantTests() {
     // 4. Ranking verification:
     // Ranked list should have Col A (80%) first, then Col B (70%) second
     const rankedColleges = recData.colleges.filter((c) => c.hasSufficientData);
-    if (rankedColleges.length < 2) {
-      throw new Error(`Expected at least 2 ranked colleges, got ${rankedColleges.length}`);
+    const testRankedColleges = rankedColleges.filter((c) => c.code.startsWith('TEST_ASP_REC_'));
+    if (testRankedColleges.length < 2) {
+      throw new Error(`Expected at least 2 test ranked colleges, got ${testRankedColleges.length}`);
     }
-    if (rankedColleges[0].code !== 'TEST_ASP_REC_A' || rankedColleges[1].code !== 'TEST_ASP_REC_B') {
-      throw new Error(`Expected ranking [TEST_ASP_REC_A, TEST_ASP_REC_B], got [${rankedColleges[0]?.code}, ${rankedColleges[1]?.code}]`);
+    if (testRankedColleges[0].code !== 'TEST_ASP_REC_A' || testRankedColleges[1].code !== 'TEST_ASP_REC_B') {
+      throw new Error(`Expected ranking [TEST_ASP_REC_A, TEST_ASP_REC_B], got [${testRankedColleges[0]?.code}, ${testRankedColleges[1]?.code}]`);
     }
-    if (rankedColleges[0].avgBranchPlacementRate !== 80 || rankedColleges[1].avgBranchPlacementRate !== 70) {
-      throw new Error(`Expected rates 80 and 70, got ${rankedColleges[0].avgBranchPlacementRate} and ${rankedColleges[1].avgBranchPlacementRate}`);
+    if (testRankedColleges[0].avgBranchPlacementRate !== 80 || testRankedColleges[1].avgBranchPlacementRate !== 70) {
+      throw new Error(`Expected rates 80 and 70, got ${testRankedColleges[0].avgBranchPlacementRate} and ${testRankedColleges[1].avgBranchPlacementRate}`);
     }
-    if (!rankedColleges[0].isHomeState) {
+    if (!testRankedColleges[0].isHomeState) {
       throw new Error('Col A (Delhi) must have isHomeState: true for Delhi aspirant');
     }
     console.log('✓ Colleges correctly ranked by average placement percentage of target branches (80% > 70%) with Home state badge');
@@ -1355,10 +1356,11 @@ async function runAspirantTests() {
       throw new Error('Expected hasHomeStateRankedMatches: false for Goa');
     }
     const goaRanked = goaRecData.colleges.filter((c) => c.hasSufficientData);
-    if (goaRanked.length < 2) {
-      throw new Error(`Expected nationwide ranked fallback results, got ${goaRanked.length}`);
+    const testGoaRanked = goaRanked.filter((c) => c.code.startsWith('TEST_ASP_REC_'));
+    if (testGoaRanked.length < 2) {
+      throw new Error(`Expected nationwide ranked fallback results, got ${testGoaRanked.length}`);
     }
-    if (goaRanked[0].code !== 'TEST_ASP_REC_A' || goaRanked[1].code !== 'TEST_ASP_REC_B') {
+    if (testGoaRanked[0].code !== 'TEST_ASP_REC_A' || testGoaRanked[1].code !== 'TEST_ASP_REC_B') {
       throw new Error('Expected nationwide ranked colleges in fallback');
     }
     console.log('✓ Recommendations endpoint returns nationwide ranked matches when home-state list is empty');

@@ -38,11 +38,81 @@ async function runNotificationTests() {
   const BASE_URL = `http://127.0.0.1:${PORT}/api`;
 
   try {
-    console.log('\n--- 1. Testing Notification Model & Direct API Operations ---');
-    // Get seeded TPO user (admin@college.com)
-    const tpoUser = await User.findOne({ email: 'admin@college.com' });
-    if (!tpoUser) throw new Error('Seeded TPO user (admin@college.com) not found');
+    console.log('\n--- Setting up Test Data / Fixtures ---');
+    let defaultCollege = await College.findOne({ code: 'NITD' });
+    if (!defaultCollege) {
+      defaultCollege = await College.create({
+        name: 'National Institute of Technology Delhi',
+        code: 'NITD',
+        city: 'New Delhi',
+        state: 'Delhi',
+        status: 'approved',
+      });
+    }
 
+    let googleCompany = await Company.findOne({ name: 'Google' });
+    if (!googleCompany) {
+      googleCompany = await Company.create({
+        name: 'Google',
+        industry: 'Technology',
+        verified: true,
+      });
+    }
+
+    let tpoUser = await User.findOne({ email: 'admin@college.com' });
+    if (!tpoUser) {
+      tpoUser = await User.create({
+        name: 'TPO Administrator',
+        email: 'admin@college.com',
+        password: 'Admin@123',
+        role: 'tpo',
+        college: defaultCollege._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+    }
+
+    let recUser = await User.findOne({ email: 'recruiter@google.com' });
+    if (!recUser) {
+      recUser = await User.create({
+        name: 'Google Recruiter',
+        email: 'recruiter@google.com',
+        password: 'Recruiter@123',
+        role: 'recruiter',
+        company: googleCompany._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+    }
+
+    let studentUser = await User.findOne({ email: 'aarav.sharma1@college.com' });
+    if (!studentUser) {
+      studentUser = await User.create({
+        name: 'Aarav Sharma',
+        email: 'aarav.sharma1@college.com',
+        password: 'Student@123',
+        role: 'student',
+        college: defaultCollege._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+    }
+
+    let studentProfile = await Student.findOne({ user: studentUser._id });
+    if (!studentProfile) {
+      studentProfile = await Student.create({
+        user: studentUser._id,
+        college: defaultCollege._id,
+        enrollmentNo: 'NITD2026CSE001',
+        branch: 'CSE',
+        batchYear: 2026,
+        cgpa: 8.5,
+        backlogs: 0,
+        phone: '9876543210',
+      });
+    }
+
+    console.log('\n--- 1. Testing Notification Model & Direct API Operations ---');
     // Clean up test notifications for this user
     await Notification.deleteMany({ user: tpoUser._id });
 
@@ -186,7 +256,6 @@ async function runNotificationTests() {
 
     console.log('\n--- 3. Testing Trigger 2: Request Response (Notifies Recruiter) ---');
     // Clean recruiter's notifications
-    const recUser = await User.findOne({ email: 'recruiter@google.com' });
     await Notification.deleteMany({ user: recUser._id });
 
     // TPO responds with accept
@@ -215,9 +284,6 @@ async function runNotificationTests() {
     if (!recNotif) throw new Error('Recruiter was not notified of TPO response!');
 
     console.log('\n--- 4. Testing Trigger 3: New Drive Published (Notifies Eligible Students) ---');
-    // Find eligible student from NITD (aarav.sharma1@college.com)
-    const studentUser = await User.findOne({ email: 'aarav.sharma1@college.com' });
-    const studentProfile = await Student.findOne({ user: studentUser._id });
     await Notification.deleteMany({ user: studentUser._id });
 
     // Create a new drive for NITD matching this student's branch and CGPA

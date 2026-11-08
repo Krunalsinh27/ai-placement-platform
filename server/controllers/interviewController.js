@@ -12,6 +12,7 @@ const {
 } = require('../models');
 const { checkStudentSlotClash, checkPanelClash } = require('../utils/interviewService');
 const { createNotification, notifyUser } = require('../utils/notificationService');
+const { parseISTDateTime, getISTTimeDetails } = require('../utils/dateTime');
 
 /**
  * Check if the user is a recruiter from the company owning the drive (or superadmin)
@@ -67,25 +68,6 @@ const verifyDriveAccess = (drive, user) => {
   }
 
   return false;
-};
-
-/**
- * Helper to get hour, minute, and date string in Asia/Kolkata timezone
- */
-const getISTTimeDetails = (date) => {
-  if (!date) return null;
-  const d = new Date(date);
-  if (isNaN(d.getTime())) return null;
-
-  const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
-  const timeStr = d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false }); // HH:MM:SS
-  const [hourStr, minStr] = timeStr.split(':');
-
-  return {
-    dateStr,
-    hour: parseInt(hourStr, 10),
-    minute: parseInt(minStr, 10),
-  };
 };
 
 // =========================================================================
@@ -294,7 +276,7 @@ const autoScheduleInterviewSlots = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Interview start date & time is required' });
     }
 
-    const startDateTime = new Date(startTime);
+    const startDateTime = parseISTDateTime(startTime);
     if (isNaN(startDateTime.getTime())) {
       return res.status(400).json({ success: false, message: 'Invalid start date and time format' });
     }

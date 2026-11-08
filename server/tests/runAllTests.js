@@ -10,6 +10,7 @@ process.env.EMAIL_MODE = 'console';
 const { getTestDbUri } = require('./testHelper');
 
 const testSuites = [
+  { name: 'test:datetime', file: 'tests/testDateTime.js' },
   { name: 'test:emailguard', file: 'tests/testEmailGuard.js' },
   { name: 'test:auth', file: 'tests/testAuth.js' },
   { name: 'test:colleges', file: 'tests/testColleges.js' },

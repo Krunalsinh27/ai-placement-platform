@@ -6,13 +6,14 @@ const {
   RoundBatch,
   Student,
 } = require('../models');
+const { parseISTDateTime } = require('./dateTime');
 
 /**
  * Check if a student has an overlapping interview slot or round batch across ANY drive
  */
 const checkStudentSlotClash = async (studentId, startTime, endTime, excludeSlotId = null) => {
-  const start = new Date(startTime).getTime();
-  const end = new Date(endTime).getTime();
+  const start = parseISTDateTime(startTime).getTime();
+  const end = parseISTDateTime(endTime).getTime();
 
   // 1. Check against other interview slots across ALL drives
   const slotQuery = {
@@ -77,8 +78,8 @@ const checkStudentSlotClash = async (studentId, startTime, endTime, excludeSlotI
  * Check if an interview panel has an overlapping slot (prevent panel double-booking)
  */
 const checkPanelClash = async (panelId, startTime, endTime, excludeSlotId = null) => {
-  const start = new Date(startTime).getTime();
-  const end = new Date(endTime).getTime();
+  const start = parseISTDateTime(startTime).getTime();
+  const end = parseISTDateTime(endTime).getTime();
 
   const panel = await InterviewPanel.findById(panelId);
   if (!panel) return { hasClash: false };
