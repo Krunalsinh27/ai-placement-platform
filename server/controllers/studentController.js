@@ -2,20 +2,16 @@ const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const { Student, User, Application, Drive } = require('../models');
+const { isValidPdf, saveResumeFile, getResumeStream, deleteResumeFile } = require('../utils/storage');
 
 /**
- * Validate that the uploaded file has %PDF as first 4 bytes
+ * Validate that the uploaded file has %PDF as first 4 bytes (backwards-compatibility helper)
  */
-const isValidPdfBuffer = (filePath) => {
-  try {
-    const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(4);
-    fs.readSync(fd, buffer, 0, 4, 0);
-    fs.closeSync(fd);
-    return buffer.toString('utf8', 0, 4) === '%PDF';
-  } catch (err) {
-    return false;
+const isValidPdfBuffer = (filePathOrFile) => {
+  if (typeof filePathOrFile === 'string') {
+    return isValidPdf({ path: filePathOrFile });
   }
+  return isValidPdf(filePathOrFile);
 };
 
 /**
@@ -91,26 +87,24 @@ const updateMyProfile = async (req, res, next) => {
 
     // If file was uploaded via multer, update resumeUrl
     if (req.file) {
-      if (!isValidPdfBuffer(req.file.path)) {
-        try {
-          fs.unlinkSync(req.file.path);
-        } catch (e) {}
+      if (!isValidPdf(req.file)) {
+        if (req.file.path) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (e) {}
+        }
         return res.status(400).json({
           success: false,
           message: 'Uploaded file must be a valid PDF document',
         });
       }
 
-      // Remove old file if it was uploaded locally
-      if (student.resumeUrl && student.resumeUrl.startsWith('/uploads/')) {
-        const oldFilePath = path.join(__dirname, '..', student.resumeUrl);
-        if (fs.existsSync(oldFilePath)) {
-          fs.unlink(oldFilePath, (err) => {
-            if (err) console.error('Failed to delete old resume:', err);
-          });
-        }
-      }
-      student.resumeUrl = `/uploads/${req.file.filename}`;
+      const newResumeUrl = await saveResumeFile({
+        file: req.file,
+        studentId: student._id,
+        existingResumeUrl: student.resumeUrl,
+      });
+      student.resumeUrl = newResumeUrl;
     }
     // Note: resumeUrl from req.body is intentionally ignored to prevent mass assignment
 
@@ -145,10 +139,12 @@ const uploadResume = async (req, res, next) => {
       });
     }
 
-    if (!isValidPdfBuffer(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (e) {}
+    if (!isValidPdf(req.file)) {
+      if (req.file.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {}
+      }
       return res.status(400).json({
         success: false,
         message: 'Uploaded file must be a valid PDF document',
@@ -157,23 +153,24 @@ const uploadResume = async (req, res, next) => {
 
     const student = await Student.findOne({ user: req.user._id });
     if (!student) {
+      if (req.file.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {}
+      }
       return res.status(404).json({
         success: false,
         message: 'Student profile not found',
       });
     }
 
-    // Clean up previous file if locally stored
-    if (student.resumeUrl && student.resumeUrl.startsWith('/uploads/')) {
-      const oldFilePath = path.join(__dirname, '..', student.resumeUrl);
-      if (fs.existsSync(oldFilePath)) {
-        fs.unlink(oldFilePath, (err) => {
-          if (err) console.error('Failed to delete old resume:', err);
-        });
-      }
-    }
+    const newResumeUrl = await saveResumeFile({
+      file: req.file,
+      studentId: student._id,
+      existingResumeUrl: student.resumeUrl,
+    });
 
-    student.resumeUrl = `/uploads/${req.file.filename}`;
+    student.resumeUrl = newResumeUrl;
     await student.save();
 
     res.status(200).json({
@@ -268,24 +265,22 @@ const streamResume = async (req, res, next) => {
       });
     }
 
-    const filename = path.basename(student.resumeUrl);
-    const filePath = path.join(__dirname, '../uploads', filename);
+    try {
+      const { stream, contentType, filename } = await getResumeStream(student.resumeUrl);
 
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({
+      res.setHeader('Content-Type', contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename || 'resume.pdf'}"`);
+
+      stream.on('error', (err) => {
+        next(err);
+      });
+      stream.pipe(res);
+    } catch (err) {
+      return res.status(err.status || 404).json({
         success: false,
-        message: 'Resume file not found on disk',
+        message: err.message || 'Resume file not found',
       });
     }
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="resume.pdf"');
-
-    const stream = fs.createReadStream(filePath);
-    stream.on('error', (err) => {
-      next(err);
-    });
-    stream.pipe(res);
   } catch (error) {
     next(error);
   }
@@ -432,12 +427,11 @@ const deleteStudent = async (req, res, next) => {
     }
 
     // Clean up uploaded resume file if exists
-    if (student.resumeUrl && student.resumeUrl.startsWith('/uploads/')) {
-      const filePath = path.join(__dirname, '..', student.resumeUrl);
-      if (fs.existsSync(filePath)) {
-        fs.unlink(filePath, (err) => {
-          if (err) console.error('Failed to delete resume during student deletion:', err);
-        });
+    if (student.resumeUrl) {
+      try {
+        await deleteResumeFile(student.resumeUrl);
+      } catch (err) {
+        console.error('Failed to delete resume during student deletion:', err.message);
       }
     }
 

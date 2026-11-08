@@ -10,16 +10,24 @@ const hashToken = generateTokenHelper.hashToken;
 
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: process.env.NODE_ENV === 'production' ? (process.env.COOKIE_SAME_SITE || 'none') : 'lax',
+  get secure() {
+    return process.env.NODE_ENV === 'production';
+  },
+  get sameSite() {
+    return process.env.NODE_ENV === 'production' ? 'none' : 'strict';
+  },
   path: '/',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
 const CLEAR_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: process.env.NODE_ENV === 'production' ? (process.env.COOKIE_SAME_SITE || 'none') : 'lax',
+  get secure() {
+    return process.env.NODE_ENV === 'production';
+  },
+  get sameSite() {
+    return process.env.NODE_ENV === 'production' ? 'none' : 'strict';
+  },
   path: '/',
 };
 

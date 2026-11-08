@@ -23,9 +23,9 @@ flowchart TD
         Middleware["Security Middleware (Helmet, CORS, Mongo-Sanitize, Rate Limiter)"]
         AuthModule["Auth & RBAC (JWT Access + SHA-256 Refresh Cookie)"]
         Controllers["Controllers (Students, Drives, Rounds, Tests, Analytics)"]
-        Storage["Disk Storage (Resumes with %PDF validation)"]
+        Storage["Storage Layer (Local Disk or MongoDB GridFS with %PDF check)"]
         CronService["Background Cron Worker (node-cron)"]
-        EmailService["Email Engine & Guard (Nodemailer / Console Simulator)"]
+        EmailService["Email Engine & Guard (Brevo HTTP API / Nodemailer / Console)"]
     end
 
     subgraph Database["Database Cluster"]
@@ -297,6 +297,23 @@ All demonstration accounts are seeded with consistent passwords meeting platform
 | **Student** | `aarav.sharma1@college.com` | `Student@123` | NIT Delhi - CSE (Final Year) |
 | **Analyst / Observer** | `analyst@portal.com` | `Analyst@123` | Higher Education Analytics Board |
 | **Aspirant** | `aspirant@portal.com` | `Aspirant@123` | Prospective Student (State: Delhi) |
+
+---
+
+## Production Deployment & Cloud Architecture
+
+The platform is designed for turnkey cloud deployment with zero additional cloud storage dependencies:
+
+- **Frontend Client**: Hosted on [Vercel](https://vercel.com) as a single-page application configured with `client/vercel.json` for React Router deep linking.
+- **Backend API**: Hosted on [Render](https://render.com) using the root Blueprint definition `render.yaml`.
+- **Database & Object Storage**: Hosted on [MongoDB Atlas](https://www.mongodb.com/atlas). Resumes are stored directly in Atlas using MongoDB GridFS (`STORAGE_DRIVER=gridfs`), avoiding external S3 buckets while surviving Render's ephemeral filesystem redeploys.
+- **Transactional Email**: Supported via Brevo HTTPS API (`EMAIL_PROVIDER=brevo`) or standard SMTP (`EMAIL_PROVIDER=smtp`), fully guarded against test recipient bounces and domain flooding.
+- **Initial Setup**: Run `npm run seed:superadmin` to safely provision the first platform superadmin without demo data.
+- **Health Check & Keep-Alive**: The API exposes `GET /api/health` returning `{ status: "ok", db: "connected" }`.
+  > [!NOTE]
+  > **Render Free Tier & In-Process Cron Jobs**: Render free tier instances spin down after 15 minutes of inactivity. When asleep, in-process timers and `node-cron` schedules (such as interview reminders and application auto-closing) pause until the next incoming request wakes the instance. To keep scheduled jobs running on time without upgrading to a paid instance, configure an external uptime monitor (e.g. [UptimeRobot](https://uptimerobot.com) or [Cron-Job.org](https://cron-job.org)) to ping `GET /api/health` every 10 minutes.
+
+For comprehensive, step-by-step instructions on deploying MongoDB Atlas, Render, and Vercel, refer to [DEPLOY.md](DEPLOY.md).
 
 ---
 
