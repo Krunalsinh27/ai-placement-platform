@@ -1,6 +1,22 @@
 const path = require('path');
 const fs = require('fs');
-const { Student, User } = require('../models');
+const mongoose = require('mongoose');
+const { Student, User, Application, Drive } = require('../models');
+
+/**
+ * Validate that the uploaded file has %PDF as first 4 bytes
+ */
+const isValidPdfBuffer = (filePath) => {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(4);
+    fs.readSync(fd, buffer, 0, 4, 0);
+    fs.closeSync(fd);
+    return buffer.toString('utf8', 0, 4) === '%PDF';
+  } catch (err) {
+    return false;
+  }
+};
 
 /**
  * @desc    Get current student's profile
@@ -73,8 +89,18 @@ const updateMyProfile = async (req, res, next) => {
       }
     }
 
-    // If file was uploaded via multer, update resumeUrl to the static path
+    // If file was uploaded via multer, update resumeUrl
     if (req.file) {
+      if (!isValidPdfBuffer(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {}
+        return res.status(400).json({
+          success: false,
+          message: 'Uploaded file must be a valid PDF document',
+        });
+      }
+
       // Remove old file if it was uploaded locally
       if (student.resumeUrl && student.resumeUrl.startsWith('/uploads/')) {
         const oldFilePath = path.join(__dirname, '..', student.resumeUrl);
@@ -85,9 +111,8 @@ const updateMyProfile = async (req, res, next) => {
         }
       }
       student.resumeUrl = `/uploads/${req.file.filename}`;
-    } else if (resumeUrl !== undefined) {
-      student.resumeUrl = resumeUrl.trim();
     }
+    // Note: resumeUrl from req.body is intentionally ignored to prevent mass assignment
 
     await student.save();
 
@@ -120,6 +145,16 @@ const uploadResume = async (req, res, next) => {
       });
     }
 
+    if (!isValidPdfBuffer(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (e) {}
+      return res.status(400).json({
+        success: false,
+        message: 'Uploaded file must be a valid PDF document',
+      });
+    }
+
     const student = await Student.findOne({ user: req.user._id });
     if (!student) {
       return res.status(404).json({
@@ -146,6 +181,111 @@ const uploadResume = async (req, res, next) => {
       message: 'Resume uploaded successfully',
       resumeUrl: student.resumeUrl,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Stream student resume PDF with strict RBAC authorization
+ * @route   GET /api/students/:studentId/resume
+ * @access  Private (Owner student, College TPO, Recruiter with application, Admin, Superadmin)
+ */
+const streamResume = async (req, res, next) => {
+  try {
+    const { studentId } = req.params;
+
+    let student;
+    if (studentId === 'me') {
+      student = await Student.findOne({ user: req.user._id }).populate('user', 'name email');
+    } else if (mongoose.Types.ObjectId.isValid(studentId)) {
+      student = await Student.findById(studentId).populate('user', 'name email');
+      if (!student) {
+        student = await Student.findOne({ user: studentId }).populate('user', 'name email');
+      }
+    }
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student profile not found',
+      });
+    }
+
+    const userId = req.user._id.toString();
+    const studentUserId = (student.user?._id || student.user)?.toString();
+    const studentCollegeId = (student.college?._id || student.college)?.toString();
+    const userCollegeId = (req.user.college?._id || req.user.college)?.toString();
+
+    let isAuthorized = false;
+
+    // 1. The student themselves
+    if (studentUserId && userId === studentUserId) {
+      isAuthorized = true;
+    }
+
+    // 2. Superadmin or Admin
+    if (!isAuthorized && (req.user.role === 'superadmin' || req.user.role === 'admin')) {
+      isAuthorized = true;
+    }
+
+    // 3. TPO of the same college
+    if (!isAuthorized && req.user.role === 'tpo') {
+      if (userCollegeId && studentCollegeId && userCollegeId === studentCollegeId) {
+        isAuthorized = true;
+      }
+    }
+
+    // 4. Recruiter who has received an application from this student for one of their drives/requirements
+    if (!isAuthorized && req.user.role === 'recruiter') {
+      const companyId = (req.user.company?._id || req.user.company)?.toString();
+      if (companyId) {
+        const companyDrives = await Drive.find({ company: companyId }).select('_id');
+        const driveIds = companyDrives.map((d) => d._id);
+        if (driveIds.length > 0) {
+          const applicationExists = await Application.exists({
+            student: student._id,
+            drive: { $in: driveIds },
+          });
+          if (applicationExists) {
+            isAuthorized = true;
+          }
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You do not have permission to access this resume',
+      });
+    }
+
+    if (!student.resumeUrl) {
+      return res.status(404).json({
+        success: false,
+        message: 'Resume not found for this student',
+      });
+    }
+
+    const filename = path.basename(student.resumeUrl);
+    const filePath = path.join(__dirname, '../uploads', filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        message: 'Resume file not found on disk',
+      });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="resume.pdf"');
+
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (err) => {
+      next(err);
+    });
+    stream.pipe(res);
   } catch (error) {
     next(error);
   }
@@ -319,6 +459,7 @@ module.exports = {
   getMyProfile,
   updateMyProfile,
   uploadResume,
+  streamResume,
   getStudents,
   getStudentById,
   deleteStudent,

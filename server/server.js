@@ -22,8 +22,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Static uploads route removed for security: resumes are served via protected streaming route GET /api/students/:studentId/resume
 
 // HTTP request logger
 if (process.env.NODE_ENV !== 'test') {

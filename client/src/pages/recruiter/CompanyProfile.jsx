@@ -37,7 +37,7 @@ const CompanyProfile = () => {
   useEffect(() => {
     const fetchCompanyProfile = async () => {
       try {
-        const res = await api.get('/company/me');
+        const res = await api.get('/companies/me');
         if (res.data.success) {
           const comp = res.data.company;
           setFormData({
@@ -86,7 +86,7 @@ const CompanyProfile = () => {
 
     setIsSaving(true);
     try {
-      const res = await api.put('/company/me', {
+      const res = await api.put('/companies/me', {
         name: formData.name.trim(),
         industry: formData.industry.trim(),
         website: formData.website.trim(),

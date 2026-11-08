@@ -31,6 +31,7 @@ const getPlatformOverview = async (req, res, next) => {
       pendingAccountsCount,
       pendingTposCount,
       pendingStudentsCount,
+      pendingRecruitersCount,
     ] = await Promise.all([
       College.countDocuments(),
       College.countDocuments({ status: 'approved' }),
@@ -43,9 +44,10 @@ const getPlatformOverview = async (req, res, next) => {
       Drive.countDocuments(),
       Offer.countDocuments({ status: 'accepted' }),
       User.countDocuments({ role: 'analyst', isApproved: false }),
-      User.countDocuments({ isApproved: false, role: { $in: ['tpo', 'student'] } }),
+      User.countDocuments({ isApproved: false, role: { $in: ['tpo', 'student', 'recruiter'] } }),
       User.countDocuments({ isApproved: false, role: 'tpo' }),
       User.countDocuments({ isApproved: false, role: 'student' }),
+      User.countDocuments({ isApproved: false, role: 'recruiter' }),
     ]);
 
     // Fetch recent pending approvals (colleges, analysts, and accounts)
@@ -56,10 +58,11 @@ const getPlatformOverview = async (req, res, next) => {
         .select('_id name email organisation designation createdAt')
         .limit(5)
         .lean(),
-      User.find({ isApproved: false, role: { $in: ['tpo', 'student'] } })
+      User.find({ isApproved: false, role: { $in: ['tpo', 'student', 'recruiter'] } })
         .populate('college', 'name code')
+        .populate('company', 'name industry')
         .sort({ createdAt: -1 })
-        .select('_id name email role college createdAt')
+        .select('_id name email role college company createdAt')
         .limit(5)
         .lean(),
     ]);
@@ -89,6 +92,7 @@ const getPlatformOverview = async (req, res, next) => {
         accounts: pendingAccountsCount,
         tpos: pendingTposCount,
         students: pendingStudentsCount,
+        recruiters: pendingRecruitersCount,
       },
       recentPending: {
         colleges: recentPendingColleges,
@@ -338,15 +342,17 @@ const getPendingAccounts = async (req, res, next) => {
     const { role = 'all' } = req.query;
     const query = {
       isApproved: false,
-      role: { $in: ['tpo', 'student'] },
+      role: { $in: ['tpo', 'student', 'recruiter'] },
     };
 
-    if (role === 'tpo') query.role = 'tpo';
-    if (role === 'student') query.role = 'student';
+    if (['tpo', 'student', 'recruiter'].includes(role)) {
+      query.role = role;
+    }
 
     const users = await User.find(query)
-      .select('_id name email role phone college createdAt isApproved isEmailVerified')
+      .select('_id name email role phone college company createdAt isApproved isEmailVerified')
       .populate('college', 'name code city state status')
+      .populate('company', 'name industry verified')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -430,16 +436,16 @@ const getPendingAccounts = async (req, res, next) => {
 };
 
 /**
- * @desc    Superadmin approve a pending TPO or student account across any college
+ * @desc    Superadmin approve a pending TPO, student, or recruiter account
  * @route   PUT /api/superadmin/pending-accounts/:id/approve
  * @access  Private (Superadmin only)
  */
 const approvePendingAccount = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const user = await User.findById(id).populate('college');
+    const user = await User.findById(id).populate('college').populate('company');
 
-    if (!user || !['tpo', 'student'].includes(user.role)) {
+    if (!user || !['tpo', 'student', 'recruiter'].includes(user.role)) {
       return res.status(404).json({
         success: false,
         message: 'Pending account not found or not eligible for approval',
@@ -449,12 +455,14 @@ const approvePendingAccount = async (req, res, next) => {
     user.isApproved = true;
     await user.save();
 
+    const orgName = user.role === 'recruiter' ? user.company?.name : user.college?.name;
+
     // Send email notification to user
     sendAccountApprovedEmail({
       to: user.email,
       name: user.name,
       role: user.role,
-      collegeName: user.college?.name,
+      collegeName: orgName,
     }).catch(() => {});
 
     res.status(200).json({
@@ -467,6 +475,7 @@ const approvePendingAccount = async (req, res, next) => {
         role: user.role,
         isApproved: user.isApproved,
         college: user.college,
+        company: user.company,
       },
     });
   } catch (error) {
@@ -475,16 +484,16 @@ const approvePendingAccount = async (req, res, next) => {
 };
 
 /**
- * @desc    Superadmin reject and delete a pending TPO or student account across any college
+ * @desc    Superadmin reject and delete a pending TPO, student, or recruiter account
  * @route   PUT /api/superadmin/pending-accounts/:id/reject
  * @access  Private (Superadmin only)
  */
 const rejectPendingAccount = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const user = await User.findById(id).populate('college');
+    const user = await User.findById(id).populate('college').populate('company');
 
-    if (!user || !['tpo', 'student'].includes(user.role)) {
+    if (!user || !['tpo', 'student', 'recruiter'].includes(user.role)) {
       return res.status(404).json({
         success: false,
         message: 'Pending account not found or not eligible for rejection',
@@ -494,14 +503,14 @@ const rejectPendingAccount = async (req, res, next) => {
     const userName = user.name;
     const userEmail = user.email;
     const userRole = user.role;
-    const collegeName = user.college?.name;
+    const orgName = user.role === 'recruiter' ? user.company?.name : user.college?.name;
 
     // Send rejection email notification to user
     sendAccountRejectedEmail({
       to: userEmail,
       name: userName,
       role: userRole,
-      collegeName,
+      collegeName: orgName,
     }).catch(() => {});
 
     if (user.role === 'student') {

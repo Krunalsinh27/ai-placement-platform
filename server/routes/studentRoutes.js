@@ -4,6 +4,7 @@ const {
   getMyProfile,
   updateMyProfile,
   uploadResume: uploadResumeHandler,
+  streamResume,
   getStudents,
   getStudentById,
   deleteStudent,
@@ -29,6 +30,9 @@ router.get('/upcoming-rounds', protect, authorize('student'), getStudentUpcoming
 
 // Student upcoming interview slots (must come before /:id)
 router.get('/my-interview-slots', protect, authorize('student'), getStudentMyInterviewSlots);
+
+// Resume streaming route (must come before /:id)
+router.get('/:studentId/resume', protect, streamResume);
 
 // Admin student management routes
 router.route('/').get(protect, authorize('admin'), getStudents);

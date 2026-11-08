@@ -1,7 +1,20 @@
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { User, Student, College, Company, Aspirant, Notification } = require('../models');
-const generateToken = require('../utils/generateToken');
+const generateTokenHelper = require('../utils/generateToken');
 const emailService = require('../utils/emailService');
+
+const generateToken = generateTokenHelper.generateToken || generateTokenHelper;
+const generateRefreshToken = generateTokenHelper.generateRefreshToken;
+const hashToken = generateTokenHelper.hashToken;
+
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? (process.env.COOKIE_SAME_SITE || 'none') : 'lax',
+  path: '/',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
 
 /**
  * Password validation rule:
@@ -134,6 +147,37 @@ const notifyApproversForPendingAccount = async ({ registrant, college, role, det
     }
   } catch (err) {
     console.error('[notifyApproversForPendingAccount] Error:', err.message);
+  }
+};
+
+/**
+ * Notify platform superadmin when a new recruiter registers and requires approval
+ */
+const notifySuperadminForPendingRecruiter = async (recruiterUser, companyDoc) => {
+  try {
+    const superadmins = await User.find({ role: 'superadmin' });
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const compName = companyDoc?.name || 'Company';
+
+    for (const sa of superadmins) {
+      await Notification.create({
+        user: sa._id,
+        type: 'pending_approval',
+        message: `New recruiter registration: ${recruiterUser.name} (${compName}) requires approval.`,
+        link: '/superadmin/pending-accounts',
+      }).catch(() => {});
+
+      await emailService.sendApprovalNoticeEmail({
+        to: sa.email,
+        approverName: sa.name,
+        registrantName: recruiterUser.name,
+        registrantRole: 'recruiter',
+        collegeName: compName,
+        reviewLink: `${clientUrl}/superadmin/pending-accounts`,
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.error('[notifySuperadminForPendingRecruiter] Error:', err.message);
   }
 };
 
@@ -812,7 +856,7 @@ const registerRecruiter = async (req, res, next) => {
             description: description ? description.trim() : '',
             logoUrl: logoUrl ? logoUrl.trim() : '',
             owner: existingUser._id,
-            verified: true,
+            verified: false,
             hrContact: {
               name: hrContact?.name || name.trim(),
               email: hrContact?.email || email.trim().toLowerCase(),
@@ -827,9 +871,11 @@ const registerRecruiter = async (req, res, next) => {
       existingUser.role = 'recruiter';
       existingUser.company = targetCompany._id;
       existingUser.phone = phone ? phone.trim() : '';
-      existingUser.isApproved = true;
+      existingUser.isApproved = false;
       existingUser.isEmailVerified = false;
       await existingUser.save();
+
+      notifySuperadminForPendingRecruiter(existingUser, targetCompany).catch(() => {});
 
       const otpResult = await generateAndSendOtp(existingUser, 'verify_email');
       if (!otpResult.success) {
@@ -891,7 +937,7 @@ const registerRecruiter = async (req, res, next) => {
           description: description ? description.trim() : '',
           logoUrl: logoUrl ? logoUrl.trim() : '',
           owner: null,
-          verified: true, // TODO: superadmin verification workflow
+          verified: false,
           hrContact: {
             name: hrContact?.name || name.trim(),
             email: hrContact?.email || email.trim().toLowerCase(),
@@ -908,7 +954,7 @@ const registerRecruiter = async (req, res, next) => {
       role: 'recruiter',
       company: targetCompany._id,
       phone: phone ? phone.trim() : '',
-      isApproved: true,
+      isApproved: false,
       isEmailVerified: false,
     });
 
@@ -916,6 +962,8 @@ const registerRecruiter = async (req, res, next) => {
       targetCompany.owner = user._id;
       await targetCompany.save();
     }
+
+    notifySuperadminForPendingRecruiter(user, targetCompany).catch(() => {});
 
     const otpResult = await generateAndSendOtp(user, 'verify_email');
     if (!otpResult.success) {

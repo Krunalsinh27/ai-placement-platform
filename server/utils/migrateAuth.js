@@ -4,12 +4,13 @@ const path = require('path');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const { User, College } = require('../models');
+const { User, College, Company } = require('../models');
 
 /**
  * Migration helper to ensure all existing seeded and registered users have
  * isEmailVerified = true and isApproved = true (unless explicitly unapproved TPO),
  * ensure existing colleges have status = 'approved',
+ * ensure existing companies are verified,
  * and seed superadmin & approved analyst accounts.
  */
 const migrateAuthUsers = async () => {
@@ -21,6 +22,19 @@ const migrateAuthUsers = async () => {
     );
     if (collegeUpdateResult.modifiedCount > 0) {
       console.log(`[Migration] Migrated ${collegeUpdateResult.modifiedCount} college(s) to status='approved'`);
+    }
+
+    // 1b. Migrate existing companies to verified: true if missing
+    if (Company) {
+      const companyUpdateResult = await Company.updateMany(
+        { verified: { $exists: false } },
+        { $set: { verified: true } }
+      );
+      if (companyUpdateResult.modifiedCount > 0) {
+        console.log(`[Migration] Migrated ${companyUpdateResult.modifiedCount} company(ies) to verified=true`);
+      }
+      // Ensure Google is verified
+      await Company.updateMany({ name: /^Google$/i }, { $set: { verified: true } });
     }
 
     const unverifiedCount = await User.countDocuments({ isEmailVerified: { $ne: true } });

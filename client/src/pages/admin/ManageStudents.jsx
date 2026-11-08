@@ -3,6 +3,7 @@ import api from '../../services/api';
 import Table from '../../components/common/Table';
 import Pagination from '../../components/common/Pagination';
 import Modal from '../../components/common/Modal';
+import { openResumeInNewTab } from '../../utils/resumeViewer';
 import {
   Users,
   Search,
@@ -148,20 +149,15 @@ const ManageStudents = () => {
           return <span className="text-slate-400 text-[11px]">No Resume</span>;
         }
 
-        const fullUrl = row.resumeUrl.startsWith('http')
-          ? row.resumeUrl
-          : `${serverOrigin}${row.resumeUrl}`;
-
         return (
-          <a
-            href={fullUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-semibold text-xs"
+          <button
+            type="button"
+            onClick={() => openResumeInNewTab(row._id, `${row.user?.name || 'Student'}'s Resume`)}
+            className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-semibold text-xs cursor-pointer"
           >
             <span>PDF</span>
             <ExternalLink className="w-3 h-3" />
-          </a>
+          </button>
         );
       },
     },
@@ -324,19 +320,19 @@ const ManageStudents = () => {
               <div>
                 <span className="text-slate-400 block">Resume</span>
                 {selectedStudent.resumeUrl ? (
-                  <a
-                    href={
-                      selectedStudent.resumeUrl.startsWith('http')
-                        ? selectedStudent.resumeUrl
-                        : `${serverOrigin}${selectedStudent.resumeUrl}`
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openResumeInNewTab(
+                        selectedStudent._id,
+                        `${selectedStudent.user?.name || 'Student'}'s Resume`
+                      )
                     }
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-indigo-600 hover:underline font-bold inline-flex items-center gap-1"
+                    className="text-indigo-600 hover:underline font-bold inline-flex items-center gap-1 cursor-pointer"
                   >
                     <span>View Resume</span>
                     <ExternalLink className="w-3 h-3" />
-                  </a>
+                  </button>
                 ) : (
                   <span className="text-slate-400">Not Uploaded</span>
                 )}

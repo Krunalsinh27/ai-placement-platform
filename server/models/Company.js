@@ -33,10 +33,10 @@ const companySchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
-    // Auto-verified for now; TODO: change to false when superadmin manual verification workflow is activated
+    // Verification requires superadmin approval
     verified: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     hrContact: {
       name: {
