@@ -406,17 +406,40 @@ async function runTests() {
     }
 
     // 10.5 Cross-college drive applications check
-    // Find an existing drive from NITD/PICT
-    const existingExternalDrive = await Drive.findOne({});
-    if (existingExternalDrive) {
-      const extDriveAppsRes = await fetch(`${BASE_URL}/applications/drive/${existingExternalDrive._id}`, {
-        headers: { Authorization: `Bearer ${isoToken}` }
+    let existingExternalDrive = await Drive.findOne({ college: { $ne: isoUser.college } });
+    let createdDummyExtDrive = false;
+    let dummyExtCollege = null;
+    if (!existingExternalDrive) {
+      dummyExtCollege = await College.create({
+        name: 'Dummy External College',
+        code: 'DUMMY_EXT_COL',
+        city: 'New Delhi',
+        state: 'Delhi',
+        status: 'approved',
       });
-      const extDriveAppsData = await extDriveAppsRes.json();
-      console.log('Applications visible from other college drive (expected 0):', extDriveAppsData.count || extDriveAppsData.applications?.length);
-      if ((extDriveAppsData.count || 0) !== 0) {
-        throw new Error('Isolated college TPO saw applicants from another college drive!');
-      }
+      existingExternalDrive = await Drive.create({
+        college: dummyExtCollege._id,
+        role: 'External Software Engineer',
+        status: 'open',
+        batchYear: 2026,
+        allowedBranches: ['CSE'],
+        applicationsClosed: false,
+      });
+      createdDummyExtDrive = true;
+    }
+
+    const extDriveAppsRes = await fetch(`${BASE_URL}/applications/drive/${existingExternalDrive._id}`, {
+      headers: { Authorization: `Bearer ${isoToken}` }
+    });
+    const extDriveAppsData = await extDriveAppsRes.json();
+    console.log('Applications visible from other college drive (expected 0):', extDriveAppsData.count || extDriveAppsData.applications?.length);
+    if ((extDriveAppsData.count || 0) !== 0) {
+      throw new Error('Isolated college TPO saw applicants from another college drive!');
+    }
+
+    if (createdDummyExtDrive) {
+      await Drive.deleteOne({ _id: existingExternalDrive._id });
+      if (dummyExtCollege) await College.deleteOne({ _id: dummyExtCollege._id });
     }
 
     // 11. Testing College Settings & Cross-College Security (PUT /api/colleges/my/settings)

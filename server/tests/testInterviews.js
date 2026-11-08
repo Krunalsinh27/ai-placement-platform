@@ -51,6 +51,79 @@ async function runInterviewTests() {
 
     // 1. Authenticate TPO, Google Recruiter, and Students
     console.log('--- 1. Authenticating test users ---');
+
+    let college = await College.findOne({ code: 'NITD' });
+    if (!college) {
+      college = await College.create({
+        name: 'National Institute of Technology Delhi',
+        code: 'NITD',
+        city: 'New Delhi',
+        state: 'Delhi',
+        status: 'approved',
+      });
+    }
+
+    let googleCompany = await Company.findOne({ name: /Google/i });
+    if (!googleCompany) {
+      googleCompany = await Company.create({
+        name: 'Google',
+        industry: 'Technology',
+        verified: true,
+      });
+    }
+
+    let tpoUser = await User.findOne({ email: 'admin@college.com' });
+    if (!tpoUser) {
+      tpoUser = await User.create({
+        name: 'TPO Administrator',
+        email: 'admin@college.com',
+        password: 'Admin@123',
+        role: 'tpo',
+        college: college._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+    }
+
+    let recUser = await User.findOne({ email: 'recruiter@google.com' });
+    if (!recUser) {
+      recUser = await User.create({
+        name: 'Google Recruiter',
+        email: 'recruiter@google.com',
+        password: 'Recruiter@123',
+        role: 'recruiter',
+        company: googleCompany._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+    }
+
+    let students = await Student.find({ college: college._id }).populate('user').limit(4);
+    while (students.length < 3) {
+      const idx = students.length + 1;
+      const u = await User.create({
+        name: `Interview Student ${idx}`,
+        email: `interview.student${idx}@nitd.edu`,
+        password: 'Student@123',
+        role: 'student',
+        college: college._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+      const s = await Student.create({
+        user: u._id,
+        college: college._id,
+        enrollmentNo: `NITD_INT_${idx}`,
+        branch: 'CSE',
+        batchYear: 2026,
+        cgpa: 8.5,
+        backlogs: 0,
+        phone: '9876543210',
+      });
+      s.user = u;
+      students.push(s);
+    }
+
     const tpoRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -70,10 +143,6 @@ async function runInterviewTests() {
     const recToken = recData.token;
     if (!recToken) throw new Error('Google Recruiter login failed');
     console.log('✓ Recruiter authenticated:', recData.user.name, `(${recData.user.company?.name})`);
-
-    const college = await College.findOne({ code: 'NITD' });
-    const students = await Student.find({ college: college._id }).populate('user').limit(4);
-    if (students.length < 3) throw new Error('Need at least 3 students for test');
 
     const student1 = students[0];
     const student2 = students[1];
@@ -101,7 +170,7 @@ async function runInterviewTests() {
 
     // 2. Setup Test Drive & Interview Round
     console.log('\n--- 2. Setting up Test Drive & Technical Interview Round ---');
-    const googleCompany = await Company.findOne({ name: /Google/i });
+    googleCompany = await Company.findOne({ name: /Google/i });
     if (!googleCompany) throw new Error('Google company profile not found');
 
     const jobReq = await JobRequirement.create({

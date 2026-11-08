@@ -61,6 +61,18 @@ async function runEmailTests() {
   const server = app.listen(PORT);
   const BASE_URL = `http://127.0.0.1:${PORT}/api`;
 
+  let fixtureCollege,
+    fixtureCompany,
+    fixtureTpoUser,
+    fixtureRecUser,
+    fixtureStudentUser,
+    fixtureStudent,
+    fixtureDrive,
+    fixtureApp,
+    fixtureRound,
+    fixtureParticipant,
+    fixturePanel;
+
   try {
     console.log('\n======================================================');
     console.log('     TASK 31B: EMAIL NOTIFICATIONS & PIPELINE TESTS    ');
@@ -259,12 +271,146 @@ async function runEmailTests() {
     console.log('✓ Template 9 (announcement) rendered with custom message');
 
     // ------------------------------------------------------------------------
+    // SETUP FIXTURES (Hermetic test setup)
+    // ------------------------------------------------------------------------
+    console.log('\n--- Setting up Hermetic Test Fixtures ---');
+    await EmailLog.deleteMany({ recipientEmail: { $in: ['test-retry@domain.com', 'test.email.student@testcollege.edu', 'other@test.com'] } });
+    await College.deleteMany({ code: { $in: ['TEST_EMAIL_COLLEGE', 'TEST_EMAIL_OTHER_COLLEGE'] } });
+    await Company.deleteMany({ name: 'Hermetic Email Corp' });
+    await User.deleteMany({ email: { $in: ['test.email.tpo@testcollege.edu', 'test.email.recruiter@emailtest.com', 'test.email.student@testcollege.edu'] } });
+    await Student.deleteMany({ enrollmentNo: 'TEST_EMAIL_STU_001' });
+
+    fixtureCollege = await College.create({
+      name: 'Hermetic Email Test College',
+      code: 'TEST_EMAIL_COLLEGE',
+      city: 'New Delhi',
+      state: 'Delhi',
+      status: 'approved',
+      contactEmail: 'test.email.tpo@testcollege.edu',
+    });
+
+    fixtureCompany = await Company.create({
+      name: 'Hermetic Email Corp',
+      industry: 'Software',
+      verified: true,
+    });
+
+    fixtureTpoUser = await User.create({
+      name: 'Hermetic TPO',
+      email: 'test.email.tpo@testcollege.edu',
+      password: 'Password@123',
+      role: 'tpo',
+      college: fixtureCollege._id,
+      isApproved: true,
+      isEmailVerified: true,
+    });
+
+    fixtureRecUser = await User.create({
+      name: 'Hermetic Recruiter',
+      email: 'test.email.recruiter@emailtest.com',
+      password: 'Password@123',
+      role: 'recruiter',
+      company: fixtureCompany._id,
+      isApproved: true,
+      isEmailVerified: true,
+    });
+
+    fixtureStudentUser = await User.create({
+      name: 'Hermetic Student',
+      email: 'test.email.student@testcollege.edu',
+      password: 'Password@123',
+      role: 'student',
+      college: fixtureCollege._id,
+      isApproved: true,
+      isEmailVerified: true,
+    });
+
+    fixtureStudent = await Student.create({
+      user: fixtureStudentUser._id,
+      college: fixtureCollege._id,
+      enrollmentNo: 'TEST_EMAIL_STU_001',
+      branch: 'CSE',
+      batchYear: 2026,
+      cgpa: 8.5,
+      backlogs: 0,
+      phone: '9876543210',
+      sendReminderEmails: true,
+    });
+
+    fixtureDrive = await Drive.create({
+      college: fixtureCollege._id,
+      company: fixtureCompany._id,
+      companyName: fixtureCompany.name,
+      role: 'Full Stack Email Test Engineer',
+      packageLpa: 15,
+      location: 'Delhi',
+      minCgpa: 7.0,
+      maxBacklogs: 0,
+      allowedBranches: ['CSE'],
+      batchYear: 2026,
+      status: 'open',
+      applicationsClosed: true,
+      driveDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      lastDateToApply: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    });
+
+    fixtureApp = await Application.create({
+      student: fixtureStudent._id,
+      drive: fixtureDrive._id,
+      status: 'applied',
+      appliedAt: new Date(),
+    });
+
+    fixtureRound = await Round.create({
+      drive: fixtureDrive._id,
+      name: 'Round 1: Technical Assessment',
+      type: 'technical',
+      order: 1,
+      status: 'scheduled',
+      mode: 'online',
+      startTime: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      endTime: new Date(Date.now() + 25 * 60 * 60 * 1000),
+    });
+
+    fixtureParticipant = await RoundParticipant.create({
+      round: fixtureRound._id,
+      student: fixtureStudent._id,
+      drive: fixtureDrive._id,
+      application: fixtureApp._id,
+      attendance: 'present',
+      result: 'pending',
+    });
+
+    fixturePanel = await InterviewPanel.create({
+      round: fixtureRound._id,
+      drive: fixtureDrive._id,
+      name: 'Technical Panel Alpha',
+      interviewers: [{ name: 'Lead Interviewer', email: 'interviewer@emailtest.com' }],
+      venueOrLink: 'https://meet.google.com/test-panel',
+    });
+
+    const tpoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'test.email.tpo@testcollege.edu', password: 'Password@123' }),
+    });
+    const tpoData = await tpoLoginRes.json();
+    const tpoToken = tpoData.token;
+    if (!tpoToken) throw new Error('Fixture TPO login failed');
+
+    const recLoginRes = await fetch(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'test.email.recruiter@emailtest.com', password: 'Password@123' }),
+    });
+    const recData = await recLoginRes.json();
+    const recToken = recData.token;
+    if (!recToken) throw new Error('Fixture Recruiter login failed');
+
+    // ------------------------------------------------------------------------
     // SECTION 2: Background Queue Retry on Failure
     // ------------------------------------------------------------------------
     console.log('\n--- 2. Testing Background Queue Worker & 3x Retry Loop ---');
-
-    const testTpoUser = await User.findOne({ email: 'admin@college.com' });
-    if (!testTpoUser) throw new Error('admin@college.com not found');
 
     // Temporarily reduce delay for tests
     emailQueue.delayMs = 10;
@@ -277,13 +423,13 @@ async function runEmailTests() {
     });
 
     const failedLog = await emailQueue.enqueueEmail({
-      user: testTpoUser._id,
+      user: fixtureTpoUser._id,
       recipientEmail: 'test-retry@domain.com',
       recipientName: 'Test Candidate',
       type: 'general_notification',
       subject: 'Automated Retry Test',
       htmlBody: '<p>Testing background queue retry</p>',
-      college: testTpoUser.college,
+      college: fixtureCollege._id,
     });
 
     if (!failedLog || failedLog.status !== 'queued') {
@@ -328,39 +474,36 @@ async function runEmailTests() {
     // ------------------------------------------------------------------------
     console.log('\n--- 3. Testing Student Reminder Opt-Out vs. Mandatory Emails ---');
 
-    const testStudent = await Student.findOne().populate('user college');
-    if (!testStudent) throw new Error('No student found in test database');
-
     // Step A: Set student sendReminderEmails = false
-    testStudent.sendReminderEmails = false;
-    await testStudent.save();
+    fixtureStudent.sendReminderEmails = false;
+    await fixtureStudent.save();
 
-    const initialLogCount = await EmailLog.countDocuments({ user: testStudent.user._id });
+    const initialLogCount = await EmailLog.countDocuments({ user: fixtureStudentUser._id });
 
     // Try sending a reminder email (opt-out applies)
-    await notifyUser(testStudent.user._id, 'slot_reminder_24h', {
-      companyName: 'Test Corp',
+    await notifyUser(fixtureStudentUser._id, 'slot_reminder_24h', {
+      companyName: fixtureCompany.name,
       role: 'Dev',
       startTime: new Date(),
       message: 'Reminder for your slot tomorrow',
     });
 
-    const postReminderLogCount = await EmailLog.countDocuments({ user: testStudent.user._id });
+    const postReminderLogCount = await EmailLog.countDocuments({ user: fixtureStudentUser._id });
     if (postReminderLogCount !== initialLogCount) {
       throw new Error('Email was queued for opted-out student on reminder notification');
     }
     console.log('✓ Student with sendReminderEmails=false correctly skipped reminder email');
 
     // Step B: Send mandatory result_declared email (opt-out MUST NOT apply)
-    await notifyUser(testStudent.user._id, 'result_declared', {
-      companyName: 'Test Corp',
+    await notifyUser(fixtureStudentUser._id, 'result_declared', {
+      companyName: fixtureCompany.name,
       role: 'Dev',
       result: 'cleared',
       roundName: 'Round 1',
     });
 
     const postResultLogCount = await EmailLog.countDocuments({
-      user: testStudent.user._id,
+      user: fixtureStudentUser._id,
       type: 'result_declared',
     });
     if (postResultLogCount < 1) {
@@ -369,15 +512,15 @@ async function runEmailTests() {
     console.log('✓ Mandatory result_declared email was sent regardless of sendReminderEmails setting');
 
     // Step C: Send mandatory offer_received email (opt-out MUST NOT apply)
-    await notifyUser(testStudent.user._id, 'offer_received', {
-      companyName: 'Test Corp',
+    await notifyUser(fixtureStudentUser._id, 'offer_received', {
+      companyName: fixtureCompany.name,
       role: 'Dev',
       packageLpa: 15,
       expiryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
     const postOfferLogCount = await EmailLog.countDocuments({
-      user: testStudent.user._id,
+      user: fixtureStudentUser._id,
       type: 'offer_received',
     });
     if (postOfferLogCount < 1) {
@@ -386,172 +529,101 @@ async function runEmailTests() {
     console.log('✓ Mandatory offer_received email was sent regardless of sendReminderEmails setting');
 
     // Restore student setting
-    testStudent.sendReminderEmails = true;
-    await testStudent.save();
+    fixtureStudent.sendReminderEmails = true;
+    await fixtureStudent.save();
 
     // ------------------------------------------------------------------------
     // SECTION 4: Automated Cron Reminders & De-Duplication
     // ------------------------------------------------------------------------
     console.log('\n--- 4. Testing Automated Reminders & Flag De-Duplication ---');
 
-    // Find or create necessary references for InterviewSlot
-    const testDrive = await Drive.findOne({ applicationsClosed: true }).populate('company college') ||
-      await Drive.findOne().populate('company college');
-    const testRound = (testDrive && await Round.findOne({ drive: testDrive._id, type: { $in: ['technical', 'hr'] } })) ||
-      await Round.findOne({ type: { $in: ['technical', 'hr'] } }) ||
-      await Round.findOne();
+    const futureStartTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const testSlot = await InterviewSlot.create({
+      round: fixtureRound._id,
+      drive: fixtureDrive._id,
+      panel: fixturePanel._id,
+      student: fixtureStudent._id,
+      application: fixtureApp._id,
+      startTime: futureStartTime,
+      endTime: new Date(futureStartTime.getTime() + 30 * 60 * 1000),
+      status: 'scheduled',
+      queueNumber: 1,
+      reminderSent24h: false,
+      reminderSent1h: false,
+    });
 
-    const actualDrive = testDrive || (testRound ? await Drive.findById(testRound.drive).populate('company college') : null);
+    // First run: should dispatch reminder and set reminderSent24h = true
+    const dispatched1 = await sendUpcomingReminders();
+    const reloadedSlot = await InterviewSlot.findById(testSlot._id);
 
-    let testPanel = testRound ? await InterviewPanel.findOne({ round: testRound._id }) : null;
-    if (!testPanel && testRound && actualDrive) {
-      testPanel = await InterviewPanel.create({
-        round: testRound._id,
-        drive: actualDrive._id,
-        name: 'Technical Panel 1',
-        interviewers: [{ name: 'Test Interviewer', email: 'interviewer@test.com' }],
-        venueOrLink: 'https://meet.google.com/test-panel',
-      });
+    if (!reloadedSlot.reminderSent24h) {
+      throw new Error('sendUpcomingReminders failed to set reminderSent24h flag');
     }
+    console.log('✓ sendUpcomingReminders() detected slot and set reminderSent24h=true');
 
-    let testApp = await Application.findOne({ student: testStudent._id, drive: actualDrive?._id });
-    if (!testApp && actualDrive) {
-      testApp = await Application.create({
-        student: testStudent._id,
-        drive: actualDrive._id,
-        status: 'applied',
-        appliedAt: new Date(),
-      });
+    // Second run: MUST NOT duplicate
+    const dispatched2 = await sendUpcomingReminders();
+    const duplicateLogs = await EmailLog.find({
+      recipientEmail: fixtureStudentUser.email,
+      type: 'slot_reminder_24h',
+      createdAt: { $gte: new Date(Date.now() - 10000) },
+    });
+
+    if (duplicateLogs.length > 1) {
+      throw new Error('De-duplication failed: duplicate reminder emails were dispatched');
     }
+    console.log('✓ Second cron execution safely skipped already-reminded slot (de-duplication verified)');
 
-    if (testRound && actualDrive && testPanel && testApp) {
-      const futureStartTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      const testSlot = await InterviewSlot.create({
-        round: testRound._id,
-        drive: actualDrive._id,
-        panel: testPanel._id,
-        student: testStudent._id,
-        application: testApp._id,
-        startTime: futureStartTime,
-        endTime: new Date(futureStartTime.getTime() + 30 * 60 * 1000),
-        status: 'scheduled',
-        queueNumber: 1,
-        reminderSent24h: false,
-        reminderSent1h: false,
-      });
-
-      // First run: should dispatch reminder and set reminderSent24h = true
-      const dispatched1 = await sendUpcomingReminders();
-      const reloadedSlot = await InterviewSlot.findById(testSlot._id);
-
-      if (!reloadedSlot.reminderSent24h) {
-        throw new Error('sendUpcomingReminders failed to set reminderSent24h flag');
-      }
-      console.log('✓ sendUpcomingReminders() detected slot and set reminderSent24h=true');
-
-      // Second run: MUST NOT duplicate
-      const dispatched2 = await sendUpcomingReminders();
-      const duplicateLogs = await EmailLog.find({
-        recipientEmail: testStudent.user.email,
-        type: 'slot_reminder_24h',
-        createdAt: { $gte: new Date(Date.now() - 10000) },
-      });
-
-      if (duplicateLogs.length > 1) {
-        throw new Error('De-duplication failed: duplicate reminder emails were dispatched');
-      }
-      console.log('✓ Second cron execution safely skipped already-reminded slot (de-duplication verified)');
-
-      // Cleanup test slot
-      await InterviewSlot.findByIdAndDelete(testSlot._id);
-    } else {
-      console.log('⚠ Skipping slot reminder creation (no technical round found)');
-    }
+    // Cleanup test slot
+    await InterviewSlot.findByIdAndDelete(testSlot._id);
 
     // ------------------------------------------------------------------------
     // SECTION 5: Round Announcement Broadcast & Preview
     // ------------------------------------------------------------------------
     console.log('\n--- 5. Testing Round Announcement Broadcast & Preview ---');
 
-    // Authenticate TPO and Recruiter
-    const tpoLogin = await fetch(`${BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@college.com', password: 'Admin@123' }),
+    // Step A: Fetch Preview
+    const previewRes = await fetch(`${BASE_URL}/rounds/${fixtureRound._id}/announcements/preview`, {
+      headers: { Authorization: `Bearer ${recToken}` },
     });
-    const tpoData = await tpoLogin.json();
-    const tpoToken = tpoData.token;
+    const previewData = await previewRes.json();
+    const count = previewData.participantCount ?? previewData.recipientCount;
+    if (!previewData.success || count === undefined) {
+      console.error('Preview response status:', previewRes.status, previewData);
+      throw new Error('Announcement preview failed');
+    }
+    console.log(`✓ Announcement preview returned ${count} participant(s) for ${fixtureRound.name}`);
 
-    const recLogin = await fetch(`${BASE_URL}/auth/login`, {
+    // Step B: Dispatch Announcement
+    const announceRes = await fetch(`${BASE_URL}/rounds/${fixtureRound._id}/announcements`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'recruiter@google.com', password: 'Recruiter@123' }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${recToken}`,
+      },
+      body: JSON.stringify({
+        subject: 'Crucial Schedule Announcement',
+        message: 'Please make sure your webcams and microphones are working for the upcoming round.',
+      }),
     });
-    const recData = await recLogin.json();
-    const recToken = recData.token;
 
-    // Find a round owned by Google recruiter or TPO's college
-    let announceRound = null;
-    const recCompanyId = recData.user.company?._id || recData.user.company;
-    const recDrive = await Drive.findOne({ company: recCompanyId });
-    if (recDrive) {
-      announceRound = await Round.findOne({ drive: recDrive._id });
+    const announceResult = await announceRes.json();
+    if (!announceResult.success) {
+      console.error('Announce response status:', announceRes.status, announceResult);
+      throw new Error(`Failed to send announcement: ${announceResult.message}`);
     }
+    console.log(`✓ Announcement successfully dispatched to ${announceResult.count} recipient(s)`);
 
-    let callerToken = recToken;
-    if (!announceRound) {
-      const tpoCollegeId = tpoData.user.college?._id || tpoData.user.college;
-      const tpoDrive = await Drive.findOne({ college: tpoCollegeId });
-      if (tpoDrive) {
-        announceRound = await Round.findOne({ drive: tpoDrive._id });
-        callerToken = tpoToken;
-      }
-    }
-
-    if (announceRound) {
-      // Step A: Fetch Preview
-      const previewRes = await fetch(`${BASE_URL}/rounds/${announceRound._id}/announcements/preview`, {
-        headers: { Authorization: `Bearer ${callerToken}` },
+    // Verify at least one EmailLog was recorded if participants existed
+    if (announceResult.count > 0) {
+      const annLog = await EmailLog.findOne({
+        type: 'announcement',
+        subject: /Crucial Schedule Announcement/i,
       });
-      const previewData = await previewRes.json();
-      const count = previewData.participantCount ?? previewData.recipientCount;
-      if (!previewData.success || count === undefined) {
-        console.error('Preview response status:', previewRes.status, previewData);
-        throw new Error('Announcement preview failed');
+      if (!annLog) {
+        throw new Error('EmailLog was not created for round announcement');
       }
-      console.log(`✓ Announcement preview returned ${count} participant(s) for ${announceRound.name}`);
-
-      // Step B: Dispatch Announcement
-      const announceRes = await fetch(`${BASE_URL}/rounds/${announceRound._id}/announcements`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${callerToken}`,
-        },
-        body: JSON.stringify({
-          subject: 'Crucial Schedule Announcement',
-          message: 'Please make sure your webcams and microphones are working for the upcoming round.',
-        }),
-      });
-
-      const announceResult = await announceRes.json();
-      if (!announceResult.success) {
-        console.error('Announce response status:', announceRes.status, announceResult);
-        throw new Error(`Failed to send announcement: ${announceResult.message}`);
-      }
-      console.log(`✓ Announcement successfully dispatched to ${announceResult.count} recipient(s)`);
-
-      // Verify at least one EmailLog was recorded if participants existed
-      if (announceResult.count > 0) {
-        const annLog = await EmailLog.findOne({
-          type: 'announcement',
-          subject: /Crucial Schedule Announcement/i,
-        });
-        if (!annLog) {
-          throw new Error('EmailLog was not created for round announcement');
-        }
-        console.log('✓ EmailLog recorded for announcement with college TPO replyTo set');
-      }
+      console.log('✓ EmailLog recorded for announcement with college TPO replyTo set');
     }
 
     // ------------------------------------------------------------------------
@@ -560,18 +632,19 @@ async function runEmailTests() {
     console.log('\n--- 6. Testing 403 Authorization & Cross-College Security ---');
 
     // Create a temporary second college
-    let otherCollege = await College.findOne({ code: 'OTHER_COLLEGE_TEST' });
+    let otherCollege = await College.findOne({ code: 'TEST_EMAIL_OTHER_COLLEGE' });
     if (!otherCollege) {
       otherCollege = await College.create({
         name: 'Other Institute of Technology',
-        code: 'OTHER_COLLEGE_TEST',
+        code: 'TEST_EMAIL_OTHER_COLLEGE',
         address: 'Test City',
         city: 'New Delhi',
         state: 'Delhi',
+        status: 'approved',
       });
     }
 
-    // TPO of NITD trying to access logs belonging to otherCollege
+    // TPO of fixtureCollege trying to access logs belonging to otherCollege
     const crossCollegeLogsRes = await fetch(`${BASE_URL}/emails/logs?collegeId=${otherCollege._id}`, {
       headers: { Authorization: `Bearer ${tpoToken}` },
     });
@@ -583,7 +656,7 @@ async function runEmailTests() {
 
     // TPO trying to resend an email log belonging to another college
     const otherLog = await EmailLog.create({
-      user: testTpoUser._id,
+      user: fixtureTpoUser._id,
       recipientEmail: 'other@test.com',
       type: 'general_notification',
       subject: 'Other College Email',
@@ -612,6 +685,30 @@ async function runEmailTests() {
     console.error('\n❌ EMAIL NOTIFICATION TEST FAILED:', error);
     process.exit(1);
   } finally {
+    // Hermetic cleanup of all fixture documents
+    try {
+      await EmailLog.deleteMany({ recipientEmail: { $in: ['test-retry@domain.com', 'test.email.student@testcollege.edu', 'other@test.com'] } });
+      await Notification.deleteMany({ user: { $in: [fixtureStudentUser?._id, fixtureTpoUser?._id, fixtureRecUser?._id].filter(Boolean) } });
+      if (fixtureRound?._id) {
+        await InterviewSlot.deleteMany({ round: fixtureRound._id });
+        await InterviewPanel.deleteMany({ round: fixtureRound._id });
+        await RoundParticipant.deleteMany({ round: fixtureRound._id });
+        await Round.deleteMany({ _id: fixtureRound._id });
+      }
+      if (fixtureDrive?._id) {
+        await Application.deleteMany({ drive: fixtureDrive._id });
+        await Drive.deleteMany({ _id: fixtureDrive._id });
+      }
+      if (fixtureStudent?._id) await Student.deleteMany({ _id: fixtureStudent._id });
+      if (fixtureStudentUser?._id) await User.deleteMany({ _id: fixtureStudentUser._id });
+      if (fixtureTpoUser?._id) await User.deleteMany({ _id: fixtureTpoUser._id });
+      if (fixtureRecUser?._id) await User.deleteMany({ _id: fixtureRecUser._id });
+      if (fixtureCompany?._id) await Company.deleteMany({ _id: fixtureCompany._id });
+      if (fixtureCollege?._id) await College.deleteMany({ _id: fixtureCollege._id });
+      await College.deleteMany({ code: 'TEST_EMAIL_OTHER_COLLEGE' });
+    } catch (cleanErr) {
+      console.warn('Cleanup warning:', cleanErr.message);
+    }
     server.close();
     await mongoose.connection.close();
   }

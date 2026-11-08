@@ -131,8 +131,29 @@ async function runAptitudeTests() {
 
     // Students from College A
     let students = await Student.find({ college: collegeA._id }).populate('user').limit(3);
-    if (students.length < 3) {
-      throw new Error('Expected at least 3 students in College A');
+    while (students.length < 3) {
+      const idx = students.length + 1;
+      const u = await User.create({
+        name: `Aptitude Student ${idx}`,
+        email: `aptitude.student${idx}@aptcollege.edu`,
+        password: 'Student@123',
+        role: 'student',
+        college: collegeA._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+      const s = await Student.create({
+        user: u._id,
+        college: collegeA._id,
+        enrollmentNo: `APT_STU_${idx}`,
+        branch: 'CSE',
+        batchYear: 2026,
+        cgpa: 8.5,
+        backlogs: 0,
+        phone: '9876543210',
+      });
+      s.user = u;
+      students.push(s);
     }
     const student1 = students[0];
     const student2 = students[1];

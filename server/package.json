@@ -22,6 +22,7 @@
     "test:emailguard": "node tests/testEmailGuard.js",
     "test:datetime": "node tests/testDateTime.js",
     "test:all": "node tests/runAllTests.js",
+    "test:fresh": "node tests/dropTestDb.js && node tests/runAllTests.js",
     "mail:test": "node utils/mailTest.js",
     "cleanup:test": "node utils/cleanupTestLeftovers.js"
   },

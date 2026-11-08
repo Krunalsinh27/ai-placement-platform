@@ -143,8 +143,29 @@ async function runDeliveryTests() {
 
     // Students from College A
     let students = await Student.find({ college: collegeA._id }).populate('user').limit(2);
-    if (students.length < 2) {
-      throw new Error('Expected at least 2 students in College A');
+    while (students.length < 2) {
+      const idx = students.length + 1;
+      const u = await User.create({
+        name: `Delivery Student ${idx}`,
+        email: `delivery.student${idx}@delivcollege.edu`,
+        password: 'Student@123',
+        role: 'student',
+        college: collegeA._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+      const s = await Student.create({
+        user: u._id,
+        college: collegeA._id,
+        enrollmentNo: `DELIV_STU_${idx}`,
+        branch: 'CSE',
+        batchYear: 2026,
+        cgpa: 8.5,
+        backlogs: 0,
+        phone: '9876543210',
+      });
+      s.user = u;
+      students.push(s);
     }
     const student1 = students[0];
     const student2 = students[1];

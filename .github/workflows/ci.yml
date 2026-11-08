@@ -48,7 +48,7 @@ jobs:
           JWT_SECRET: supersecret_ci_jwt_key_must_be_over_32_characters_long_for_security
           MONGO_URI_TEST: mongodb://127.0.0.1:27017/placement_management_test
           CLIENT_URL: http://localhost:5173
-        run: npm run test:all
+        run: npm run test:fresh
 
       - name: Install client dependencies
         working-directory: ./client
