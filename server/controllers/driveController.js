@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const { Drive, Company, Student, Application } = require('../models');
 const { notifyDrivePublished } = require('../utils/notificationService');
 const { getEndOfDayIST } = require('../utils/pipelineService');
+const { parseISTDateTime } = require('../utils/dateTime');
 
 /**
  * Helper to automatically close drives whose application deadline has passed & initialize pipeline
@@ -109,7 +110,7 @@ const createDrive = async (req, res, next) => {
       maxBacklogs: maxBacklogs !== undefined ? Number(maxBacklogs) : 0,
       allowedBranches: branches,
       lastDateToApply: applyDeadline,
-      driveDate: new Date(driveDate),
+      driveDate: parseISTDateTime(driveDate),
       status: driveStatus,
       applicationsClosed: isPastDeadline,
       listFrozenAt: isPastDeadline ? new Date() : null,
@@ -393,7 +394,7 @@ const updateDrive = async (req, res, next) => {
       }
     }
 
-    if (driveDate !== undefined) drive.driveDate = new Date(driveDate);
+    if (driveDate !== undefined) drive.driveDate = parseISTDateTime(driveDate);
 
     // If explicit status passed and not expired
     if (status !== undefined) {

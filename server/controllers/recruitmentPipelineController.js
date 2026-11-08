@@ -26,6 +26,7 @@ const {
 } = require('../utils/pipelineService');
 const { createNotification, notifyUser } = require('../utils/notificationService');
 const { formatIST } = require('../utils/emailTemplates');
+const { parseISTDateTime } = require('../utils/dateTime');
 
 /**
  * Helper to check TPO or Recruiter drive ownership
@@ -601,12 +602,12 @@ const updateRoundSettings = async (req, res, next) => {
     }
 
     const oldDateStr = round.date ? round.date.toISOString().slice(0, 10) : '';
-    const newDateStr = date !== undefined ? (date ? new Date(date).toISOString().slice(0, 10) : '') : oldDateStr;
+    const newDateStr = date !== undefined ? (date ? parseISTDateTime(date).toISOString().slice(0, 10) : '') : oldDateStr;
     if (date !== undefined && oldDateStr !== newDateStr) {
       changes.push({
         field: 'Date',
         oldValue: round.date ? formatIST(round.date, { dateOnly: true }) : 'Not set',
-        newValue: date ? formatIST(new Date(date), { dateOnly: true }) : 'Cleared',
+        newValue: date ? formatIST(parseISTDateTime(date), { dateOnly: true }) : 'Cleared',
       });
     }
 
@@ -629,22 +630,22 @@ const updateRoundSettings = async (req, res, next) => {
     }
 
     const oldWinStart = round.testWindowStart ? round.testWindowStart.getTime() : null;
-    const newWinStart = testWindowStart !== undefined ? (testWindowStart ? new Date(testWindowStart).getTime() : null) : oldWinStart;
+    const newWinStart = testWindowStart !== undefined ? (testWindowStart ? parseISTDateTime(testWindowStart).getTime() : null) : oldWinStart;
     if (testWindowStart !== undefined && oldWinStart !== newWinStart) {
       changes.push({
         field: 'Test Window Start',
         oldValue: round.testWindowStart ? formatIST(round.testWindowStart) : 'Not set',
-        newValue: testWindowStart ? formatIST(new Date(testWindowStart)) : 'Cleared',
+        newValue: testWindowStart ? formatIST(parseISTDateTime(testWindowStart)) : 'Cleared',
       });
     }
 
     const oldWinEnd = round.testWindowEnd ? round.testWindowEnd.getTime() : null;
-    const newWinEnd = testWindowEnd !== undefined ? (testWindowEnd ? new Date(testWindowEnd).getTime() : null) : oldWinEnd;
+    const newWinEnd = testWindowEnd !== undefined ? (testWindowEnd ? parseISTDateTime(testWindowEnd).getTime() : null) : oldWinEnd;
     if (testWindowEnd !== undefined && oldWinEnd !== newWinEnd) {
       changes.push({
         field: 'Test Window End',
         oldValue: round.testWindowEnd ? formatIST(round.testWindowEnd) : 'Not set',
-        newValue: testWindowEnd ? formatIST(new Date(testWindowEnd)) : 'Cleared',
+        newValue: testWindowEnd ? formatIST(parseISTDateTime(testWindowEnd)) : 'Cleared',
       });
     }
 
@@ -669,16 +670,16 @@ const updateRoundSettings = async (req, res, next) => {
     }
 
     if (testWindowStart !== undefined) {
-      round.testWindowStart = testWindowStart ? new Date(testWindowStart) : null;
+      round.testWindowStart = testWindowStart ? parseISTDateTime(testWindowStart) : null;
     }
     if (testWindowEnd !== undefined) {
-      round.testWindowEnd = testWindowEnd ? new Date(testWindowEnd) : null;
+      round.testWindowEnd = testWindowEnd ? parseISTDateTime(testWindowEnd) : null;
     }
     if (reportByTime !== undefined) {
       round.reportByTime = reportByTime ? reportByTime.trim() : '';
     }
     if (date !== undefined) {
-      round.date = date ? new Date(date) : null;
+      round.date = date ? parseISTDateTime(date) : null;
     }
     if (durationMinutes !== undefined) {
       round.durationMinutes =
@@ -1248,16 +1249,16 @@ const extendBulkOffers = async (req, res, next) => {
           student: studentId,
           application: application._id,
           packageLpa: packageLpa ? Number(packageLpa) : drive.packageLpa,
-          joiningDate: joiningDate ? new Date(joiningDate) : null,
-          expiryDate: new Date(expiryDate),
+          joiningDate: joiningDate ? parseISTDateTime(joiningDate) : null,
+          expiryDate: parseISTDateTime(expiryDate),
           role: role || drive.role,
           designation: designation || role || drive.role,
           status: 'offered',
         });
       } else {
         offerDoc.packageLpa = packageLpa ? Number(packageLpa) : drive.packageLpa;
-        offerDoc.expiryDate = new Date(expiryDate);
-        if (joiningDate) offerDoc.joiningDate = new Date(joiningDate);
+        offerDoc.expiryDate = parseISTDateTime(expiryDate);
+        if (joiningDate) offerDoc.joiningDate = parseISTDateTime(joiningDate);
         offerDoc.status = 'offered';
         await offerDoc.save();
       }
@@ -1313,7 +1314,7 @@ const acceptOffer = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Offer is already accepted' });
     }
 
-    if (new Date() > new Date(offer.expiryDate)) {
+    if (new Date() > parseISTDateTime(offer.expiryDate)) {
       offer.status = 'expired';
       await offer.save();
       return res.status(400).json({ success: false, message: 'Offer has expired' });

@@ -28,6 +28,7 @@ import {
   Link as LinkIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
 
 const ManageTpoDriveRequests = () => {
   const [requests, setRequests] = useState([]);
@@ -122,12 +123,12 @@ const ManageTpoDriveRequests = () => {
         '';
 
       if (confirmedOrFirstDate) {
-        setScheduleDriveDate(new Date(confirmedOrFirstDate).toISOString().split('T')[0]);
+        setScheduleDriveDate(toISTInputValue(confirmedOrFirstDate, { dateOnly: true }));
         // Default deadline: 2 days before drive date
         const defaultDeadline = new Date(
           new Date(confirmedOrFirstDate).getTime() - 2 * 24 * 60 * 60 * 1000
         );
-        setScheduleLastDate(defaultDeadline.toISOString().split('T')[0]);
+        setScheduleLastDate(toISTInputValue(defaultDeadline, { dateOnly: true }));
       } else {
         setScheduleDriveDate('');
         setScheduleLastDate('');
@@ -885,7 +886,7 @@ const ManageTpoDriveRequests = () => {
                     <input
                       type="date"
                       value={scheduleDriveDate}
-                      min={new Date().toISOString().split('T')[0]}
+                      min={toISTInputValue(new Date(), { dateOnly: true })}
                       onChange={(e) => setScheduleDriveDate(e.target.value)}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                       required
@@ -903,7 +904,7 @@ const ManageTpoDriveRequests = () => {
                     <input
                       type="date"
                       value={scheduleLastDate}
-                      min={new Date().toISOString().split('T')[0]}
+                      min={toISTInputValue(new Date(), { dateOnly: true })}
                       max={scheduleDriveDate || undefined}
                       onChange={(e) => setScheduleLastDate(e.target.value)}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
@@ -1194,7 +1195,7 @@ const ManageTpoDriveRequests = () => {
                     <input
                       type="date"
                       value={dateVal}
-                      min={new Date().toISOString().split('T')[0]}
+                      min={toISTInputValue(new Date(), { dateOnly: true })}
                       onChange={(e) => {
                         const updated = [...tpoProposedDates];
                         updated[index] = e.target.value;

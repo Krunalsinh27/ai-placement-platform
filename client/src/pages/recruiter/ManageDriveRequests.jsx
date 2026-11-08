@@ -26,6 +26,7 @@ import {
   GitBranch,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { toISTInputValue } from '../../utils/dateTime';
 
 const ManageDriveRequests = () => {
   const [requests, setRequests] = useState([]);
@@ -800,7 +801,7 @@ const ManageDriveRequests = () => {
                   <input
                     type="date"
                     value={dateVal}
-                    min={new Date().toISOString().split('T')[0]}
+                    min={toISTInputValue(new Date(), { dateOnly: true })}
                     onChange={(e) => handleDateChange(index, e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                     required

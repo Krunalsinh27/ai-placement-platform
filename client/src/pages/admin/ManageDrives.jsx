@@ -19,6 +19,7 @@ import {
   Layers,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
 
 const ALL_BRANCHES = [
   'CSE',
@@ -115,12 +116,8 @@ const ManageDrives = () => {
       minCgpa: drive.minCgpa !== undefined ? drive.minCgpa : 6.5,
       maxBacklogs: drive.maxBacklogs !== undefined ? drive.maxBacklogs : 0,
       allowedBranches: drive.allowedBranches || ['CSE', 'IT'],
-      lastDateToApply: drive.lastDateToApply
-        ? new Date(drive.lastDateToApply).toISOString().slice(0, 16)
-        : '',
-      driveDate: drive.driveDate
-        ? new Date(drive.driveDate).toISOString().slice(0, 16)
-        : '',
+      lastDateToApply: toISTInputValue(drive.lastDateToApply),
+      driveDate: toISTInputValue(drive.driveDate),
       status: drive.status || 'open',
     });
     setModalOpen(true);
@@ -248,11 +245,11 @@ const ManageDrives = () => {
         <div className="text-[11px] text-slate-600 space-y-0.5">
           <div className="flex items-center gap-1">
             <span className="text-slate-400">Apply by:</span>
-            <strong>{new Date(row.lastDateToApply).toLocaleDateString()}</strong>
+            <strong>{formatISTDate(row.lastDateToApply)}</strong>
           </div>
           <div className="flex items-center gap-1 text-slate-500">
             <span>Drive:</span>
-            <span>{new Date(row.driveDate).toLocaleDateString()}</span>
+            <span>{formatISTDate(row.driveDate)}</span>
           </div>
         </div>
       ),

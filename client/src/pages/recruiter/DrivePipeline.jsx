@@ -46,6 +46,7 @@ import {
   Megaphone,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
 
 const DrivePipeline = () => {
   const { id } = useParams();
@@ -768,7 +769,7 @@ const DrivePipeline = () => {
         ...prev,
         packageLpa: drive.packageLpa || '',
         role: drive.role || '',
-        expiryDate: expDate.toISOString().split('T')[0],
+        expiryDate: toISTInputValue(expDate, { dateOnly: true }),
       }));
     }
   }, [drive]);
@@ -938,9 +939,9 @@ const DrivePipeline = () => {
       type: settingsForm.type,
       deliveryMode: settingsForm.deliveryMode,
       mode: settingsForm.deliveryMode === 'offline_campus' ? 'offline' : (settingsForm.deliveryMode ? 'online' : settingsForm.mode),
-      date: settingsForm.date ? new Date(settingsForm.date) : null,
-      testWindowStart: settingsForm.testWindowStart ? new Date(settingsForm.testWindowStart) : null,
-      testWindowEnd: settingsForm.testWindowEnd ? new Date(settingsForm.testWindowEnd) : null,
+      date: settingsForm.date || null,
+      testWindowStart: settingsForm.testWindowStart || null,
+      testWindowEnd: settingsForm.testWindowEnd || null,
       reportByTime: settingsForm.reportByTime ? settingsForm.reportByTime.trim() : '',
       durationMinutes:
         settingsForm.durationMinutes !== '' && settingsForm.durationMinutes !== null
@@ -1364,7 +1365,7 @@ const DrivePipeline = () => {
             <p className="text-xs text-slate-500">
               College: <span className="font-semibold text-slate-700">{drive.college?.name}</span> • Package:{' '}
               <span className="font-bold text-sky-600">{drive.packageLpa} LPA</span> • Drive Date:{' '}
-              <span className="font-semibold text-slate-700">{new Date(drive.driveDate).toLocaleDateString()}</span>
+              <span className="font-semibold text-slate-700">{formatISTDate(drive.driveDate)}</span>
             </p>
           </div>
 
@@ -1412,7 +1413,7 @@ const DrivePipeline = () => {
           <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-xs">
             <span className="font-bold">Applications are still open for this drive.</span> Candidate registrations will close
-            automatically after the deadline ({new Date(drive.lastDateToApply).toLocaleDateString()}), or when the college TPO
+            automatically after the deadline ({formatISTDate(drive.lastDateToApply)}), or when the college TPO
             manually freezes the list. Once frozen, Round 1 will be automatically seeded with all verified candidates.
           </div>
         </div>
@@ -1538,9 +1539,9 @@ const DrivePipeline = () => {
                           type: currentRound.type || 'technical',
                           deliveryMode: currentRound.deliveryMode || (currentRound.mode === 'online' ? 'online_external' : (currentRound.mode === 'offline' ? 'offline_campus' : '')),
                           mode: currentRound.mode || '',
-                          date: currentRound.date ? new Date(currentRound.date).toISOString().slice(0, 10) : '',
-                          testWindowStart: currentRound.testWindowStart ? new Date(currentRound.testWindowStart).toISOString().slice(0, 16) : '',
-                          testWindowEnd: currentRound.testWindowEnd ? new Date(currentRound.testWindowEnd).toISOString().slice(0, 16) : '',
+                          date: toISTInputValue(currentRound.date, { dateOnly: true }),
+                          testWindowStart: toISTInputValue(currentRound.testWindowStart),
+                          testWindowEnd: toISTInputValue(currentRound.testWindowEnd),
                           reportByTime: currentRound.reportByTime || '',
                           durationMinutes: currentRound.durationMinutes ?? '',
                           venueOrLink: currentRound.venueOrLink || '',
@@ -1575,9 +1576,7 @@ const DrivePipeline = () => {
                         setSplitForm((prev) => ({
                           ...prev,
                           mode: currentRound.mode || 'offline',
-                          startTime: currentRound.date
-                            ? new Date(currentRound.date).toISOString().slice(0, 16)
-                            : new Date().toISOString().slice(0, 16),
+                          startTime: toISTInputValue(currentRound.date) || toISTInputValue(new Date()),
                         }));
                         setAutoSplitModalOpen(true);
                       }}
@@ -2488,8 +2487,7 @@ const DrivePipeline = () => {
                           : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                         }`}
                     >
-                      {b.batchName} ({new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -{' '}
-                      {new Date(b.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                      {b.batchName} ({formatISTTime(b.startTime)} - {formatISTTime(b.endTime)})
                     </button>
                   ))}
                   <button
@@ -2637,8 +2635,7 @@ const DrivePipeline = () => {
                                   <div>
                                     <span className="font-semibold text-slate-800">{batch.batchName}</span>
                                     <div className="text-[10px] text-slate-500">
-                                      {new Date(batch.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -{' '}
-                                      {new Date(batch.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      {formatISTTime(batch.startTime)} - {formatISTTime(batch.endTime)}
                                     </div>
                                     <div className="text-[10px] text-slate-400 truncate max-w-xs">{batch.venueOrLink}</div>
                                   </div>
@@ -2835,10 +2832,10 @@ const DrivePipeline = () => {
                               <td className="py-3.5 px-4 font-semibold text-slate-700">{drive.role}</td>
                               <td className="py-3.5 px-4 font-black text-emerald-600">{drive.packageLpa} LPA</td>
                               <td className="py-3.5 px-4 text-slate-500">
-                                {new Date().toLocaleDateString()}
+                                {formatISTDate(new Date())}
                               </td>
                               <td className="py-3.5 px-4 text-slate-500">
-                                {offerForm.expiryDate ? new Date(offerForm.expiryDate).toLocaleDateString() : '7 Days'}
+                                {offerForm.expiryDate ? formatISTDate(offerForm.expiryDate) : '7 Days'}
                               </td>
                               <td className="py-3.5 px-4 text-center">
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">
@@ -3088,7 +3085,7 @@ const DrivePipeline = () => {
               >
                 {batches.map((b) => (
                   <option key={b._id} value={b._id}>
-                    {b.batchName} ({new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}) — Capacity: {b.capacity}
+                    {b.batchName} ({formatISTTime(b.startTime)}) — Capacity: {b.capacity}
                   </option>
                 ))}
               </select>

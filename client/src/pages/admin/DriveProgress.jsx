@@ -34,6 +34,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
 
 const DriveProgress = () => {
   const { id } = useParams();
@@ -48,7 +49,7 @@ const DriveProgress = () => {
   const [reopening, setReopening] = useState(false);
 
   // Clash report state
-  const [clashDate, setClashDate] = useState(new Date().toISOString().split('T')[0]);
+  const [clashDate, setClashDate] = useState(toISTInputValue(new Date(), { dateOnly: true }));
   const [clashReport, setClashReport] = useState(null);
   const [loadingClashes, setLoadingClashes] = useState(false);
 
@@ -166,7 +167,7 @@ const DriveProgress = () => {
       if (res.data.success) {
         setDriveData(res.data);
         if (res.data.drive?.driveDate) {
-          setClashDate(new Date(res.data.drive.driveDate).toISOString().split('T')[0]);
+          setClashDate(toISTInputValue(res.data.drive.driveDate, { dateOnly: true }));
         }
       }
     } catch (err) {

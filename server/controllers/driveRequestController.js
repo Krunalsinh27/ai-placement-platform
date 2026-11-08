@@ -6,6 +6,7 @@ const {
   notifyDrivePublished,
 } = require('../utils/notificationService');
 const { getEndOfDayIST } = require('../utils/pipelineService');
+const { parseISTDateTime } = require('../utils/dateTime');
 
 /**
  * Helper to format status timeline with human-readable labels
@@ -129,7 +130,7 @@ const createDriveRequests = async (req, res, next) => {
     }
 
     const parsedDates = proposedDates
-      .map((d) => new Date(d))
+      .map((d) => parseISTDateTime(d))
       .filter((d) => !isNaN(d.getTime()));
 
     if (parsedDates.length === 0) {
@@ -498,7 +499,7 @@ const respondToDriveRequest = async (req, res, next) => {
         });
       }
 
-      const confirmed = new Date(selectedDate);
+      const confirmed = parseISTDateTime(selectedDate);
       if (isNaN(confirmed.getTime())) {
         return res.status(400).json({
           success: false,
@@ -577,7 +578,7 @@ const respondToDriveRequest = async (req, res, next) => {
       }
 
       const parsedTpoDates = proposedDates
-        .map((d) => new Date(d))
+        .map((d) => parseISTDateTime(d))
         .filter((d) => !isNaN(d.getTime()));
 
       if (parsedTpoDates.length === 0) {
@@ -688,7 +689,7 @@ const acceptTpoProposedDate = async (req, res, next) => {
       });
     }
 
-    const confirmed = new Date(selectedDate);
+    const confirmed = parseISTDateTime(selectedDate);
     if (isNaN(confirmed.getTime())) {
       return res.status(400).json({
         success: false,
@@ -904,7 +905,7 @@ const finalizeAndPublishDrive = async (req, res, next) => {
         message: 'Final drive date is required',
       });
     }
-    const driveDateObj = new Date(finalDriveDate);
+    const driveDateObj = parseISTDateTime(finalDriveDate);
     if (isNaN(driveDateObj.getTime())) {
       return res.status(400).json({
         success: false,
@@ -927,7 +928,7 @@ const finalizeAndPublishDrive = async (req, res, next) => {
         message: 'Last date to apply is required',
       });
     }
-    const lastDateObj = new Date(lastDateToApply);
+    const lastDateObj = parseISTDateTime(lastDateToApply);
     if (isNaN(lastDateObj.getTime())) {
       return res.status(400).json({
         success: false,
