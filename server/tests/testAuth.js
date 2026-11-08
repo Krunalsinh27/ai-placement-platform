@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test'; // Disables IP rate-limiting so automated tests can run without delay
+process.env.EMAIL_MODE = 'console';
 
 const { User, Student, College, Company } = require('../models');
 

@@ -380,10 +380,13 @@ const autoScheduleInterviewSlots = async (req, res, next) => {
             });
           }
 
-          // Meeting Link / Venue assignment (no random Jitsi generator; use panel or round link/venue)
+          // Meeting Link / Venue assignment
           let meetingLink = panel.venueOrLink || round.venueOrLink || '';
           if (!meetingLink && (round.deliveryMode === 'offline_campus' || round.mode === 'offline')) {
             meetingLink = round.venueOrLink || (panel.room ? `Room ${panel.room}` : 'Campus Venue');
+          } else if (!meetingLink) {
+            const safeRoomName = `Placement-${round._id.toString().slice(-6)}-${panel._id.toString().slice(-4)}-${p.student._id.toString().slice(-4)}`;
+            meetingLink = `https://meet.jit.si/${safeRoomName}`;
           }
 
           const queueNumber = panelQueueCounters[panel._id.toString()]++;

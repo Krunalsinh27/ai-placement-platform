@@ -2,6 +2,38 @@ const mongoose = require('mongoose');
 const EmailLog = require('../models/EmailLog');
 const { sendRawEmail } = require('./emailService');
 
+/**
+ * Detect whether an SMTP error is a permanent rejection (e.g. 5xx, invalid address/mailbox)
+ */
+const isPermanentSmtpError = (err) => {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  const code = String(err.code || '');
+  const responseCode = String(err.responseCode || '');
+
+  // SMTP 5xx codes indicate permanent delivery failure
+  if (responseCode.startsWith('5') || code.startsWith('5') || /\b5\d{2}\b/.test(msg)) {
+    return true;
+  }
+
+  const permanentPhrases = [
+    'address not found',
+    'user unknown',
+    'mailbox unavailable',
+    'mailbox not found',
+    'recipient rejected',
+    'invalid recipient',
+    'no such user',
+    'does not exist',
+    'domain not found',
+    'unrecognized address',
+    'relay access denied',
+    'blocked domain',
+  ];
+
+  return permanentPhrases.some((phrase) => msg.includes(phrase));
+};
+
 class EmailQueue {
   constructor() {
     this.queue = [];
@@ -176,13 +208,38 @@ class EmailQueue {
           err.message
         );
 
+        const isPermanent = isPermanentSmtpError(err);
+
+        if (isPermanent) {
+          console.error(
+            `[EmailQueue] Permanent failure for ${item.recipientEmail}: ${err.message}. Marking failed without retries.`
+          );
+          if (mongoose.connection.readyState === 1) {
+            await EmailLog.findByIdAndUpdate(item.logId, {
+              status: 'failed',
+              attempts: item.attempts,
+              error: `Permanent failure: ${err.message}`,
+            });
+          }
+          // Do not retry permanent errors
+          continue;
+        }
+
+        // Temporary error: retry up to maxRetries (3) with growing delay (1s, 5s, 30s in prod; fast in test)
         if (item.attempts < this.maxRetries) {
-          // Re-queue for next attempt
+          const delays = process.env.NODE_ENV === 'test' ? [50, 100, 200] : [1000, 5000, 30000];
+          const delay = delays[item.attempts - 1] || 30000;
+
           if (mongoose.connection.readyState === 1) {
             await EmailLog.findByIdAndUpdate(item.logId, {
               attempts: item.attempts,
-              error: `Attempt ${item.attempts} failed: ${err.message}`,
+              error: `Attempt ${item.attempts} failed (temporary): ${err.message}. Retrying in ${delay / 1000}s`,
             });
+          }
+
+          const waitMs = this.delayMs === 0 ? 0 : delay;
+          if (waitMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
           }
           this.queue.push(item);
         } else {
@@ -203,4 +260,5 @@ class EmailQueue {
 }
 
 const emailQueue = new EmailQueue();
+emailQueue.isPermanentSmtpError = isPermanentSmtpError;
 module.exports = emailQueue;

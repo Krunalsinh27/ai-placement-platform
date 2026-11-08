@@ -119,6 +119,114 @@ const createTransporter = () => {
   });
 };
 
+// Blocked test/dummy domains that should NEVER receive real emails, even in production
+const BLOCKED_DOMAINS = [
+  'example.com',
+  'example.org',
+  'test.com',
+  'portal.com',
+  'college.com',
+  'localhost',
+  'invalid',
+];
+
+// In-memory sliding window for rate-limiting real SMTP sends
+let smtpSendTimestamps = [];
+
+/**
+ * Check if domain is in the blocked list
+ */
+const isBlockedDomain = (email) => {
+  if (!email || typeof email !== 'string') return true;
+  const parts = email.trim().toLowerCase().split('@');
+  if (parts.length < 2) return true;
+  const domain = parts[parts.length - 1];
+  return BLOCKED_DOMAINS.some(
+    (blocked) => domain === blocked || domain.endsWith(`.${blocked}`)
+  );
+};
+
+/**
+ * Check if real SMTP delivery is permitted for the given recipient.
+ * Returns { allowed: true } or { allowed: false, reason: string, mode: 'console' | 'skipped' }
+ */
+const shouldSendRealSmtp = (recipientEmail) => {
+  // 1. Never send real email in test environment
+  if (process.env.NODE_ENV === 'test') {
+    return { allowed: false, reason: 'NODE_ENV is test', mode: 'console' };
+  }
+
+  // 2. EMAIL_MODE must be explicitly "smtp"
+  const emailMode = (process.env.EMAIL_MODE || '').trim().toLowerCase();
+  if (emailMode !== 'smtp') {
+    return {
+      allowed: false,
+      reason: `EMAIL_MODE is "${emailMode || 'unset'}"`,
+      mode: 'console',
+    };
+  }
+
+  // 3. SMTP must be configured
+  if (!isSmtpConfigured()) {
+    return { allowed: false, reason: 'SMTP is not configured', mode: 'console' };
+  }
+
+  // 4. Validate email and check blocked domains (applies in ALL environments including production)
+  if (!recipientEmail || typeof recipientEmail !== 'string') {
+    return { allowed: false, reason: 'Missing or invalid recipient address', mode: 'skipped' };
+  }
+
+  const cleanEmail = recipientEmail.trim().toLowerCase();
+  if (isBlockedDomain(cleanEmail)) {
+    const domain = cleanEmail.split('@')[1] || cleanEmail;
+    return {
+      allowed: false,
+      reason: `Blocked domain "${domain}"`,
+      mode: 'skipped',
+    };
+  }
+
+  // 5. In non-production environments, recipient MUST be in EMAIL_DEV_ALLOWLIST
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (!isProduction) {
+    const rawAllowlist = process.env.EMAIL_DEV_ALLOWLIST || '';
+    const allowlist = rawAllowlist
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!allowlist.includes(cleanEmail)) {
+      return {
+        allowed: false,
+        reason: `Recipient "${cleanEmail}" not in EMAIL_DEV_ALLOWLIST`,
+        mode: 'skipped',
+      };
+    }
+  }
+
+  // 6. Real SMTP per-minute rate limit cap
+  const maxPerMinute = Number(process.env.EMAIL_MAX_PER_MINUTE) || 20;
+  const now = Date.now();
+  smtpSendTimestamps = smtpSendTimestamps.filter((ts) => now - ts < 60000);
+  if (smtpSendTimestamps.length >= maxPerMinute) {
+    return {
+      allowed: false,
+      reason: `Per-minute SMTP send cap reached (${smtpSendTimestamps.length}/${maxPerMinute})`,
+      mode: 'skipped',
+    };
+  }
+
+  return { allowed: true };
+};
+
+const recordRealSmtpSend = () => {
+  smtpSendTimestamps.push(Date.now());
+};
+
+const resetSmtpRateLimit = () => {
+  smtpSendTimestamps = [];
+};
+
 /**
  * Check if SMTP is configured and allowed by EMAIL_MODE
  */
@@ -137,6 +245,10 @@ const isSmtpConfigured = () => {
  * Verify transporter connectivity on server boot
  */
 const verifyTransporter = async () => {
+  if (process.env.NODE_ENV === 'test') {
+    return { ok: false, mode: 'console', reason: 'NODE_ENV=test configured' };
+  }
+
   const emailMode = (process.env.EMAIL_MODE || '').toLowerCase();
   if (emailMode === 'console') {
     return { ok: false, mode: 'console', reason: 'EMAIL_MODE=console configured' };
@@ -217,8 +329,6 @@ const sendEmail = async ({
   warningText,
   user = null,
 }) => {
-  const useSmtp = isSmtpConfigured();
-
   const html = buildEmailHtml({
     title: subject,
     subtitle: subtitle || 'Campus Placement & Recruitment System',
@@ -230,9 +340,14 @@ const sendEmail = async ({
 
   const text = `Placement Portal Verification Code: ${otp}\n\nHello ${name || 'there'},\n${purposeText}\nYour code is: ${otp}\nThis code is valid for 10 minutes.\nNever share this code with anyone.`;
 
-  // Always print console fallback if SMTP is not configured
-  if (!useSmtp) {
-    printConsoleOtp(to, name, otp, purpose);
+  const guard = shouldSendRealSmtp(to);
+
+  // If real SMTP is not allowed by policy
+  if (!guard.allowed) {
+    console.log(`[EmailService:Simulated] To: ${to} | Mode: ${guard.mode} (${guard.reason})`);
+    if (otp) {
+      printConsoleOtp(to, name, otp, purpose);
+    }
 
     // Record in EmailLog if user is provided
     if (user && user._id) {
@@ -248,15 +363,15 @@ const sendEmail = async ({
           status: 'sent',
           attempts: 1,
           sentAt: new Date(),
-          metadata: { mode: 'console' },
+          metadata: { mode: guard.mode, reason: guard.reason },
         });
       } catch (_) {}
     }
 
-    return { success: true, mode: 'console' };
+    return { success: true, mode: guard.mode, reason: guard.reason };
   }
 
-  // Use SMTP whenever it is configured
+  // Use SMTP when guard permits
   try {
     const transporter = createTransporter();
     const mailFrom = process.env.MAIL_FROM || `"Placement Portal" <${process.env.SMTP_USER}>`;
@@ -272,6 +387,8 @@ const sendEmail = async ({
       },
       10000
     );
+
+    recordRealSmtpSend();
 
     // Log successful send in EmailLog
     if (user && user._id) {
@@ -357,11 +474,13 @@ const sendPasswordResetEmail = async (to, name, otp, user = null) => {
  * Send raw email with support for attachments and reply-to (used by background queue)
  */
 const sendRawEmail = async ({ to, subject, text, html, attachments, replyTo }) => {
-  const useSmtp = isSmtpConfigured();
+  const guard = shouldSendRealSmtp(to);
 
-  if (!useSmtp) {
-    console.log(`[EmailService:Simulated] To: ${to} | Subject: "${subject}" | Reply-To: ${replyTo || 'None'}`);
-    return { success: true, mode: 'console' };
+  if (!guard.allowed) {
+    console.log(
+      `[EmailService:Simulated] To: ${to} | Subject: "${subject}" | Mode: ${guard.mode} (${guard.reason})`
+    );
+    return { success: true, mode: guard.mode, reason: guard.reason };
   }
 
   try {
@@ -382,6 +501,7 @@ const sendRawEmail = async ({ to, subject, text, html, attachments, replyTo }) =
     }
 
     const info = await sendWithTimeout(transporter, mailOptions, 10000);
+    recordRealSmtpSend();
     return { success: true, messageId: info.messageId, mode: 'smtp' };
   } catch (error) {
     console.error(`[EmailService] Failed to send email via SMTP to ${to}:`, error.message);
@@ -460,4 +580,8 @@ module.exports = {
   createTransporter,
   verifyTransporter,
   isSmtpConfigured,
+  shouldSendRealSmtp,
+  isBlockedDomain,
+  BLOCKED_DOMAINS,
+  resetSmtpRateLimit,
 };

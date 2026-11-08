@@ -41,9 +41,23 @@ const otpResendLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Public endpoints rate limiter: 100 requests per 15 minutes per IP
+const publicApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  skip: isTestEnv,
+  message: {
+    success: false,
+    message: 'Too many requests from this IP address. Please try again after 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   loginLimiter,
   otpVerifyLimiter,
   otpResendLimiter,
+  publicApiLimiter,
 };
 

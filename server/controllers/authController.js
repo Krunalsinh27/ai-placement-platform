@@ -16,6 +16,13 @@ const REFRESH_COOKIE_OPTIONS = {
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
+const CLEAR_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? (process.env.COOKIE_SAME_SITE || 'none') : 'lax',
+  path: '/',
+};
+
 /**
  * Password validation rule:
  * Minimum 8 characters, at least one letter and one number
@@ -1591,7 +1598,10 @@ const resetPassword = async (req, res, next) => {
     user.failedLoginAttempts = 0;
     user.lockUntil = null;
     user.isEmailVerified = true;
+    user.refreshTokenHash = null; // Revoke all active refresh sessions
     await user.save();
+
+    res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
 
     res.status(200).json({
       success: true,
@@ -1755,8 +1765,16 @@ const login = async (req, res, next) => {
       student = await Student.findOne({ user: user._id }).populate('college');
     }
 
-    // Generate JWT token
+    // Generate 15-minute access token and 7-day refresh token
     const token = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Save hashed refresh token to user document
+    user.refreshTokenHash = hashToken(refreshToken);
+    await user.save();
+
+    // Set secure httpOnly refresh cookie
+    res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
 
     res.status(200).json({
       success: true,
@@ -1800,6 +1818,93 @@ const getMe = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Refresh access token using httpOnly refresh token cookie
+ * @route   POST /api/auth/refresh
+ * @access  Public (Cookie required)
+ */
+const refreshToken = async (req, res, next) => {
+  try {
+    const token = req.cookies?.refreshToken;
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'No refresh token provided',
+      });
+    }
+
+    const secret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+    let decoded;
+    try {
+      decoded = jwt.verify(token, secret);
+    } catch (err) {
+      res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired refresh token',
+      });
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user || !user.refreshTokenHash) {
+      res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token has been revoked',
+      });
+    }
+
+    const tokenHash = hashToken(token);
+    if (user.refreshTokenHash !== tokenHash) {
+      // Possible reuse/tampering: revoke user session
+      user.refreshTokenHash = null;
+      await user.save();
+      res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid refresh token session',
+      });
+    }
+
+    // Issue a fresh 15-minute access token
+    const newAccessToken = generateToken(user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Access token refreshed successfully',
+      token: newAccessToken,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Logout user, revoke stored refresh token hash, and clear cookie
+ * @route   POST /api/auth/logout
+ * @access  Public / Authenticated
+ */
+const logout = async (req, res, next) => {
+  try {
+    const token = req.cookies?.refreshToken;
+    if (token) {
+      const tokenHash = hashToken(token);
+      await User.updateOne({ refreshTokenHash: tokenHash }, { $set: { refreshTokenHash: null } });
+    } else if (req.user) {
+      await User.findByIdAndUpdate(req.user._id, { $set: { refreshTokenHash: null } });
+    }
+
+    res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   registerTPO,
@@ -1812,6 +1917,8 @@ module.exports = {
   forgotPassword,
   resetPassword,
   login,
+  refreshToken,
+  logout,
   getMe,
   isValidPassword,
   generateAndSendOtp,
