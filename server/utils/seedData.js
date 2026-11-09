@@ -306,7 +306,7 @@ const seedData = async () => {
       await recruiterUser.save();
     }
 
-    // Ensure Superadmin exists (superadmin@portal.com / Super@12345)
+    // Ensure Superadmin exists in development seed
     const superadminEmail = 'superadmin@portal.com';
     let superadmin = await User.findOne({ email: superadminEmail });
     if (!superadmin) {
@@ -327,7 +327,7 @@ const seedData = async () => {
       console.log('Verified Superadmin account: superadmin@portal.com');
     }
 
-    // Ensure Approved Analyst exists (analyst@portal.com / Analyst@123)
+    // Ensure Approved Analyst exists in development seed
     const analystEmail = 'analyst@portal.com';
     let analyst = await User.findOne({ email: analystEmail });
     if (!analyst) {
@@ -356,7 +356,7 @@ const seedData = async () => {
       console.log('Verified Analyst account: analyst@portal.com');
     }
 
-    // Ensure Aspirant exists (aspirant@portal.com / Aspirant@123)
+    // Ensure Aspirant exists in development seed
     const aspirantEmail = 'aspirant@portal.com';
     let aspirantUser = await User.findOne({ email: aspirantEmail });
     if (!aspirantUser) {

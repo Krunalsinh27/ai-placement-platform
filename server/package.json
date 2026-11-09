@@ -24,6 +24,7 @@
     "test:datetime": "node tests/testDateTime.js",
     "test:storage": "node tests/testStorage.js",
     "test:deploy": "node tests/testDeployConfig.js",
+    "test:prodguard": "node tests/testProdGuard.js",
     "test:all": "node tests/runAllTests.js",
     "test:fresh": "node tests/dropTestDb.js && node tests/runAllTests.js",
     "mail:test": "node utils/mailTest.js",

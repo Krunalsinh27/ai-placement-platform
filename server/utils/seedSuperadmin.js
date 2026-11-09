@@ -4,6 +4,23 @@ const { User } = require('../models');
 
 dotenv.config();
 
+const KNOWN_DEFAULT_PASSWORDS = [
+  'Super@12345',
+  'Admin@123',
+  'Recruiter@123',
+  'Analyst@123',
+  'Aspirant@123',
+  'Student@123',
+  'Password@123',
+  'Superadmin@123',
+  'Superadmin@12345',
+  'admin123',
+  'password',
+  '12345678',
+  '1234567890',
+  '123456789012',
+];
+
 const seedSuperadmin = async () => {
   const email = (process.env.SUPERADMIN_EMAIL || '').trim().toLowerCase();
   const password = process.env.SUPERADMIN_PASSWORD;
@@ -14,8 +31,16 @@ const seedSuperadmin = async () => {
     process.exit(1);
   }
 
-  if (password.length < 8) {
-    console.error('ERROR: SUPERADMIN_PASSWORD must be at least 8 characters long.');
+  const isKnownDefault = KNOWN_DEFAULT_PASSWORDS.some(
+    (known) => known.toLowerCase() === password.trim().toLowerCase()
+  );
+  if (isKnownDefault) {
+    console.error('ERROR: SUPERADMIN_PASSWORD cannot be a known default repository password.');
+    process.exit(1);
+  }
+
+  if (password.length < 12) {
+    console.error('ERROR: SUPERADMIN_PASSWORD must be at least 12 characters long for production security.');
     process.exit(1);
   }
 
@@ -58,5 +83,12 @@ const seedSuperadmin = async () => {
   }
 };
 
-seedSuperadmin();
+if (require.main === module) {
+  seedSuperadmin();
+}
+
+module.exports = {
+  seedSuperadmin,
+  KNOWN_DEFAULT_PASSWORDS,
+};
 
