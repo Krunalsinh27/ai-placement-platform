@@ -6,6 +6,10 @@ const { User, College } = require('../models');
 dotenv.config();
 
 const seedAdmin = async () => {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('REFUSING TO SEED ADMIN IN PRODUCTION: Default accounts with hardcoded passwords are not permitted in production. Use seed:superadmin instead.');
+    process.exit(1);
+  }
   try {
     const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/placement_management';
     await mongoose.connect(mongoUri);

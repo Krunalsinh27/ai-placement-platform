@@ -53,7 +53,15 @@ const migrateAuthUsers = async () => {
       { $set: { isApproved: true, isEmailVerified: true } }
     );
 
-    // 2. Ensure Superadmin account exists (superadmin@portal.com / Super@12345)
+    // SECURITY GUARD:
+    // In production (NODE_ENV=production), startup migration must NEVER create default users or profiles.
+    // Superadmin accounts in production must be provisioned exclusively via seed:superadmin with env credentials.
+    if (process.env.NODE_ENV === 'production') {
+      console.log('[Migration] Production environment detected: skipping default user and profile creation.');
+      return;
+    }
+
+    // 2. Development/test only: Ensure Superadmin account exists
     const superadminEmail = 'superadmin@portal.com';
     let superadmin = await User.findOne({ email: superadminEmail });
     if (!superadmin) {
@@ -74,7 +82,7 @@ const migrateAuthUsers = async () => {
       if (needSave) await superadmin.save();
     }
 
-    // 3. Ensure Approved Analyst account exists (analyst@portal.com / Analyst@123)
+    // 3. Development/test only: Ensure Approved Analyst account exists
     const analystEmail = 'analyst@portal.com';
     let analyst = await User.findOne({ email: analystEmail });
     if (!analyst) {
@@ -101,7 +109,7 @@ const migrateAuthUsers = async () => {
       if (needSave) await analyst.save();
     }
 
-    // 4. Ensure Aspirant account exists (aspirant@portal.com / Aspirant@123)
+    // 4. Development/test only: Ensure Aspirant account exists
     const { Aspirant } = require('../models');
     const aspirantEmail = 'aspirant@portal.com';
     let aspirantUser = await User.findOne({ email: aspirantEmail });
