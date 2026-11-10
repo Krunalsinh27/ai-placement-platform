@@ -5,6 +5,82 @@ import api from '../../services/api';
 import { GraduationCap, Mail, Lock, ArrowRight, ShieldCheck, User, Building2, AlertCircle, Compass, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+let DevQuickCredentials = null;
+if (import.meta.env.DEV) {
+  DevQuickCredentials = ({ onFill }) => (
+    <div className="mt-6 pt-5 border-t border-slate-100">
+      <p className="text-center text-xs font-medium text-slate-500 mb-2">
+        Quick Test Credentials:
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+        <button
+          type="button"
+          onClick={() => onFill('superadmin@portal.com', 'Super@12345')}
+          className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors"
+          title="Superadmin"
+        >
+          <ShieldCheck className="w-3 h-3 text-rose-600" />
+          <span>Superadmin</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onFill('aspirant@portal.com', 'Aspirant@123')}
+          className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 transition-colors"
+          title="Prospective Student"
+        >
+          <Compass className="w-3 h-3 text-teal-600" />
+          <span>Aspirant</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onFill('admin@college.com', 'Admin@123')}
+          className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 transition-colors"
+          title="NIT Delhi TPO"
+        >
+          <ShieldCheck className="w-3 h-3" />
+          <span>NITD TPO</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onFill('tpo.pict@college.com', 'Admin@123')}
+          className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors"
+          title="PICT Pune TPO"
+        >
+          <ShieldCheck className="w-3 h-3" />
+          <span>PICT TPO</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onFill('recruiter@google.com', 'Recruiter@123')}
+          className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors"
+          title="Google Recruiter"
+        >
+          <Building2 className="w-3 h-3" />
+          <span>Recruiter</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onFill('analyst@portal.com', 'Analyst@123')}
+          className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
+          title="Placement Analyst"
+        >
+          <ShieldCheck className="w-3 h-3" />
+          <span>Analyst</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onFill('aarav.sharma1@college.com', 'Student@123')}
+          className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+          title="Sample Student"
+        >
+          <User className="w-3 h-3" />
+          <span>Student</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const Login = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -270,77 +346,10 @@ const Login = () => {
             </div>
           </form>
 
-          {/* Quick Credential Helpers */}
-          <div className="mt-6 pt-5 border-t border-slate-100">
-            <p className="text-center text-xs font-medium text-slate-500 mb-2">
-              Quick Test Credentials:
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                onClick={() => fillCredentials('superadmin@portal.com', 'Super@12345')}
-                className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-colors"
-                title="Superadmin"
-              >
-                <ShieldCheck className="w-3 h-3 text-rose-600" />
-                <span>Superadmin</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials('aspirant@portal.com', 'Aspirant@123')}
-                className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 transition-colors"
-                title="Prospective Student"
-              >
-                <Compass className="w-3 h-3 text-teal-600" />
-                <span>Aspirant</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials('admin@college.com', 'Admin@123')}
-                className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 transition-colors"
-                title="NIT Delhi TPO"
-              >
-                <ShieldCheck className="w-3 h-3" />
-                <span>NITD TPO</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials('tpo.pict@college.com', 'Admin@123')}
-                className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition-colors"
-                title="PICT Pune TPO"
-              >
-                <ShieldCheck className="w-3 h-3" />
-                <span>PICT TPO</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials('recruiter@google.com', 'Recruiter@123')}
-                className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors"
-                title="Google Recruiter"
-              >
-                <Building2 className="w-3 h-3" />
-                <span>Recruiter</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials('analyst@portal.com', 'Analyst@123')}
-                className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
-                title="Placement Analyst"
-              >
-                <ShieldCheck className="w-3 h-3" />
-                <span>Analyst</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials('aarav.sharma1@college.com', 'Student@123')}
-                className="inline-flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                title="Sample Student"
-              >
-                <User className="w-3 h-3" />
-                <span>Student</span>
-              </button>
-            </div>
-          </div>
+          {/* Quick Credential Helpers (Development only, stripped in production build) */}
+          {import.meta.env.DEV && DevQuickCredentials && (
+            <DevQuickCredentials onFill={fillCredentials} />
+          )}
 
           {/* Register Link */}
           <div className="mt-6 text-center">
