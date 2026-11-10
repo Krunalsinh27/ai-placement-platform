@@ -284,7 +284,10 @@ GitHub Actions workflow is located at `.github/workflows/ci.yml`. On every push 
 
 ---
 
-## Demo Login Credentials
+## Demo Login Credentials (development seed only, never created in production)
+
+> [!IMPORTANT]
+> The demonstration accounts listed below are for **development seed only, never created in production**. In production (`NODE_ENV=production`), startup migrations and initialization scripts strictly refuse to create default accounts or demo profiles. Initial production superadmin accounts must be provisioned exclusively via `npm run seed:superadmin` using strong, environment-supplied credentials.
 
 All demonstration accounts are seeded with consistent passwords meeting platform complexity rules (at least 8 characters, with letters and numbers):
 

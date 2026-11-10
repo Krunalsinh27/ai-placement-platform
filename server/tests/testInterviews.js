@@ -680,8 +680,11 @@ async function runInterviewTests() {
     // Clear slots first
     await InterviewSlot.deleteMany({ round: interviewRound._id });
 
-    // Schedule at 06:00 AM IST (before 8:00 AM) and on 2026-11-20 (outside driveDate)
-    const earlyMorningIST = '2026-11-20T06:00';
+    // Schedule at 06:00 AM IST (before 8:00 AM) and on a date outside driveDate (e.g. driveDate + 1 day)
+    const { getISTTimeDetails } = require('../utils/dateTime');
+    const outsideDriveDate = new Date(testDrive.driveDate.getTime() + 86400000);
+    const outsideDetails = getISTTimeDetails(outsideDriveDate);
+    const earlyMorningIST = `${outsideDetails.dateStr}T06:00`;
     const autoScheduleWarnRes = await fetch(`${BASE_URL}/rounds/${interviewRound._id}/slots/auto-schedule`, {
       method: 'POST',
       headers: {
