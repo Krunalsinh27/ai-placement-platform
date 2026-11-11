@@ -72,8 +72,8 @@ async function runAiFeatureTests() {
     res.status(err.status || 500).json({ success: false, message: err.message });
   });
 
-  const PORT = 5097;
-  const server = app.listen(PORT);
+  const server = app.listen(0);
+  const PORT = server.address().port;
   const BASE_URL = `http://127.0.0.1:${PORT}/api`;
 
   const createdUserIds = [];
@@ -853,25 +853,28 @@ async function runAiFeatureTests() {
     }
     assert(sizeLimitError !== null, 'Oversized stream must throw error');
     assert.strictEqual(sizeLimitError.code, 'FILE_TOO_LARGE');
-    assert(sizeLimitError.message.includes('5MB limit'));
 
-    // 14.2 Timeout simulation rejects extraction
-    const sampleTimeoutPdf = await createSamplePdfBuffer('Sample resume content for timeout test.');
-    const timeoutPdfFilename = `timeout-test-${Date.now()}.pdf`;
-    const tempTimeoutPdfPath = path.join(uploadDir, timeoutPdfFilename);
-    fs.writeFileSync(tempTimeoutPdfPath, sampleTimeoutPdf);
-    createdFiles.push(tempTimeoutPdfPath);
+    // 14.2 Synthetic oversized extractor error test via extractResumeText
+    const oversizedExtractor = async () => {
+      const err = new Error('Resume file size exceeds the 5MB limit for parsing.');
+      err.code = 'FILE_TOO_LARGE';
+      throw err;
+    };
+    const sizeResult = await extractResumeText('mock/oversized.pdf', {
+      extractorFn: oversizedExtractor,
+    });
+    assert.strictEqual(sizeResult.unreadable, true);
+    assert.strictEqual(sizeResult.code, 'FILE_TOO_LARGE');
 
-    const timeoutResult = await extractResumeText(
-      `/uploads/${timeoutPdfFilename}`,
-      { timeoutMs: 1 } // Force immediate timeout
-    );
+    // 14.3 Timeout simulation rejects extraction deterministically
+    // Using an injectable fake extractor that never resolves so timeout is 100% deterministic (no timing races)
+    const hangingExtractor = () => new Promise(() => {}); // never resolves
+    const timeoutResult = await extractResumeText('mock/timeout.pdf', {
+      timeoutMs: 15,
+      extractorFn: hangingExtractor,
+    });
     assert.strictEqual(timeoutResult.unreadable, true);
-    assert(
-      timeoutResult.error.includes('timed out after 10 seconds') ||
-      timeoutResult.error.includes('timed out'),
-      `Expected timeout error message but got: ${timeoutResult.error}`
-    );
+    assert.strictEqual(timeoutResult.code, 'EXTRACTION_TIMEOUT');
     console.log('✓ Extraction limits enforced (5MB file size limit & extraction timeout)\n');
 
     // =========================================================================

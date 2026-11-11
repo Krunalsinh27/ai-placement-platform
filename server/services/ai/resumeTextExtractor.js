@@ -95,6 +95,37 @@ function computeBufferHash(buffer) {
 }
 
 /**
+ * Default text extraction pipeline: loads stream from storage, reads buffer, parses PDF/DOCX
+ */
+async function defaultExtractor(resumeUrl, { maxBytes = MAX_RESUME_SIZE, maxPages = MAX_PDF_PAGES } = {}) {
+  const { stream, filename } = await getResumeStream(resumeUrl);
+  const buffer = await streamToBuffer(stream, maxBytes);
+  const hash = computeBufferHash(buffer);
+
+  const lowerName = (filename || '').toLowerCase();
+  const isDocx = lowerName.endsWith('.docx') || lowerName.endsWith('.doc');
+
+  let text = '';
+  if (isDocx) {
+    const result = await mammoth.extractRawText({ buffer });
+    text = result.value || '';
+  } else {
+    text = await parsePdfBuffer(buffer, maxPages);
+  }
+
+  const cleaned = text.trim();
+  if (cleaned.length < 20) {
+    const err = new Error('Resume appears to be empty, scanned, or contains no extractable text.');
+    err.code = 'NO_TEXT';
+    throw err;
+  }
+
+  // Enforce character limit
+  const truncated = cleaned.slice(0, MAX_CHARACTERS);
+  return { text: truncated, hash };
+}
+
+/**
  * Extract text from a student's stored resume URL with limits:
  * - Max file size: 5 MB
  * - Max PDF pages: 15
@@ -105,12 +136,14 @@ function computeBufferHash(buffer) {
  * @param {number} [options.timeoutMs=10000]
  * @param {number} [options.maxBytes=5242880]
  * @param {number} [options.maxPages=15]
- * @returns {Promise<{ text: string, hash: string, unreadable: boolean, error?: string }>}
+ * @param {Function} [options.extractorFn=defaultExtractor]
+ * @returns {Promise<{ text: string, hash: string, unreadable: boolean, error?: string, code?: string }>}
  */
 async function extractResumeText(resumeUrl, options = {}) {
   const timeoutMs = options.timeoutMs || EXTRACTION_TIMEOUT_MS;
   const maxBytes = options.maxBytes || MAX_RESUME_SIZE;
   const maxPages = options.maxPages || MAX_PDF_PAGES;
+  const extractorFn = options.extractorFn || defaultExtractor;
 
   if (!resumeUrl) {
     return {
@@ -118,53 +151,27 @@ async function extractResumeText(resumeUrl, options = {}) {
       hash: '',
       unreadable: true,
       error: 'No resume URL provided',
+      code: 'NO_RESUME_URL',
     };
   }
 
   let hash = '';
-
-  const extractionPromise = (async () => {
-    const { stream, filename } = await getResumeStream(resumeUrl);
-    const buffer = await streamToBuffer(stream, maxBytes);
-    hash = computeBufferHash(buffer);
-
-    const lowerName = (filename || '').toLowerCase();
-    const isDocx = lowerName.endsWith('.docx') || lowerName.endsWith('.doc');
-
-    let text = '';
-    if (isDocx) {
-      const result = await mammoth.extractRawText({ buffer });
-      text = result.value || '';
-    } else {
-      text = await parsePdfBuffer(buffer, maxPages);
-    }
-
-    const cleaned = text.trim();
-    if (cleaned.length < 20) {
-      const err = new Error('Resume appears to be empty, scanned, or contains no extractable text.');
-      err.code = 'NO_TEXT';
-      throw err;
-    }
-
-    // Enforce character limit
-    const truncated = cleaned.slice(0, MAX_CHARACTERS);
-    return { text: truncated, hash };
-  })();
-
   let timer;
+
   const timeoutPromise = new Promise((_, reject) => {
     timer = setTimeout(() => {
-      const err = new Error('Resume text extraction timed out after 10 seconds.');
+      const err = new Error(`Resume text extraction timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
       err.code = 'EXTRACTION_TIMEOUT';
       reject(err);
     }, timeoutMs);
   });
 
   try {
+    const extractionPromise = extractorFn(resumeUrl, { maxBytes, maxPages });
     const result = await Promise.race([extractionPromise, timeoutPromise]);
     return {
       text: result.text,
-      hash: result.hash,
+      hash: result.hash || '',
       unreadable: false,
     };
   } catch (err) {
@@ -173,6 +180,7 @@ async function extractResumeText(resumeUrl, options = {}) {
       hash: hash || '',
       unreadable: true,
       error: err.message || 'Failed to extract resume text',
+      code: err.code || 'EXTRACTION_ERROR',
     };
   } finally {
     clearTimeout(timer);
@@ -181,6 +189,7 @@ async function extractResumeText(resumeUrl, options = {}) {
 
 module.exports = {
   extractResumeText,
+  defaultExtractor,
   parsePdfBuffer,
   streamToBuffer,
   computeBufferHash,

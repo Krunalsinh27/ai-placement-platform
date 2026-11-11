@@ -23,6 +23,7 @@ const {
 
 const {
   extractResumeText,
+  defaultExtractor,
   computeBufferHash,
   streamToBuffer,
 } = require('./resumeTextExtractor');
@@ -61,6 +62,7 @@ module.exports = {
 
   // Resume Text Extraction
   extractResumeText,
+  defaultExtractor,
   computeBufferHash,
   streamToBuffer,
 
