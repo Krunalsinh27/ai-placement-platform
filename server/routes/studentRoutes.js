@@ -11,14 +11,29 @@ const {
 } = require('../controllers/studentController');
 const { getStudentUpcomingRounds } = require('../controllers/recruitmentPipelineController');
 const { getStudentMyInterviewSlots } = require('../controllers/interviewController');
+const {
+  parseResume,
+  getResumeProfile,
+  updateResumeProfile,
+  getStudentSkillMatch,
+} = require('../controllers/aiResumeController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const uploadResume = require('../middleware/uploadMiddleware');
+const { aiLimiter } = require('../middleware/rateLimitMiddleware');
 
 // Student profile routes
 router
   .route('/me')
   .get(protect, authorize('student'), getMyProfile)
   .put(protect, authorize('student'), uploadResume.single('resume'), updateMyProfile);
+
+// AI Resume parsing & insight routes (must come before /:id or /:studentId)
+router.post('/me/resume/parse', protect, authorize('student'), aiLimiter, parseResume);
+router
+  .route('/me/resume-profile')
+  .get(protect, authorize('student'), getResumeProfile)
+  .put(protect, authorize('student'), updateResumeProfile);
+router.get('/me/skill-match/:driveId', protect, authorize('student'), aiLimiter, getStudentSkillMatch);
 
 // Dedicated resume upload route
 router

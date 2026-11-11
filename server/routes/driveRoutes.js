@@ -16,7 +16,13 @@ const {
   getDailyClashes,
   extendBulkOffers,
 } = require('../controllers/recruitmentPipelineController');
+const {
+  getRankedApplicants,
+  getApplicantExplanationHandler,
+  updateDriveSkills,
+} = require('../controllers/aiResumeController');
 const { protect, authorize } = require('../middleware/authMiddleware');
+const { aiLimiter } = require('../middleware/rateLimitMiddleware');
 
 // General drives list & creation
 router
@@ -36,6 +42,11 @@ router.put('/:id/reopen', protect, authorize('tpo', 'admin', 'superadmin'), reop
 router.put('/:id/remove-applicant/:studentId', protect, authorize('tpo', 'admin', 'superadmin'), removeApplicantBeforeFreeze);
 router.get('/:id/progress', protect, getDriveProgress);
 router.post('/:id/offers', protect, authorize('recruiter', 'superadmin'), extendBulkOffers);
+
+// AI Ranking & Explanation routes
+router.get('/:id/ranked-applicants', protect, aiLimiter, getRankedApplicants);
+router.get('/:id/applicants/:applicationId/explanation', protect, aiLimiter, getApplicantExplanationHandler);
+router.put('/:id/skills', protect, updateDriveSkills);
 
 // Drive by ID routes
 router

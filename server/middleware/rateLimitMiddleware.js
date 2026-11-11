@@ -67,11 +67,25 @@ const reportLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// AI endpoints rate limiter: 40 requests per 15 minutes per IP
+const aiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  skip: isTestEnv,
+  message: {
+    success: false,
+    message: 'Too many AI requests from this IP address. Please try again after 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   loginLimiter,
   otpVerifyLimiter,
   otpResendLimiter,
   publicApiLimiter,
   reportLimiter,
+  aiLimiter,
 };
 

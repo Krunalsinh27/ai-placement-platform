@@ -62,6 +62,65 @@ const studentSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    resumeProfile: {
+      skills: [
+        {
+          name: { type: String, trim: true },
+          confirmedByStudent: { type: Boolean, default: false },
+          foundInResume: { type: Boolean, default: true },
+        },
+      ],
+      education: [
+        {
+          degree: { type: String, default: '' },
+          field: { type: String, default: '' },
+          institution: { type: String, default: '' },
+          year: { type: String, default: '' },
+        },
+      ],
+      experience: [
+        {
+          title: { type: String, default: '' },
+          company: { type: String, default: '' },
+          duration: { type: String, default: '' },
+          description: { type: String, default: '' },
+        },
+      ],
+      projects: [
+        {
+          title: { type: String, default: '' },
+          description: { type: String, default: '' },
+          technologies: [{ type: String, trim: true }],
+        },
+      ],
+      certifications: [{ type: String, trim: true }],
+      summary: {
+        type: String,
+        default: '',
+      },
+      status: {
+        type: String,
+        enum: ['none', 'pending', 'parsed', 'failed', 'rate_limited'],
+        default: 'none',
+      },
+      source: {
+        type: String,
+        enum: ['llm', 'rules', 'none'],
+        default: 'none',
+      },
+      model: {
+        type: String,
+        default: '',
+      },
+      resumeHash: {
+        type: String,
+        default: '',
+      },
+      parsedAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,

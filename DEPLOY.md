@@ -123,6 +123,11 @@ Under the **Environment** tab, configure the following keys:
 | `BREVO_SENDER_EMAIL` | `noreply@yourdomain.com` | Verified sender address in Brevo |
 | `BREVO_SENDER_NAME` | `Placement Portal` | Display name on outbound emails |
 | `ALLOW_PRODUCTION_SEED` | `false` | Safeguard against accidental demo database wipes in production |
+| `AI_PROVIDER` | `groq` | AI provider (`groq`, `gemini`, `mock`, or `none`). Mock is blocked in production |
+| `AI_API_KEY` | *API Key from Groq/Gemini* | API Key for LLM provider (not needed if provider is none; missing key falls back to rules) |
+| `AI_MODEL` | `llama-3.3-70b-versatile` | Model name for chat completion (`llama-3.3-70b-versatile`, `gemini-1.5-flash`) |
+| `AI_DAILY_CALL_CAP` | `400` | Global daily maximum AI completions cap persisted in MongoDB |
+| `AI_USER_DAILY_PARSE_CAP` | `5` | Personal daily resume parsing limit per candidate |
 
 > [!WARNING]
 > **Render Free Tier Spin-Down & Scheduled Jobs**:
@@ -211,4 +216,10 @@ Perform this verification checklist after completing deployment:
   - Recruiter / TPO receives approval email and gains dashboard access.
 - [ ] **7. Uptime Keep-Alive**:
   - Configure [UptimeRobot](https://uptimerobot.com) to ping `GET /api/health` every 10 minutes to maintain active in-process cron schedules.
+- [ ] **8. AI Provider Health Check**:
+  - In Render Shell (or locally with production environment variables), run:
+    ```bash
+    npm run ai:check
+    ```
+  - Verifies that the configured provider (`groq`, `gemini`, or `none`) connects, reports latency in ms, and outputs a `2xx (200 OK)` status class without ever printing secret API keys or candidate data.
 

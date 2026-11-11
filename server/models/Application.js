@@ -25,6 +25,14 @@ const applicationSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    aiExplanation: {
+      type: String,
+      default: null,
+    },
+    aiExplanationGeneratedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

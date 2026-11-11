@@ -248,7 +248,54 @@ async function runProdGuardTests() {
     );
     console.log('✓ seedAdmin refused in production mode with exit code 1\n');
 
+    // ========================================================
+    // PART 5: AI Config & Security Guards
+    // ========================================================
+    console.log('6. Testing AI service production security guards...');
+    const { getProvider, isAiConfigured, callAiWithQuotaAndRetry } = require('../services/ai');
+
+    // 5.1 Mock provider is strictly prohibited in production
+    process.env.NODE_ENV = 'production';
+    process.env.AI_PROVIDER = 'mock';
+    assert.throws(
+      () => {
+        getProvider();
+      },
+      /strictly prohibited in production/,
+      'Mock AI provider must throw a security error when NODE_ENV=production'
+    );
+    console.log('✓ Mock AI provider strictly rejected in production mode');
+
+    // 5.2 Missing key degrades gracefully without crash
+    process.env.NODE_ENV = 'production';
+    process.env.AI_PROVIDER = 'groq';
+    delete process.env.AI_API_KEY;
+
+    assert.strictEqual(
+      isAiConfigured(),
+      false,
+      'isAiConfigured() must return false when API key is missing'
+    );
+
+    const callResult = await callAiWithQuotaAndRetry({
+      systemPrompt: 'test',
+      userPrompt: 'test',
+    });
+    assert.strictEqual(
+      callResult.success,
+      false,
+      'AI call must degrade gracefully and return success: false'
+    );
+    assert.strictEqual(
+      callResult.status,
+      'disabled',
+      'AI call must return status: disabled when unconfigured'
+    );
+    console.log('✓ Missing AI key degrades gracefully without throwing unhandled exceptions\n');
+
     // Cleanup created test records
+    process.env.NODE_ENV = 'test';
+    delete process.env.AI_PROVIDER;
     await User.deleteMany({ email: { $in: DEFAULT_EMAILS } });
     await Aspirant.deleteMany({});
 

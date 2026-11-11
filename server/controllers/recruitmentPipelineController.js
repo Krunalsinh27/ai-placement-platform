@@ -36,8 +36,15 @@ const verifyDriveAccess = (drive, user) => {
 
   if (user.role === 'tpo' || user.role === 'admin') {
     const userCollegeId = (user.college?._id || user.college)?.toString();
-    const driveCollegeId = (drive.college?._id || drive.college)?.toString();
-    return userCollegeId && driveCollegeId && userCollegeId === driveCollegeId;
+    const driveCollegeIds = [];
+    if (drive.college) driveCollegeIds.push((drive.college._id || drive.college).toString());
+    if (Array.isArray(drive.colleges)) {
+      drive.colleges.forEach((c) => {
+        const id = (c?._id || c)?.toString();
+        if (id && !driveCollegeIds.includes(id)) driveCollegeIds.push(id);
+      });
+    }
+    return Boolean(userCollegeId && driveCollegeIds.includes(userCollegeId));
   }
 
   if (user.role === 'recruiter') {

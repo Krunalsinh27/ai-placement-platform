@@ -32,9 +32,11 @@ import {
   AlertCircle,
   FileText,
   BookOpen,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
+import RankedApplicantsView from '../../components/recruitment/RankedApplicantsView';
 
 const DriveProgress = () => {
   const { id } = useParams();
@@ -55,6 +57,7 @@ const DriveProgress = () => {
 
   // Search filter
   const [applicantSearch, setApplicantSearch] = useState('');
+  const [rankByAiMatch, setRankByAiMatch] = useState(false);
 
   // Attendance editing state
   const [savingAttendance, setSavingAttendance] = useState(false);
@@ -1241,22 +1244,42 @@ const DriveProgress = () => {
       {activeTab === 'applicants' && (
         <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <h3 className="font-bold text-sm text-slate-900">
-              Registered Drive Applicants ({filteredApplicants.length})
-            </h3>
-            <div className="relative w-64">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search candidates..."
-                value={applicantSearch}
-                onChange={(e) => setApplicantSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-              />
+            <div className="flex items-center gap-3 flex-wrap">
+              <h3 className="font-bold text-sm text-slate-900">
+                Registered Drive Applicants ({filteredApplicants.length})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setRankByAiMatch((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                  rankByAiMatch
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+                }`}
+                title="Toggle Deterministic AI Match Ranking"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{rankByAiMatch ? 'Standard List' : 'Rank by AI match'}</span>
+              </button>
             </div>
+            {!rankByAiMatch && (
+              <div className="relative w-64">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search candidates..."
+                  value={applicantSearch}
+                  onChange={(e) => setApplicantSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
+            )}
           </div>
 
-          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+          {rankByAiMatch ? (
+            <RankedApplicantsView driveId={id} driveRole={driveData?.drive?.role} />
+          ) : (
+            <div className="overflow-x-auto border border-slate-100 rounded-xl">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                 <tr>
@@ -1309,6 +1332,7 @@ const DriveProgress = () => {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
