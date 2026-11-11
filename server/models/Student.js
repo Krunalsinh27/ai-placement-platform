@@ -143,6 +143,10 @@ const studentSchema = new mongoose.Schema(
         default: null,
       },
     },
+    resumeAnalysis: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
   },
   {
     timestamps: true,

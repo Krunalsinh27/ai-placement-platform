@@ -13,6 +13,7 @@ const {
   normalizeSkillList,
   sanitizeSkillList,
   getSkillEvidence,
+  analyzeResumeAgainstTarget,
 } = require('../services/ai');
 
 /**
@@ -133,6 +134,7 @@ const getResumeProfile = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       resumeProfile: student.resumeProfile || null,
+      resumeAnalysis: student.resumeAnalysis || null,
       hasResume: Boolean(student.resumeUrl),
       resumeUrl: student.resumeUrl || null,
       resumeFilename,
@@ -156,6 +158,7 @@ const deleteResumeProfile = async (req, res, next) => {
     }
 
     student.resumeProfile = null;
+    student.resumeAnalysis = null;
     await student.save();
 
     const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
@@ -164,6 +167,7 @@ const deleteResumeProfile = async (req, res, next) => {
       success: true,
       message: 'Parsed resume data deleted successfully',
       resumeProfile: null,
+      resumeAnalysis: null,
       dailyUsage,
     });
   } catch (error) {
@@ -560,6 +564,115 @@ const updateDriveSkills = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Analyze student's resume against a target (pasted JD or eligible drive)
+ * @route   POST /api/students/me/resume/analyze
+ * @access  Private (Student only)
+ */
+const analyzeResumeHandler = async (req, res, next) => {
+  try {
+    const student = await Student.findOne({ user: req.user._id });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student profile not found' });
+    }
+
+    if (!student.resumeProfile || !student.resumeProfile.skills || student.resumeProfile.status === 'none') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please analyze your resume with Resume AI first.',
+      });
+    }
+
+    const { jdText, driveId, force } = req.body;
+
+    if (!jdText && !driveId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide either a pasted job description (jdText) or an eligible drive ID (driveId).',
+      });
+    }
+
+    if (jdText && typeof jdText === 'string' && jdText.length > 6000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Job description exceeds maximum limit of 6000 characters.',
+      });
+    }
+
+    let targetDrive = null;
+    if (driveId) {
+      if (!mongoose.Types.ObjectId.isValid(driveId)) {
+        return res.status(400).json({ success: false, message: 'Invalid drive ID' });
+      }
+      targetDrive = await Drive.findById(driveId);
+      if (!targetDrive) {
+        return res.status(404).json({ success: false, message: 'Placement drive not found' });
+      }
+
+      // Check college eligibility
+      const studentCollegeId = (student.college?._id || student.college)?.toString();
+      const driveCollegeIds = getDriveCollegeIds(targetDrive);
+      if (driveCollegeIds.length > 0 && studentCollegeId && !driveCollegeIds.includes(studentCollegeId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not eligible for this drive (college not included)',
+        });
+      }
+
+      // Check branch eligibility
+      if (
+        Array.isArray(targetDrive.allowedBranches) &&
+        targetDrive.allowedBranches.length > 0 &&
+        student.branch
+      ) {
+        const studentBranchNorm = String(student.branch).toUpperCase().trim();
+        const allowed = targetDrive.allowedBranches.map((b) => String(b).toUpperCase().trim());
+        if (!allowed.includes(studentBranchNorm)) {
+          return res.status(403).json({
+            success: false,
+            message: 'You are not eligible for this drive (branch not eligible)',
+          });
+        }
+      }
+
+      // Check CGPA eligibility
+      const minCgpa = typeof targetDrive.minCgpa === 'number' ? targetDrive.minCgpa : 0;
+      const studentCgpa = typeof student.cgpa === 'number' ? student.cgpa : 0;
+      if (minCgpa > 0 && studentCgpa < minCgpa) {
+        return res.status(403).json({
+          success: false,
+          message: `Minimum CGPA of ${minCgpa} required for this drive`,
+        });
+      }
+
+      // Check backlogs eligibility
+      const maxBacklogs = typeof targetDrive.maxBacklogs === 'number' ? targetDrive.maxBacklogs : 0;
+      const studentBacklogs = typeof student.backlogs === 'number' ? student.backlogs : 0;
+      if (studentBacklogs > maxBacklogs) {
+        return res.status(403).json({
+          success: false,
+          message: `Maximum ${maxBacklogs} backlogs allowed for this drive`,
+        });
+      }
+    }
+
+    const target = {
+      jdText: jdText ? String(jdText) : '',
+      drive: targetDrive,
+    };
+
+    const isForce = force === true || force === 'true' || req.query.force === 'true';
+    const analysis = await analyzeResumeAgainstTarget(student, target, { force: isForce });
+
+    return res.status(200).json({
+      success: true,
+      ...analysis,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getDriveCollegeIds,
   parseResume,
@@ -570,5 +683,6 @@ module.exports = {
   getRankedApplicants,
   getApplicantExplanationHandler,
   updateDriveSkills,
+  analyzeResumeHandler,
 };
 

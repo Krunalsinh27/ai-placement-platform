@@ -45,5 +45,7 @@ services:
         value: 400
       - key: AI_USER_DAILY_PARSE_CAP
         value: 5
+      - key: AI_USER_DAILY_ANALYZE_CAP
+        value: 10
 
 

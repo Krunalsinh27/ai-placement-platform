@@ -77,7 +77,7 @@ async function callAiWithQuotaAndRetry({
 
   // 2. Enforce Daily Quota (MongoDB persisted)
   try {
-    const quotaCheck = await AiUsage.canMakeCall(userId);
+    const quotaCheck = await AiUsage.canMakeCall(userId, mode);
     if (!quotaCheck.allowed) {
       return {
         success: false,
@@ -139,7 +139,7 @@ async function callAiWithQuotaAndRetry({
 
       // Successfully processed: Record call against MongoDB daily counter
       try {
-        await AiUsage.recordCall(userId);
+        await AiUsage.recordCall(userId, mode);
       } catch (recErr) {
         console.warn('[AI Service] Failed to record usage:', recErr.message);
       }

@@ -17,6 +17,7 @@ const {
   updateResumeProfile,
   deleteResumeProfile,
   getStudentSkillMatch,
+  analyzeResumeHandler,
 } = require('../controllers/aiResumeController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const uploadResume = require('../middleware/uploadMiddleware');
@@ -30,6 +31,7 @@ router
 
 // AI Resume parsing & insight routes (must come before /:id or /:studentId)
 router.post('/me/resume/parse', protect, authorize('student'), aiLimiter, parseResume);
+router.post('/me/resume/analyze', protect, authorize('student'), aiLimiter, analyzeResumeHandler);
 router
   .route('/me/resume-profile')
   .get(protect, authorize('student'), getResumeProfile)

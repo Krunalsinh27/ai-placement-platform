@@ -17,6 +17,11 @@ const aiUsageSchema = new mongoose.Schema(
       of: Number,
       default: {},
     },
+    userAnalyzeCounts: {
+      type: Map,
+      of: Number,
+      default: {},
+    },
   },
   {
     timestamps: true,
@@ -37,9 +42,12 @@ aiUsageSchema.statics.getTodayKey = function () {
 /**
  * Check if a call can be made under global and user daily caps
  */
-aiUsageSchema.statics.canMakeCall = async function (userId = null) {
+aiUsageSchema.statics.canMakeCall = async function (userId = null, mode = 'parse') {
   const globalCap = parseInt(process.env.AI_DAILY_CALL_CAP || '400', 10);
-  const userCap = parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
+  const isAnalyze = mode === 'analyze';
+  const userCap = isAnalyze
+    ? parseInt(process.env.AI_USER_DAILY_ANALYZE_CAP || '10', 10)
+    : parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
 
   const dateKey = this.getTodayKey();
   const record = await this.findOne({ date: dateKey });
@@ -57,12 +65,15 @@ aiUsageSchema.statics.canMakeCall = async function (userId = null) {
   }
 
   if (userId) {
-    const userCount = record.userCounts ? record.userCounts.get(String(userId)) || 0 : 0;
+    const userMap = isAnalyze ? record.userAnalyzeCounts : record.userCounts;
+    const userCount = userMap ? userMap.get(String(userId)) || 0 : 0;
     if (userCount >= userCap) {
       return {
         allowed: false,
         reason: 'user_cap_reached',
-        message: 'Your personal daily AI parsing quota has been reached for today.',
+        message: isAnalyze
+          ? 'Your personal daily AI resume analysis quota has been reached for today.'
+          : 'Your personal daily AI parsing quota has been reached for today.',
       };
     }
   }
@@ -71,39 +82,56 @@ aiUsageSchema.statics.canMakeCall = async function (userId = null) {
 };
 
 /**
- * Get current user daily usage metrics (used, cap, remaining)
+ * Get current user daily usage metrics (used, cap, remaining, analyze metrics)
  */
 aiUsageSchema.statics.getUserDailyUsage = async function (userId) {
-  const userCap = parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
+  const parseCap = parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
+  const analyzeCap = parseInt(process.env.AI_USER_DAILY_ANALYZE_CAP || '10', 10);
+
   if (!userId) {
-    return { used: 0, cap: userCap, remaining: userCap };
+    return {
+      used: 0,
+      cap: parseCap,
+      remaining: parseCap,
+      analyze: { used: 0, cap: analyzeCap, remaining: analyzeCap },
+      analyzeUsed: 0,
+      analyzeCap: analyzeCap,
+      analyzeRemaining: analyzeCap,
+    };
   }
 
   const dateKey = this.getTodayKey();
   const record = await this.findOne({ date: dateKey });
-  if (!record || !record.userCounts) {
-    return { used: 0, cap: userCap, remaining: userCap };
-  }
+  const parseUsed = record?.userCounts ? record.userCounts.get(String(userId)) || 0 : 0;
+  const analyzeUsed = record?.userAnalyzeCounts ? record.userAnalyzeCounts.get(String(userId)) || 0 : 0;
 
-  const userCount = record.userCounts.get(String(userId)) || 0;
   return {
-    used: userCount,
-    cap: userCap,
-    remaining: Math.max(0, userCap - userCount),
+    used: parseUsed,
+    cap: parseCap,
+    remaining: Math.max(0, parseCap - parseUsed),
+    analyze: {
+      used: analyzeUsed,
+      cap: analyzeCap,
+      remaining: Math.max(0, analyzeCap - analyzeUsed),
+    },
+    analyzeUsed,
+    analyzeCap,
+    analyzeRemaining: Math.max(0, analyzeCap - analyzeUsed),
   };
 };
 
 /**
  * Atomically record an AI call against today's quota
  */
-aiUsageSchema.statics.recordCall = async function (userId = null) {
+aiUsageSchema.statics.recordCall = async function (userId = null, mode = 'parse') {
   const dateKey = this.getTodayKey();
   const update = {
     $inc: { globalCount: 1 },
   };
 
   if (userId) {
-    update.$inc[`userCounts.${String(userId)}`] = 1;
+    const fieldName = mode === 'analyze' ? 'userAnalyzeCounts' : 'userCounts';
+    update.$inc[`${fieldName}.${String(userId)}`] = 1;
   }
 
   return await this.findOneAndUpdate(

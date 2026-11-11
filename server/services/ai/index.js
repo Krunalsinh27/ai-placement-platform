@@ -43,6 +43,16 @@ const {
   generateApplicantExplanation,
 } = require('./matchingEngine');
 
+const {
+  ACTION_VERBS,
+  METRICS_REGEX,
+  ResumeAnalysisZodSchema,
+  computeAtsScore,
+  validateBulletRewrite,
+  generateRuleBasedAnalysis,
+  analyzeResumeAgainstTarget,
+} = require('./resumeAnalyzer');
+
 module.exports = {
   // Skills
   SYNONYMS,
@@ -80,5 +90,14 @@ module.exports = {
   getSkillEvidence,
   buildRuleBasedExplanation,
   generateApplicantExplanation,
+
+  // Resume Analyzer
+  ACTION_VERBS,
+  METRICS_REGEX,
+  ResumeAnalysisZodSchema,
+  computeAtsScore,
+  validateBulletRewrite,
+  generateRuleBasedAnalysis,
+  analyzeResumeAgainstTarget,
 };
 
