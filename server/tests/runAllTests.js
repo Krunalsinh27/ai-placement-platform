@@ -28,6 +28,7 @@ const testSuites = [
   { name: 'test:prodguard', file: 'tests/testProdGuard.js' },
   { name: 'test:reports', file: 'tests/testReports.js' },
   { name: 'test:ai', file: 'tests/testAiFeatures.js' },
+  { name: 'test:assistant', file: 'tests/testAssistant.js' },
 ];
 
 async function ensureSeedInTestDb() {

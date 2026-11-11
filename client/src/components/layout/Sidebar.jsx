@@ -31,6 +31,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     { name: 'Placements', path: '/admin/placements', icon: Award },
     { name: 'Placement Report', path: '/admin/reports', icon: FileSpreadsheet },
     { name: 'Analytics', path: '/admin/analytics', icon: BarChart3 },
+    { name: 'Ask AI', path: '/admin/assistant', icon: Sparkles },
     { name: 'Email Logs', path: '/admin/email-logs', icon: Mail },
   ];
 
