@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const ExcelJS = require('exceljs');
 const { Placement, Student, Company } = require('../models');
+const { sanitizeSpreadsheetValue, escapeCsvCell } = require('../utils/spreadsheet');
 
 /**
  * @desc    Get placements with filters by year, branch, company
@@ -175,6 +176,43 @@ const exportPlacementsExcel = async (req, res, next) => {
       .populate('company')
       .sort({ offerDate: -1 });
 
+    const format = (req.query.format || req.query.type || 'xlsx').toLowerCase();
+    if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename=placement_records_${Date.now()}.csv`
+      );
+      const header = [
+        'S.No',
+        'Student Name',
+        'Enrollment No',
+        'Email Address',
+        'Branch',
+        'Batch Year',
+        'CGPA',
+        'Company Name',
+        'Job Designation',
+        'Package (LPA)',
+        'Offer Date',
+      ];
+      const rows = placements.map((p, idx) => [
+        escapeCsvCell(idx + 1),
+        escapeCsvCell(p.student?.user?.name || '—'),
+        escapeCsvCell(p.student?.enrollmentNo || '—'),
+        escapeCsvCell(p.student?.user?.email || '—'),
+        escapeCsvCell(p.student?.branch || '—'),
+        escapeCsvCell(p.student?.batchYear || '—'),
+        escapeCsvCell(p.student?.cgpa || '—'),
+        escapeCsvCell(p.company?.name || '—'),
+        escapeCsvCell(p.drive?.role || '—'),
+        escapeCsvCell(typeof p.packageLpa === 'number' ? p.packageLpa : (p.packageLpa || '—')),
+        escapeCsvCell(p.offerDate ? new Date(p.offerDate).toLocaleDateString() : '—'),
+      ]);
+      const csvContent = [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+      return res.status(200).send(csvContent);
+    }
+
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'College Placement Record Management System';
     workbook.created = new Date();
@@ -211,16 +249,16 @@ const exportPlacementsExcel = async (req, res, next) => {
     placements.forEach((p, idx) => {
       const row = worksheet.addRow({
         sno: idx + 1,
-        name: p.student?.user?.name || '—',
-        enrollmentNo: p.student?.enrollmentNo || '—',
-        email: p.student?.user?.email || '—',
-        branch: p.student?.branch || '—',
-        batchYear: p.student?.batchYear || '—',
-        cgpa: p.student?.cgpa || '—',
-        company: p.company?.name || '—',
-        role: p.drive?.role || '—',
-        packageLpa: p.packageLpa,
-        offerDate: p.offerDate ? new Date(p.offerDate).toLocaleDateString() : '—',
+        name: sanitizeSpreadsheetValue(p.student?.user?.name || '—'),
+        enrollmentNo: sanitizeSpreadsheetValue(p.student?.enrollmentNo || '—'),
+        email: sanitizeSpreadsheetValue(p.student?.user?.email || '—'),
+        branch: sanitizeSpreadsheetValue(p.student?.branch || '—'),
+        batchYear: typeof p.student?.batchYear === 'number' ? p.student.batchYear : sanitizeSpreadsheetValue(p.student?.batchYear || '—'),
+        cgpa: typeof p.student?.cgpa === 'number' ? p.student.cgpa : sanitizeSpreadsheetValue(p.student?.cgpa || '—'),
+        company: sanitizeSpreadsheetValue(p.company?.name || '—'),
+        role: sanitizeSpreadsheetValue(p.drive?.role || '—'),
+        packageLpa: typeof p.packageLpa === 'number' ? p.packageLpa : sanitizeSpreadsheetValue(p.packageLpa || '—'),
+        offerDate: sanitizeSpreadsheetValue(p.offerDate ? new Date(p.offerDate).toLocaleDateString() : '—'),
       });
 
       row.height = 20;

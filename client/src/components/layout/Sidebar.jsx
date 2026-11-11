@@ -14,6 +14,7 @@ import {
   GraduationCap,
   CalendarCheck,
   Mail,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose }) => {
@@ -27,6 +28,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     { name: 'Students', path: '/admin/students', icon: Users },
     { name: 'Applications', path: '/admin/applications', icon: FileCheck2 },
     { name: 'Placements', path: '/admin/placements', icon: Award },
+    { name: 'Placement Report', path: '/admin/reports', icon: FileSpreadsheet },
     { name: 'Analytics', path: '/admin/analytics', icon: BarChart3 },
     { name: 'Email Logs', path: '/admin/email-logs', icon: Mail },
   ];

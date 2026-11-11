@@ -7,3 +7,4 @@ export { default as ManagePlacements } from './ManagePlacements';
 export { default as ManageDriveRequests } from './ManageTpoDriveRequests';
 export { default as Analytics } from './Analytics';
 export { default as ManageEmailLogs } from './ManageEmailLogs';
+export { default as PlacementReport } from './PlacementReport';

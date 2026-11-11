@@ -19,8 +19,8 @@ const placementSchema = new mongoose.Schema(
     },
     packageLpa: {
       type: Number,
-      required: [true, 'Package (LPA) is required'],
       min: [0, 'Package (LPA) cannot be negative'],
+      default: null,
     },
     offerDate: {
       type: Date,

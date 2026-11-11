@@ -518,7 +518,7 @@ const DriveProgress = () => {
                   {drive.role}
                 </h1>
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  {drive.packageLpa} LPA
+                  {drive.packageLpa != null && !isNaN(drive.packageLpa) ? `${drive.packageLpa} LPA` : '—'}
                 </span>
                 {drive.applicationsClosed ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">

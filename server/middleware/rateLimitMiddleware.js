@@ -54,10 +54,24 @@ const publicApiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Reports rate limiter: 60 requests per 15 minutes per IP
+const reportLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  skip: isTestEnv,
+  message: {
+    success: false,
+    message: 'Too many report requests from this IP address. Please try again after 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   loginLimiter,
   otpVerifyLimiter,
   otpResendLimiter,
   publicApiLimiter,
+  reportLimiter,
 };
 

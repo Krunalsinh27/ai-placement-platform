@@ -225,7 +225,9 @@ const ManageDrives = () => {
     {
       header: 'Package',
       accessor: (row) => (
-        <span className="font-extrabold text-emerald-600">{row.packageLpa} LPA</span>
+        <span className="font-extrabold text-emerald-600">
+          {row.packageLpa != null && !isNaN(row.packageLpa) ? `${row.packageLpa} LPA` : '—'}
+        </span>
       ),
     },
     {

@@ -29,12 +29,12 @@ const offerSchema = new mongoose.Schema(
     application: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Application',
-      required: [true, 'Application reference is required'],
+      default: null,
     },
     packageLpa: {
       type: Number,
-      required: [true, 'Package (LPA) is required'],
       min: [0, 'Package (LPA) cannot be negative'],
+      default: null,
     },
     joiningDate: {
       type: Date,

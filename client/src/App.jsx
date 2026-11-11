@@ -31,6 +31,7 @@ import {
   ManagePlacements,
   Analytics,
   ManageEmailLogs,
+  PlacementReport,
 } from './pages/admin/index';
 
 // Student Pages
@@ -174,6 +175,7 @@ function App() {
             <Route path="incoming-requests" element={<Navigate to="/admin/drive-requests" replace />} />
             <Route path="applications" element={<ManageApplications />} />
             <Route path="placements" element={<ManagePlacements />} />
+            <Route path="reports" element={<PlacementReport />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="email-logs" element={<ManageEmailLogs />} />
           </Route>

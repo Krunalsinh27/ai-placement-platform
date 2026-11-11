@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const path = require('path');
 const jwt = require('jsonwebtoken');
+const ExcelJS = require('exceljs');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
@@ -758,6 +759,91 @@ async function runAnalystTests() {
     }
     console.log('✓ PDF export generated successfully with valid %PDF signature (buffer size:', pdfBuffer.byteLength, 'bytes)');
 
+    // ------------------------------------------------------------------------
+    // TEST 10: FORMULA INJECTION NEUTRALIZATION IN ANALYTICS EXPORT
+    // ------------------------------------------------------------------------
+    console.log('\n--- TEST 10: Formula Injection Neutralization in Analytics Export ---');
+    // Create a company named '=1+1'
+    const evilCompany = await Company.create({
+      name: '=1+1',
+      industry: 'Technology',
+      verified: true,
+    });
+
+    // Create an accepted offer for collegeAStudents[0] with evilCompany
+    const evilOffer = await Offer.create({
+      drive: driveGoogleA._id,
+      company: evilCompany._id,
+      college: collegeA._id,
+      student: collegeAStudents[0]._id,
+      application: apps[0]._id,
+      packageLpa: 25.0,
+      expiryDate: new Date(Date.now() + 86400000),
+      status: 'accepted',
+    });
+
+    // 10a. Verify Excel export neutralization
+    const evilExcelRes = await fetch(`${BASE_URL}/analytics/export/excel`, {
+      headers: { Authorization: `Bearer ${analystToken}` },
+    });
+    if (evilExcelRes.status !== 200) {
+      throw new Error(`Failed to fetch analytics excel export: ${evilExcelRes.status}`);
+    }
+    const evilExcelBuffer = await evilExcelRes.arrayBuffer();
+    const testWorkbook = new ExcelJS.Workbook();
+    await testWorkbook.xlsx.load(evilExcelBuffer);
+
+    const recruitersSheet = testWorkbook.getWorksheet('Top Recruiters');
+    if (!recruitersSheet) {
+      throw new Error('Top Recruiters sheet missing from analytics Excel export');
+    }
+
+    let foundEvilCompanyCell = false;
+    recruitersSheet.eachRow((row) => {
+      const cellVal = String(row.getCell(1).value || '');
+      if (cellVal.includes('1+1')) {
+        if (cellVal !== '\'=1+1') {
+          throw new Error(`Expected cell value to be neutralized to "'=1+1", got "${cellVal}"`);
+        }
+        foundEvilCompanyCell = true;
+      }
+    });
+
+    if (!foundEvilCompanyCell) {
+      throw new Error('Did not find company "=1+1" in Top Recruiters worksheet');
+    }
+    console.log('✓ Excel analytics export neutralized company name "=1+1" to "\'=1+1"');
+
+    // 10b. Verify CSV export neutralization
+    const evilCsvRes = await fetch(`${BASE_URL}/analytics/export/excel?format=csv`, {
+      headers: { Authorization: `Bearer ${analystToken}` },
+    });
+    if (evilCsvRes.status !== 200) {
+      throw new Error(`Failed to fetch analytics csv export: ${evilCsvRes.status}`);
+    }
+    const evilCsvText = await evilCsvRes.text();
+    if (!evilCsvText.includes('"\'=1+1"')) {
+      throw new Error(`Expected CSV export to contain neutralized "\'=1+1", got:\n${evilCsvText}`);
+    }
+    console.log('✓ CSV analytics export neutralized company name "=1+1" to "\'=1+1"');
+
+    // Also verify /analytics/export/csv route
+    const evilDirectCsvRes = await fetch(`${BASE_URL}/analytics/export/csv`, {
+      headers: { Authorization: `Bearer ${analystToken}` },
+    });
+    if (evilDirectCsvRes.status !== 200) {
+      throw new Error(`Failed to fetch /analytics/export/csv: ${evilDirectCsvRes.status}`);
+    }
+    const evilDirectCsvText = await evilDirectCsvRes.text();
+    if (!evilDirectCsvText.includes('"\'=1+1"')) {
+      throw new Error(`Expected /analytics/export/csv to contain neutralized "\'=1+1", got:\n${evilDirectCsvText}`);
+    }
+    console.log('✓ Direct /analytics/export/csv route verified with neutralized formula injection');
+
+    // Cleanup evil fixtures
+    await Offer.deleteOne({ _id: evilOffer._id });
+    await Company.deleteOne({ _id: evilCompany._id });
+
     console.log('\n======================================================');
     console.log('      ALL TASK 33A BACKEND TESTS PASSED (100%)       ');
     console.log('======================================================\n');
@@ -773,7 +859,7 @@ async function runAnalystTests() {
         ],
       });
       await College.deleteMany({ _id: { $in: testColIds } });
-      await Company.deleteMany({ name: { $in: ['Google Test Analytics', 'Amazon Test Analytics'] } });
+      await Company.deleteMany({ name: { $in: ['Google Test Analytics', 'Amazon Test Analytics', '=1+1'] } });
     } catch (_) {}
     server.close();
     await mongoose.connection.close();

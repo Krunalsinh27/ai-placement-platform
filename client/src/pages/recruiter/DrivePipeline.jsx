@@ -1245,7 +1245,10 @@ const DrivePipeline = () => {
     try {
       const offersPayload = offerForm.selectedStudentIds.map((studentId) => ({
         studentId,
-        packageLpa: offerForm.packageLpa,
+        packageLpa:
+          offerForm.packageLpa !== '' && offerForm.packageLpa !== null && !isNaN(Number(offerForm.packageLpa))
+            ? Number(offerForm.packageLpa)
+            : null,
         joiningDate: offerForm.joiningDate || null,
         expiryDate: offerForm.expiryDate,
         role: offerForm.role,
@@ -1364,7 +1367,9 @@ const DrivePipeline = () => {
             </div>
             <p className="text-xs text-slate-500">
               College: <span className="font-semibold text-slate-700">{drive.college?.name}</span> • Package:{' '}
-              <span className="font-bold text-sky-600">{drive.packageLpa} LPA</span> • Drive Date:{' '}
+              <span className="font-bold text-sky-600">
+                {drive.packageLpa != null && !isNaN(drive.packageLpa) ? `${drive.packageLpa} LPA` : '—'}
+              </span> • Drive Date:{' '}
               <span className="font-semibold text-slate-700">{formatISTDate(drive.driveDate)}</span>
             </p>
           </div>
@@ -2830,7 +2835,9 @@ const DrivePipeline = () => {
                                 </div>
                               </td>
                               <td className="py-3.5 px-4 font-semibold text-slate-700">{drive.role}</td>
-                              <td className="py-3.5 px-4 font-black text-emerald-600">{drive.packageLpa} LPA</td>
+                              <td className="py-3.5 px-4 font-black text-emerald-600">
+                                {drive.packageLpa != null && !isNaN(drive.packageLpa) ? `${drive.packageLpa} LPA` : '—'}
+                              </td>
                               <td className="py-3.5 px-4 text-slate-500">
                                 {formatISTDate(new Date())}
                               </td>
@@ -3196,11 +3203,12 @@ const DrivePipeline = () => {
                 </div>
 
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Package (CTC in LPA)</label>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Package (CTC in LPA) <span className="text-xs text-slate-400 font-normal">(optional)</span>
+                  </label>
                   <input
                     type="number"
                     step="0.1"
-                    required
                     value={offerForm.packageLpa}
                     onChange={(e) => setOfferForm({ ...offerForm, packageLpa: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300"
