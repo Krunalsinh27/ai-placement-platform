@@ -222,6 +222,40 @@ const getResumeStream = async (resumeUrl) => {
   throw err;
 };
 
+/**
+ * Resolves the original user-facing file name for a resumeUrl.
+ * Queries GridFS metadata or extracts basename from local disk URL.
+ *
+ * @param {string} resumeUrl
+ * @returns {Promise<string|null>}
+ */
+const resolveResumeOriginalName = async (resumeUrl) => {
+  if (!resumeUrl || typeof resumeUrl !== 'string') return null;
+
+  try {
+    if (resumeUrl.startsWith('gridfs:')) {
+      const idStr = resumeUrl.replace('gridfs:', '').trim();
+      if (mongoose.Types.ObjectId.isValid(idStr)) {
+        const bucket = getGridFSBucket();
+        const files = await bucket.find({ _id: new mongoose.Types.ObjectId(idStr) }).toArray();
+        if (files && files.length > 0) {
+          return files[0].metadata?.originalName || files[0].filename || 'Resume.pdf';
+        }
+      }
+      return 'Resume.pdf';
+    }
+
+    if (resumeUrl.startsWith('/uploads/') || resumeUrl.startsWith('uploads/') || resumeUrl.includes('/')) {
+      const base = path.basename(resumeUrl);
+      return base || 'Resume.pdf';
+    }
+  } catch (_) {
+    return 'Resume.pdf';
+  }
+
+  return 'Resume.pdf';
+};
+
 module.exports = {
   getStorageDriver,
   getGridFSBucket,
@@ -229,5 +263,6 @@ module.exports = {
   saveResumeFile,
   deleteResumeFile,
   getResumeStream,
+  resolveResumeOriginalName,
   uploadDir,
 };

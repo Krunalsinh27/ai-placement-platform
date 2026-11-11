@@ -4,6 +4,7 @@
 
 const mongoose = require('mongoose');
 const { Student, Drive, Application, User, College, AiUsage } = require('../models');
+const { resolveResumeOriginalName } = require('../utils/storage');
 const {
   parseStudentResume,
   computeMatchScore,
@@ -11,7 +12,28 @@ const {
   normalizeSkill,
   normalizeSkillList,
   sanitizeSkillList,
+  getSkillEvidence,
 } = require('../services/ai');
+
+/**
+ * Resolves user-facing original resume filename with graceful fallback/migration
+ */
+async function getStudentResumeOriginalName(student) {
+  if (student?.resumeOriginalName && student.resumeOriginalName.trim()) {
+    return student.resumeOriginalName.trim();
+  }
+  if (!student?.resumeUrl) return null;
+
+  const resolved = await resolveResumeOriginalName(student.resumeUrl);
+  if (resolved) {
+    try {
+      student.resumeOriginalName = resolved;
+      await student.save();
+    } catch (_) {}
+    return resolved;
+  }
+  return 'Resume.pdf';
+}
 
 /**
  * Helper to extract college IDs associated with a drive (multi-college support)
@@ -49,7 +71,10 @@ const parseResume = async (req, res, next) => {
       });
     }
 
-    const parseResult = await parseStudentResume(student);
+    const force =
+      req.body?.force === true || req.body?.force === 'true' || req.query?.force === 'true';
+
+    const parseResult = await parseStudentResume(student, { force });
 
     if (parseResult.status === 'failed') {
       return res.status(400).json({
@@ -72,12 +97,7 @@ const parseResume = async (req, res, next) => {
     }
 
     const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
-    let resumeFilename = null;
-    if (student.resumeUrl) {
-      resumeFilename = student.resumeUrl.includes('/')
-        ? student.resumeUrl.split('/').pop()
-        : student.resumeUrl;
-    }
+    const resumeFilename = await getStudentResumeOriginalName(student);
 
     return res.status(200).json({
       success: true,
@@ -108,12 +128,7 @@ const getResumeProfile = async (req, res, next) => {
     }
 
     const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
-    let resumeFilename = null;
-    if (student.resumeUrl) {
-      resumeFilename = student.resumeUrl.includes('/')
-        ? student.resumeUrl.split('/').pop()
-        : student.resumeUrl;
-    }
+    const resumeFilename = await getStudentResumeOriginalName(student);
 
     return res.status(200).json({
       success: true,
@@ -200,11 +215,18 @@ const updateResumeProfile = async (req, res, next) => {
         const normName = typeof item === 'object' ? item.name : item;
         const confirmed = typeof item === 'object' ? item.confirmedByStudent !== false : true;
         const wasInResume = existingMap.has(normName) ? existingMap.get(normName) : false;
+        const ev = getSkillEvidence(normName, student);
 
         updatedSkills.push({
           name: normName,
           confirmedByStudent: confirmed,
           foundInResume: wasInResume,
+          sources: ev.sources,
+          projectCount: ev.projectCount,
+          inProjects: ev.inProjects,
+          inExperience: ev.inExperience,
+          weight: ev.weight,
+          evidence: ev,
         });
       }
 
@@ -357,8 +379,14 @@ const getRankedApplicants = async (req, res, next) => {
       };
     });
 
-    // Sort by score descending (highest match first)
-    scoredApplicants.sort((a, b) => b.match.score - a.match.score);
+    // Sort by score descending (highest match first; non-computable scores at the bottom)
+    scoredApplicants.sort((a, b) => {
+      const scoreA = a.match?.score;
+      const scoreB = b.match?.score;
+      if (scoreA === null || scoreA === undefined) return 1;
+      if (scoreB === null || scoreB === undefined) return -1;
+      return scoreB - scoreA;
+    });
 
     // Pagination
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);

@@ -9,6 +9,7 @@ export const SKILL_CATEGORIES = [
   'Backend',
   'Databases',
   'Tools & Platforms',
+  'CS Fundamentals',
   'Concepts',
   'Other',
 ];
@@ -57,10 +58,16 @@ const CATEGORY_MAP = {
   css3: 'Frontend',
   tailwind: 'Frontend',
   tailwindcss: 'Frontend',
+  'tailwind css': 'Frontend',
   bootstrap: 'Frontend',
   sass: 'Frontend',
   scss: 'Frontend',
   redux: 'Frontend',
+  'redux toolkit': 'Frontend',
+  rtk: 'Frontend',
+  'react query': 'Frontend',
+  'tanstack query': 'Frontend',
+  axios: 'Frontend',
   zustand: 'Frontend',
   webpack: 'Frontend',
   vite: 'Frontend',
@@ -71,6 +78,7 @@ const CATEGORY_MAP = {
   nodejs: 'Backend',
   express: 'Backend',
   expressjs: 'Backend',
+  'express.js': 'Backend',
   django: 'Backend',
   fastapi: 'Backend',
   flask: 'Backend',
@@ -86,7 +94,16 @@ const CATEGORY_MAP = {
   graphql: 'Backend',
   rest: 'Backend',
   'rest api': 'Backend',
+  'restful': 'Backend',
   'restful api': 'Backend',
+  'restful apis': 'Backend',
+  'rest apis': 'Backend',
+  'rest/restful apis': 'Backend',
+  jwt: 'Backend',
+  jsonwebtoken: 'Backend',
+  bcrypt: 'Backend',
+  bcryptjs: 'Backend',
+  nodemailer: 'Backend',
   microservices: 'Backend',
   grpc: 'Backend',
 
@@ -130,13 +147,35 @@ const CATEGORY_MAP = {
   rabbitmq: 'Tools & Platforms',
   nginx: 'Tools & Platforms',
   jira: 'Tools & Platforms',
+  vercel: 'Tools & Platforms',
+  render: 'Tools & Platforms',
+  netlify: 'Tools & Platforms',
+  cloudinary: 'Tools & Platforms',
+  'vs code': 'Tools & Platforms',
+  vscode: 'Tools & Platforms',
+  'visual studio code': 'Tools & Platforms',
+
+  // CS Fundamentals
+  dbms: 'CS Fundamentals',
+  'database management systems': 'CS Fundamentals',
+  'database management system': 'CS Fundamentals',
+  os: 'CS Fundamentals',
+  'operating systems': 'CS Fundamentals',
+  'operating system': 'CS Fundamentals',
+  'computer networks': 'CS Fundamentals',
+  cn: 'CS Fundamentals',
+  networking: 'CS Fundamentals',
+  'data structures': 'CS Fundamentals',
+  dsa: 'CS Fundamentals',
+  'data structures & algorithms': 'CS Fundamentals',
+  'data structures and algorithms': 'CS Fundamentals',
+  algorithms: 'CS Fundamentals',
+  oop: 'CS Fundamentals',
+  oops: 'CS Fundamentals',
+  'object-oriented programming': 'CS Fundamentals',
+  'object oriented programming': 'CS Fundamentals',
 
   // Concepts
-  'data structures': 'Concepts',
-  dsa: 'Concepts',
-  algorithms: 'Concepts',
-  oop: 'Concepts',
-  'object-oriented programming': 'Concepts',
   'system design': 'Concepts',
   'machine learning': 'Concepts',
   ml: 'Concepts',
@@ -167,6 +206,7 @@ export function groupSkillsByCategory(skills = []) {
     Backend: [],
     Databases: [],
     'Tools & Platforms': [],
+    'CS Fundamentals': [],
     Concepts: [],
     Other: [],
   };
@@ -175,9 +215,12 @@ export function groupSkillsByCategory(skills = []) {
     const name = typeof skill === 'object' ? skill?.name : skill;
     if (!name) return;
     const cat = getSkillCategory(name);
-    grouped[cat].push(skill);
+    if (grouped[cat]) {
+      grouped[cat].push(skill);
+    } else {
+      grouped.Other.push(skill);
+    }
   });
 
   return grouped;
 }
-

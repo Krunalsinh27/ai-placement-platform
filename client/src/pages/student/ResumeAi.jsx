@@ -113,15 +113,17 @@ const ResumeAi = () => {
     fetchEligibleDrives();
   }, []);
 
-  // Compute "Skills to Learn Next" from open drives
+  // Compute "Skills to Learn Next" from open drives (ignoring drives without skill requirements)
   const skillsToLearnNext = useMemo(() => {
     const missingCounts = {};
     drives.forEach((d) => {
-      const missing = d.match?.missingSkills || [];
-      missing.forEach((sk) => {
-        const norm = sk.toLowerCase().trim();
-        missingCounts[norm] = (missingCounts[norm] || 0) + 1;
-      });
+      if (d.match?.score !== null && d.match?.score !== undefined) {
+        const missing = d.match?.missingSkills || [];
+        missing.forEach((sk) => {
+          const norm = sk.toLowerCase().trim();
+          missingCounts[norm] = (missingCounts[norm] || 0) + 1;
+        });
+      }
     });
 
     return Object.entries(missingCounts)
@@ -129,6 +131,33 @@ const ResumeAi = () => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 6);
   }, [drives]);
+
+  // Evidence-based project counts for skills
+  const projectCountMap = useMemo(() => {
+    const counts = {};
+    const projects = profile?.projects || [];
+    skills.forEach((sk) => {
+      const name = (sk?.name || '').toLowerCase().trim();
+      if (!name) return;
+      let count = 0;
+      for (const p of projects) {
+        const pTechs = (p.technologies || []).map((t) =>
+          typeof t === 'string' ? t.toLowerCase().trim() : ''
+        );
+        if (pTechs.includes(name)) {
+          count++;
+          continue;
+        }
+        const pText = `${p.title || ''} ${p.description || ''} ${(p.bullets || []).join(' ')}`.toLowerCase();
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`(?:^|[^a-z0-9+#.-])${escaped}(?:$|[^a-z0-9+#.-])`, 'i').test(pText)) {
+          count++;
+        }
+      }
+      counts[name] = count;
+    });
+    return counts;
+  }, [skills, profile?.projects]);
 
   // Handle Resume Analysis
   const handleParseResume = async () => {
@@ -140,7 +169,8 @@ const ResumeAi = () => {
     setParsing(true);
     setRateLimited(false);
     try {
-      const res = await api.post('/students/me/resume/parse');
+      const isReanalyze = profile?.status === 'parsed';
+      const res = await api.post('/students/me/resume/parse', { force: isReanalyze });
       if (res.data.success) {
         setProfile(res.data.resumeProfile);
         setSkills(res.data.resumeProfile?.skills || []);
@@ -314,7 +344,7 @@ const ResumeAi = () => {
             <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 pt-1">
               <span className="flex items-center gap-1.5 font-medium text-slate-700">
                 <FileText className="w-3.5 h-3.5 text-slate-400" />
-                <span>{resumeFilename || (hasResume ? 'Uploaded Resume.pdf' : 'No Resume Uploaded')}</span>
+                <span>{resumeFilename || student?.resumeOriginalName || (hasResume ? 'Uploaded Resume.pdf' : 'No Resume Uploaded')}</span>
               </span>
 
               {hasResume && (
@@ -330,7 +360,7 @@ const ResumeAi = () => {
                   <span className="text-slate-300">•</span>
                   <button
                     type="button"
-                    onClick={() => downloadResumePdf('me', resumeFilename || 'Resume.pdf')}
+                    onClick={() => downloadResumePdf('me', resumeFilename || student?.resumeOriginalName || 'Resume.pdf')}
                     className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
                   >
                     <span>Download</span>
@@ -535,6 +565,13 @@ const ResumeAi = () => {
                                 </span>
                               )}
 
+                              {/* Evidence: Used in N projects */}
+                              {((sk.projectCount ?? projectCountMap[sk.name.toLowerCase().trim()]) > 0) && (
+                                <span className="text-[9px] font-medium px-1.5 py-0.2 bg-indigo-100 text-indigo-800 rounded">
+                                  used in {sk.projectCount ?? projectCountMap[sk.name.toLowerCase().trim()]} project{(sk.projectCount ?? projectCountMap[sk.name.toLowerCase().trim()]) > 1 ? 's' : ''}
+                                </span>
+                              )}
+
                               <button
                                 type="button"
                                 onClick={() => handleRemoveSkill(originalIndex)}
@@ -652,10 +689,19 @@ const ResumeAi = () => {
                         <span className="font-bold text-xs text-slate-900">{exp.title}</span>
                         <span className="text-[10px] text-slate-400">{exp.duration}</span>
                       </div>
-                      <div className="text-[11px] font-medium text-slate-600">{exp.company}</div>
-                      {exp.description && (
+                      <div className="text-[11px] font-medium text-slate-600">
+                        {exp.company}
+                        {exp.location ? ` • ${exp.location}` : ''}
+                      </div>
+                      {exp.bullets && exp.bullets.length > 0 ? (
+                        <ul className="list-disc pl-4 text-xs text-slate-500 space-y-1 pt-1">
+                          {exp.bullets.map((b, bIdx) => (
+                            <li key={bIdx}>{b}</li>
+                          ))}
+                        </ul>
+                      ) : exp.description ? (
                         <p className="text-xs text-slate-500 leading-relaxed">{exp.description}</p>
-                      )}
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -675,9 +721,15 @@ const ResumeAi = () => {
                   {profile.projects.map((proj, i) => (
                     <div key={i} className="pt-2 first:pt-0 space-y-1">
                       <div className="font-bold text-xs text-slate-900">{proj.title}</div>
-                      {proj.description && (
+                      {proj.bullets && proj.bullets.length > 0 ? (
+                        <ul className="list-disc pl-4 text-xs text-slate-500 space-y-1 pt-1">
+                          {proj.bullets.map((b, bIdx) => (
+                            <li key={bIdx}>{b}</li>
+                          ))}
+                        </ul>
+                      ) : proj.description ? (
                         <p className="text-xs text-slate-500 leading-relaxed">{proj.description}</p>
-                      )}
+                      ) : null}
                       {proj.technologies && proj.technologies.length > 0 && (
                         <div className="flex flex-wrap gap-1 pt-1">
                           {proj.technologies.map((t, idx) => (
@@ -780,41 +832,49 @@ const ResumeAi = () => {
                         </div>
 
                         {/* Match % Badge */}
-                        <div
-                          className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold shrink-0 ${
-                            score >= 80
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : score >= 60
-                              ? 'bg-indigo-100 text-indigo-800'
-                              : score >= 40
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-slate-100 text-slate-600'
-                          }`}
-                        >
-                          {score}% Match
-                        </div>
+                        {drive.match?.score === null || drive.match?.score === undefined ? (
+                          <div className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 shrink-0">
+                            No skill requirements listed
+                          </div>
+                        ) : (
+                          <div
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold shrink-0 ${
+                              score >= 80
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : score >= 60
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : score >= 40
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {score}% Match
+                          </div>
+                        )}
                       </div>
 
                       {/* Missing skills tags */}
-                      {missing.length > 0 ? (
-                        <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-1">
-                          <span className="font-semibold text-rose-600">Missing:</span>
-                          {missing.slice(0, 3).map((sk) => (
-                            <span
-                              key={sk}
-                              className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px]"
-                            >
-                              {sk}
-                            </span>
-                          ))}
-                          {missing.length > 3 && (
-                            <span className="text-[10px] text-slate-400">+{missing.length - 3}</span>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-emerald-700 font-medium">
-                          All required skills matched!
-                        </div>
+                      {drive.match?.score === null || drive.match?.score === undefined ? null : (
+                        missing.length > 0 ? (
+                          <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-1">
+                            <span className="font-semibold text-rose-600">Missing:</span>
+                            {missing.slice(0, 3).map((sk) => (
+                              <span
+                                key={sk}
+                                className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px]"
+                              >
+                                {sk}
+                              </span>
+                            ))}
+                            {missing.length > 3 && (
+                              <span className="text-[10px] text-slate-400">+{missing.length - 3}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-emerald-700 font-medium">
+                            All required skills matched!
+                          </div>
+                        )
                       )}
 
                       {/* Action */}

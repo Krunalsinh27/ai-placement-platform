@@ -9,6 +9,7 @@ const {
   isValidSkillName,
   normalizeSkill,
   sanitizeSkillList,
+  matchSkillInText,
   extractSkillsFromText,
 } = require('./skillsDictionary');
 
@@ -37,6 +38,7 @@ const {
 const {
   computeMatchScore,
   normalizeSkillList,
+  getSkillEvidence,
   buildRuleBasedExplanation,
   generateApplicantExplanation,
 } = require('./matchingEngine');
@@ -49,6 +51,7 @@ module.exports = {
   isValidSkillName,
   normalizeSkill,
   sanitizeSkillList,
+  matchSkillInText,
   extractSkillsFromText,
 
   // Redaction
@@ -74,6 +77,7 @@ module.exports = {
   // Matching Engine
   computeMatchScore,
   normalizeSkillList,
+  getSkillEvidence,
   buildRuleBasedExplanation,
   generateApplicantExplanation,
 };

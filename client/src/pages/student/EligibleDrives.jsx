@@ -199,36 +199,44 @@ const EligibleDrives = () => {
                           <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                           AI Match
                         </span>
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
-                            drive.match.score >= 80
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : drive.match.score >= 60
-                              ? 'bg-indigo-100 text-indigo-800'
-                              : drive.match.score >= 40
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-slate-100 text-slate-600'
-                          }`}
-                        >
-                          {drive.match.score}% Match
-                        </span>
+                        {drive.match.score === null || drive.match.score === undefined ? (
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">
+                            No skill requirements listed
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                              drive.match.score >= 80
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : drive.match.score >= 60
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : drive.match.score >= 40
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {drive.match.score}% Match
+                          </span>
+                        )}
                       </div>
-                      {drive.match.missingSkills && drive.match.missingSkills.length > 0 ? (
-                        <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-1">
-                          <span className="font-semibold text-rose-600">Missing:</span>
-                          {drive.match.missingSkills.slice(0, 3).map((sk) => (
-                            <span
-                              key={sk}
-                              className="px-1.5 py-0.5 rounded bg-white text-slate-600 border border-slate-200 text-[10px]"
-                            >
-                              {sk}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-emerald-700 font-medium">
-                          All required skills matched!
-                        </div>
+                      {drive.match.score === null || drive.match.score === undefined ? null : (
+                        drive.match.missingSkills && drive.match.missingSkills.length > 0 ? (
+                          <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-1">
+                            <span className="font-semibold text-rose-600">Missing:</span>
+                            {drive.match.missingSkills.slice(0, 3).map((sk) => (
+                              <span
+                                key={sk}
+                                className="px-1.5 py-0.5 rounded bg-white text-slate-600 border border-slate-200 text-[10px]"
+                              >
+                                {sk}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-emerald-700 font-medium">
+                            All required skills matched!
+                          </div>
+                        )
                       )}
                     </div>
                   )}

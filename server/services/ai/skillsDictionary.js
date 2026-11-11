@@ -64,10 +64,24 @@ const SYNONYMS = {
   'bootstrap': 'bootstrap',
   'sass': 'sass',
   'scss': 'sass',
+  'axios': 'axios',
+  'redux toolkit': 'redux toolkit',
+  'rtk': 'redux toolkit',
+  'react query': 'react query',
+  'tanstack query': 'react query',
   'graphql': 'graphql',
   'rest': 'rest api',
   'rest api': 'rest api',
   'restful': 'rest api',
+  'restful api': 'rest api',
+  'restful apis': 'rest api',
+  'rest apis': 'rest api',
+  'rest/restful apis': 'rest api',
+  'jwt': 'jwt',
+  'jsonwebtoken': 'jwt',
+  'bcrypt': 'bcrypt',
+  'bcryptjs': 'bcrypt',
+  'nodemailer': 'nodemailer',
   'docker': 'docker',
   'k8s': 'kubernetes',
   'kubernetes': 'kubernetes',
@@ -79,6 +93,14 @@ const SYNONYMS = {
   'git': 'git',
   'github': 'github',
   'gitlab': 'gitlab',
+  'vercel': 'vercel',
+  'render': 'render',
+  'netlify': 'netlify',
+  'cloudinary': 'cloudinary',
+  'postman': 'postman',
+  'vs code': 'vs code',
+  'vscode': 'vs code',
+  'visual studio code': 'vs code',
   'ci/cd': 'ci/cd',
   'cicd': 'ci/cd',
   'jenkins': 'jenkins',
@@ -90,6 +112,18 @@ const SYNONYMS = {
   'microservices': 'microservices',
   'agile': 'agile',
   'scrum': 'scrum',
+  '.net': '.net',
+  'dotnet': '.net',
+  'asp.net': '.net',
+  'dbms': 'dbms',
+  'database management systems': 'dbms',
+  'database management system': 'dbms',
+  'os': 'os',
+  'operating systems': 'os',
+  'operating system': 'os',
+  'computer networks': 'computer networks',
+  'cn': 'computer networks',
+  'networking': 'computer networks',
   'machine learning': 'machine learning',
   'ml': 'machine learning',
   'deep learning': 'deep learning',
@@ -102,11 +136,15 @@ const SYNONYMS = {
   'pandas': 'pandas',
   'numpy': 'numpy',
   'data structures': 'data structures & algorithms',
+  'data structures & algorithms': 'data structures & algorithms',
+  'data structures and algorithms': 'data structures & algorithms',
   'algorithms': 'data structures & algorithms',
   'dsa': 'data structures & algorithms',
   'system design': 'system design',
   'oop': 'object oriented programming',
+  'oops': 'object oriented programming',
   'object-oriented programming': 'object oriented programming',
+  'object oriented programming': 'object oriented programming',
   'prisma': 'prisma',
   'nextjs': 'next.js',
   'next.js': 'next.js',
@@ -200,30 +238,74 @@ function sanitizeSkillList(skills = [], maxSkills = 50) {
 }
 
 /**
- * Extract skills from raw text using rule-based keyword matching
+ * Accurately determines if a skill token appears in the given text.
+ * Enforces whole-token boundaries and handles special skill names.
+ *
+ * @param {string} skill
+ * @param {string} text
+ * @returns {boolean}
+ */
+function matchSkillInText(skill, text) {
+  if (!skill || !text || typeof text !== 'string') return false;
+  const s = skill.toLowerCase().trim();
+  if (!s) return false;
+
+  let regex;
+  if (s === 'c') {
+    // Negative lookbehind: not preceded by alphanumeric
+    // Negative lookahead: not followed by alphanumeric, +, or #
+    regex = /(?<![a-z0-9])c(?![a-z0-9+#])/i;
+  } else if (s === 'r') {
+    // Negative lookbehind: not preceded by alphanumeric
+    // Negative lookahead: not followed by alphanumeric
+    regex = /(?<![a-z0-9])r(?![a-z0-9])/i;
+  } else if (s === 'go' || s === 'golang') {
+    regex = /(?<![a-z0-9])(?:go|golang)(?![a-z0-9])/i;
+  } else if (s === 'c++' || s === 'cpp' || s === 'cplusplus') {
+    regex = /(?<![a-z0-9])(?:c\+\+(?:11|14|17|20)?|cpp|cplusplus)(?![a-z0-9+])/i;
+  } else if (s === 'c#' || s === 'csharp') {
+    regex = /(?<![a-z0-9])(?:c#|csharp)(?![a-z0-9#])/i;
+  } else if (s === '.net' || s === 'dotnet' || s === 'asp.net') {
+    regex = /(?:(?<![a-z0-9])(?:\.net|dotnet)|asp\.net)(?![a-z0-9])/i;
+  } else if (s === 'node.js' || s === 'nodejs') {
+    regex = /(?<![a-z0-9])node(?:\.|\s+)?js(?![a-z0-9])/i;
+  } else if (s === 'next.js' || s === 'nextjs') {
+    regex = /(?<![a-z0-9])next(?:\.|\s+)?js(?![a-z0-9])/i;
+  } else if (s === 'vue.js' || s === 'vuejs') {
+    regex = /(?<![a-z0-9])vue(?:\.|\s+)?js(?![a-z0-9])/i;
+  } else if (s === 'react.js' || s === 'reactjs') {
+    regex = /(?<![a-z0-9])react(?:\.|\s+)?js(?![a-z0-9])/i;
+  } else if (s === 'ci/cd' || s === 'cicd' || s === 'ci-cd') {
+    regex = /(?<![a-z0-9])ci[\s/\-]?cd(?![a-z0-9])/i;
+  } else if (
+    s === 'rest api' ||
+    s === 'rest' ||
+    s === 'restful' ||
+    s === 'restful api' ||
+    s === 'restful apis' ||
+    s === 'rest apis' ||
+    s === 'rest/restful apis'
+  ) {
+    regex = /(?<![a-z0-9])(?:rest(?:ful)?(?:\s+apis?)?|rest\s+api)(?![a-z0-9])/i;
+  } else {
+    const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    regex = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i');
+  }
+
+  return regex.test(text);
+}
+
+/**
+ * Extract skills from raw text using rule-based keyword matching with accurate token boundaries
  * @param {string} text
  * @returns {string[]} array of unique normalized skill names
  */
 function extractSkillsFromText(text) {
   if (!text || typeof text !== 'string') return [];
-  const lower = text.toLowerCase();
   const matched = new Set();
 
   for (const [alias, canonical] of Object.entries(SYNONYMS)) {
-    // Word boundary check (handle special characters like c++, c#)
-    let regex;
-    if (alias === 'c++') {
-      regex = /(?:^|[\s,;:(/])c\+\+(?:$|[\s,;:)/])/i;
-    } else if (alias === 'c#') {
-      regex = /(?:^|[\s,;:(/])c#(?:$|[\s,;:)/])/i;
-    } else if (alias === 'c') {
-      regex = /(?:^|[\s,;:(/])c(?:$|[\s,;:)/])/i;
-    } else {
-      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      regex = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i');
-    }
-
-    if (regex.test(lower)) {
+    if (matchSkillInText(alias, text)) {
       matched.add(canonical);
     }
   }
@@ -238,6 +320,7 @@ module.exports = {
   isValidSkillName,
   normalizeSkill,
   sanitizeSkillList,
+  matchSkillInText,
   extractSkillsFromText,
 };
 

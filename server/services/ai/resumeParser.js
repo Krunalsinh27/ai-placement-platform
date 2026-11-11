@@ -9,6 +9,7 @@ const { extractResumeText } = require('./resumeTextExtractor');
 const { redactPII } = require('./redactor');
 const { normalizeSkill, sanitizeSkillList, extractSkillsFromText } = require('./skillsDictionary');
 const { callAiWithQuotaAndRetry } = require('./aiClient');
+const { getSkillEvidence } = require('./matchingEngine');
 
 // Strict Zod schema for validated LLM output
 const ResumeProfileZodSchema = z.object({
@@ -28,7 +29,10 @@ const ResumeProfileZodSchema = z.object({
       z.object({
         title: z.string().optional().default(''),
         company: z.string().optional().default(''),
+        location: z.string().optional().default(''),
         duration: z.string().optional().default(''),
+        technologies: z.array(z.string()).optional().default([]),
+        bullets: z.array(z.string()).default([]),
         description: z.string().optional().default(''),
       })
     )
@@ -37,8 +41,9 @@ const ResumeProfileZodSchema = z.object({
     .array(
       z.object({
         title: z.string().optional().default(''),
-        description: z.string().optional().default(''),
         technologies: z.array(z.string()).optional().default([]),
+        bullets: z.array(z.string()).default([]),
+        description: z.string().optional().default(''),
       })
     )
     .default([]),
@@ -61,77 +66,301 @@ JSON SCHEMA:
 {
   "skills": ["string"],
   "education": [{"degree": "string", "field": "string", "institution": "string", "year": "string"}],
-  "experience": [{"title": "string", "company": "string", "duration": "string", "description": "string"}],
-  "projects": [{"title": "string", "description": "string", "technologies": ["string"]}],
+  "experience": [{"title": "string", "company": "string", "location": "string", "duration": "string", "bullets": ["string"]}],
+  "projects": [{"title": "string", "technologies": ["string"], "bullets": ["string"]}],
   "certifications": ["string"],
   "summary": "string"
 }`;
 
 /**
- * Rule-based fallback extractor using dictionary & section parsing
+ * Helper to identify bullet points in raw text
+ */
+function isBulletLine(str) {
+  return /^[-*•·▪–—]\s+/.test(str) || /^\d+\.\s+/.test(str);
+}
+
+function cleanBulletText(str) {
+  return str.replace(/^[-*•·▪–—]\s+/, '').replace(/^\d+\.\s+/, '').trim();
+}
+
+/**
+ * Extracts date range or single year from a header string
+ */
+function extractDurationString(str) {
+  const dateRegex = /\b(?:(?:19|20)\d{2}\s*(?:-|–|—|to)\s*(?:present|current|(?:19|20)\d{2})|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*\d{0,4}\s*(?:-|–|—|to)\s*(?:present|current|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*\d{0,4})|(?:19|20)\d{2})\b/i;
+  const match = str.match(dateRegex);
+  if (match) {
+    return {
+      duration: match[0].trim(),
+      cleaned: str.replace(match[0], '').trim(),
+    };
+  }
+  return { duration: '', cleaned: str };
+}
+
+/**
+ * Rule-based fallback extractor with multi-line entry grouping
  */
 function extractWithRules(text) {
   const extractedSkills = extractSkillsFromText(text);
 
-  // Simple section segmenter
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const rawLines = (text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const education = [];
   const experience = [];
   const projects = [];
   const certifications = [];
 
   let currentSection = '';
+  let activeExp = null;
+  let activeProj = null;
+  let activeEdu = null;
 
-  for (const line of lines) {
+  const finalizeExp = () => {
+    if (activeExp && (activeExp.title || activeExp.company || activeExp.bullets.length > 0)) {
+      if (!activeExp.description && activeExp.bullets.length > 0) {
+        activeExp.description = activeExp.bullets.join('. ');
+      }
+      experience.push(activeExp);
+      activeExp = null;
+    }
+  };
+
+  const finalizeProj = () => {
+    if (activeProj && (activeProj.title || activeProj.bullets.length > 0)) {
+      if (!activeProj.description && activeProj.bullets.length > 0) {
+        activeProj.description = activeProj.bullets.join('. ');
+      }
+      activeProj.technologies = Array.from(new Set(activeProj.technologies));
+      projects.push(activeProj);
+      activeProj = null;
+    }
+  };
+
+  const finalizeEdu = () => {
+    if (activeEdu && (activeEdu.degree || activeEdu.institution)) {
+      education.push(activeEdu);
+      activeEdu = null;
+    }
+  };
+
+  for (const line of rawLines) {
     const lower = line.toLowerCase();
-    if (/^(?:education|academics|qualifications)/i.test(lower)) {
+
+    // Section header detection
+    if (/^(?:education|academics|qualifications|academic background)/i.test(lower)) {
+      finalizeExp();
+      finalizeProj();
+      finalizeEdu();
       currentSection = 'edu';
       continue;
-    } else if (/^(?:experience|work history|employment|internships)/i.test(lower)) {
+    } else if (/^(?:experience|work history|employment|internships|work experience|professional experience)/i.test(lower)) {
+      finalizeExp();
+      finalizeProj();
+      finalizeEdu();
       currentSection = 'exp';
       continue;
-    } else if (/^(?:projects|academic projects|key projects)/i.test(lower)) {
+    } else if (/^(?:projects|academic projects|key projects|technical projects|personal projects)/i.test(lower)) {
+      finalizeExp();
+      finalizeProj();
+      finalizeEdu();
       currentSection = 'proj';
       continue;
     } else if (/^(?:certifications|certificates|licenses|courses)/i.test(lower)) {
+      finalizeExp();
+      finalizeProj();
+      finalizeEdu();
       currentSection = 'cert';
       continue;
-    } else if (/^(?:skills|technical skills|technologies)/i.test(lower)) {
+    } else if (/^(?:skills|technical skills|technologies|core competencies)/i.test(lower)) {
+      finalizeExp();
+      finalizeProj();
+      finalizeEdu();
       currentSection = 'skills';
+      continue;
+    } else if (/^(?:summary|professional summary|about me|profile)/i.test(lower)) {
+      finalizeExp();
+      finalizeProj();
+      finalizeEdu();
+      currentSection = 'summary';
       continue;
     }
 
-    if (currentSection === 'edu' && line.length > 5) {
-      if (education.length < 3) {
-        education.push({ degree: line, field: '', institution: '', year: '' });
+    // 1. EXPERIENCE SECTION
+    if (currentSection === 'exp') {
+      if (isBulletLine(line)) {
+        const bullet = cleanBulletText(line);
+        if (!activeExp) {
+          activeExp = {
+            title: 'Experience Role',
+            company: '',
+            location: '',
+            duration: '',
+            bullets: [],
+            description: '',
+          };
+        }
+        activeExp.bullets.push(bullet);
+      } else {
+        // Non-bullet line
+        // If activeExp already has bullets, this non-bullet line represents a NEW entry
+        if (activeExp && activeExp.bullets.length > 0) {
+          finalizeExp();
+        }
+
+        const { duration, cleaned } = extractDurationString(line);
+
+        // Split by delimiter |, •, or ' - '
+        const parts = cleaned.replace(/[|•\s-]+$/, '').split(/\s*[|•]\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+
+        if (activeExp && !activeExp.company && parts.length > 0) {
+          // Enrich existing active header (e.g. title was on line 1, company & location on line 2)
+          activeExp.company = parts[0];
+          if (parts[1]) activeExp.location = parts[1];
+          if (duration) activeExp.duration = duration;
+        } else {
+          finalizeExp();
+
+          let title = '';
+          let company = '';
+          let location = '';
+
+          if (parts.length >= 3) {
+            title = parts[0];
+            company = parts[1];
+            location = parts[2];
+          } else if (parts.length === 2) {
+            title = parts[0];
+            company = parts[1];
+          } else if (parts.length === 1) {
+            // Check for 'at' or '@'
+            const atMatch = parts[0].match(/^(.*?)\s+(?:at|@)\s+(.*)$/i);
+            if (atMatch) {
+              title = atMatch[1].trim();
+              company = atMatch[2].trim();
+            } else {
+              title = parts[0];
+            }
+          }
+
+          activeExp = {
+            title: title || 'Professional Experience',
+            company: company || '',
+            location: location || '',
+            duration: duration || '',
+            bullets: [],
+            description: '',
+          };
+        }
       }
-    } else if (currentSection === 'exp' && line.length > 5) {
-      if (experience.length < 3) {
-        experience.push({ title: line, company: '', duration: '', description: '' });
-      }
-    } else if (currentSection === 'proj' && line.length > 5) {
-      if (projects.length < 4) {
-        projects.push({
-          title: line,
+    }
+
+    // 2. PROJECTS SECTION
+    else if (currentSection === 'proj') {
+      if (isBulletLine(line)) {
+        const bullet = cleanBulletText(line);
+        if (!activeProj) {
+          activeProj = {
+            title: 'Key Project',
+            technologies: [],
+            bullets: [],
+            description: '',
+          };
+        }
+        activeProj.bullets.push(bullet);
+        const bulletTechs = extractSkillsFromText(bullet);
+        activeProj.technologies.push(...bulletTechs);
+      } else if (/^(?:tech(?:nologies)?|tech stack|tools|built with):\s*(.*)/i.test(line)) {
+        const match = line.match(/^(?:tech(?:nologies)?|tech stack|tools|built with):\s*(.*)/i);
+        if (activeProj && match && match[1]) {
+          const techs = extractSkillsFromText(match[1]);
+          activeProj.technologies.push(...techs);
+        }
+      } else {
+        // Non-bullet line indicates a project header
+        if (activeProj && activeProj.bullets.length > 0) {
+          finalizeProj();
+        }
+
+        // Check if line contains technologies in parentheses e.g. "Platform (React, Node.js)"
+        let title = line;
+        const inlineTechs = extractSkillsFromText(line);
+        const parenMatch = line.match(/^(.*?)\s*\((.*?)\)$/);
+        if (parenMatch) {
+          title = parenMatch[1].trim();
+        } else if (line.includes('|')) {
+          const split = line.split('|');
+          title = split[0].trim();
+        }
+
+        finalizeProj();
+
+        activeProj = {
+          title: title || 'Software Project',
+          technologies: inlineTechs,
+          bullets: [],
           description: '',
-          technologies: extractSkillsFromText(line),
-        });
+        };
       }
-    } else if (currentSection === 'cert' && line.length > 5) {
-      if (certifications.length < 4) {
-        certifications.push(line);
+    }
+
+    // 3. EDUCATION SECTION
+    else if (currentSection === 'edu') {
+      const yearMatch = line.match(/\b(20\d{2}(?:\s*(?:-|–|—|to)\s*20\d{2})?)\b/);
+      const year = yearMatch ? yearMatch[0].trim() : '';
+      const textWithoutYear = yearMatch ? line.replace(yearMatch[0], '').trim() : line;
+
+      const parts = textWithoutYear.replace(/[|•\s-]+$/, '').split(/\s*[|•]\s*|\s+-\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
+
+      let degree = '';
+      let field = '';
+      let institution = '';
+
+      if (parts.length >= 2) {
+        degree = parts[0];
+        institution = parts[1];
+        if (parts[2] && !field) field = parts[2];
+      } else if (parts.length === 1) {
+        degree = parts[0];
+      }
+
+      // Check for "in <field>" or "of <field>"
+      const inMatch = degree.match(/^(.*?)\s+(?:in|of)\s+(.*)$/i);
+      if (inMatch) {
+        degree = inMatch[1].trim();
+        if (!field) field = inMatch[2].trim();
+      }
+
+      finalizeEdu();
+      activeEdu = {
+        degree: degree || line,
+        field: field || '',
+        institution: institution || '',
+        year: year || '',
+      };
+      finalizeEdu();
+    }
+
+    // 4. CERTIFICATIONS
+    else if (currentSection === 'cert') {
+      const cleaned = cleanBulletText(line);
+      if (cleaned.length > 3 && certifications.length < 6) {
+        certifications.push(cleaned);
       }
     }
   }
 
-  const summary = `Candidate with technical skills in ${extractedSkills.slice(0, 5).join(', ') || 'software development'}.`;
+  finalizeExp();
+  finalizeProj();
+  finalizeEdu();
+
+  const summary = `Candidate with technical competencies in ${extractedSkills.slice(0, 5).join(', ') || 'software development'}.`;
 
   return {
     skills: extractedSkills,
-    education,
-    experience,
-    projects,
-    certifications,
+    education: education.slice(0, 4),
+    experience: experience.slice(0, 6),
+    projects: projects.slice(0, 6),
+    certifications: certifications.slice(0, 6),
     summary,
   };
 }
@@ -143,7 +372,9 @@ function extractWithRules(text) {
  * @param {Object} student - Mongoose student document
  * @returns {Promise<{ profile: Object, cached: boolean, status: string, error?: string }>}
  */
-async function parseStudentResume(student) {
+async function parseStudentResume(student, options = {}) {
+  const force = Boolean(options && options.force);
+
   if (!student || !student.resumeUrl) {
     const err = new Error('No resume uploaded yet');
     err.status = 400;
@@ -169,16 +400,23 @@ async function parseStudentResume(student) {
     };
   }
 
-  // 2. Cache hit check: if unchanged resume and already parsed, return cached
-  if (
+  // 2. Cache hit check:
+  // "the resumeHash cache counts as a hit only when the stored result has source 'llm'.
+  // A stored 'rules' result must never block a new LLM attempt when a provider is configured and quota remains.
+  // 'Re-Analyze' can force a fresh parse with a force flag on POST /api/students/me/resume/parse"
+  const isLlmCacheHit =
+    !force &&
     student.resumeProfile &&
     student.resumeProfile.resumeHash === hash &&
-    student.resumeProfile.status === 'parsed'
-  ) {
+    student.resumeProfile.status === 'parsed' &&
+    student.resumeProfile.source === 'llm';
+
+  if (isLlmCacheHit) {
     return {
       profile: student.resumeProfile,
       cached: true,
       status: 'parsed',
+      source: 'llm',
     };
   }
 
@@ -225,8 +463,89 @@ async function parseStudentResume(student) {
     parsedData = extractWithRules(text);
   }
 
+  // 1. Normalize experience
+  const normalizedExperience = (parsedData.experience || []).map((exp) => {
+    let bullets = Array.isArray(exp.bullets)
+      ? exp.bullets.map((b) => String(b).trim()).filter(Boolean)
+      : [];
+    if (bullets.length === 0 && exp.description) {
+      bullets = exp.description
+        .split(/(?:\r?\n|•|\. )+/)
+        .map((s) => s.trim().replace(/^[-*•·▪–—]\s*/, ''))
+        .filter((s) => s.length > 5);
+    }
+    const description = exp.description?.trim() || bullets.join('. ');
+    const technologies = sanitizeSkillList(exp.technologies || [], 20);
+    return {
+      title: exp.title || '',
+      company: exp.company || '',
+      location: exp.location || '',
+      duration: exp.duration || '',
+      technologies,
+      bullets,
+      description,
+    };
+  });
+
+  // 2. Normalize projects
+  const normalizedProjects = (parsedData.projects || []).map((proj) => {
+    let bullets = Array.isArray(proj.bullets)
+      ? proj.bullets.map((b) => String(b).trim()).filter(Boolean)
+      : [];
+    if (bullets.length === 0 && proj.description) {
+      bullets = proj.description
+        .split(/(?:\r?\n|•|\. )+/)
+        .map((s) => s.trim().replace(/^[-*•·▪–—]\s*/, ''))
+        .filter((s) => s.length > 5);
+    }
+    const description = proj.description?.trim() || bullets.join('. ');
+    const technologies = sanitizeSkillList(proj.technologies || [], 20);
+    return {
+      title: proj.title || '',
+      technologies,
+      bullets,
+      description,
+    };
+  });
+
+  // 3. Merge technologies listed on parsed projects and experience into the skills list
+  const mergedCandidateSkills = new Set();
+
+  // From parsedData.skills
+  (parsedData.skills || []).forEach((s) => {
+    const raw = typeof s === 'object' ? s?.name : s;
+    const norm = normalizeSkill(raw);
+    if (norm) mergedCandidateSkills.add(norm);
+  });
+
+  // From projects (explicit technologies and extracted skills from text)
+  normalizedProjects.forEach((proj) => {
+    (proj.technologies || []).forEach((t) => {
+      const norm = normalizeSkill(t);
+      if (norm) mergedCandidateSkills.add(norm);
+    });
+    const projText = `${proj.title || ''} ${proj.description || ''} ${(proj.bullets || []).join(' ')}`;
+    extractSkillsFromText(projText).forEach((s) => {
+      const norm = normalizeSkill(s);
+      if (norm) mergedCandidateSkills.add(norm);
+    });
+  });
+
+  // From experience (explicit technologies and extracted skills from text)
+  normalizedExperience.forEach((exp) => {
+    (exp.technologies || []).forEach((t) => {
+      const norm = normalizeSkill(t);
+      if (norm) mergedCandidateSkills.add(norm);
+    });
+    const expText = `${exp.title || ''} ${exp.company || ''} ${exp.description || ''} ${(exp.bullets || []).join(' ')}`;
+    extractSkillsFromText(expText).forEach((s) => {
+      const norm = normalizeSkill(s);
+      if (norm) mergedCandidateSkills.add(norm);
+    });
+  });
+
   // Normalize, validate (max 40 chars, allowed chars), and cap at 50 skills
-  const sanitizedSkillNames = sanitizeSkillList(parsedData.skills || [], 50);
+  const sanitizedSkillNames = sanitizeSkillList(Array.from(mergedCandidateSkills), 50);
 
   // If student previously had confirmed skills, preserve confirmation
   const existingSkillsMap = new Map();
@@ -235,25 +554,41 @@ async function parseStudentResume(student) {
     if (norm) {
       existingSkillsMap.set(norm, {
         confirmedByStudent: Boolean(s.confirmedByStudent),
-        foundInResume: s.foundInResume !== false,
       });
     }
   });
 
+  // Candidate context for evidence computation
+  const candidateEvidenceContext = {
+    skills: sanitizedSkillNames,
+    resumeProfile: {
+      skills: sanitizedSkillNames.map((name) => ({ name })),
+      projects: normalizedProjects,
+      experience: normalizedExperience,
+    },
+  };
+
   const skillsArray = sanitizedSkillNames.map((norm) => {
     const existing = existingSkillsMap.get(norm);
+    const ev = getSkillEvidence(norm, candidateEvidenceContext);
     return {
       name: norm,
       confirmedByStudent: existing ? existing.confirmedByStudent : false,
-      foundInResume: true, // extracted from document
+      foundInResume: true, // extracted/merged from resume document
+      sources: ev.sources,
+      projectCount: ev.projectCount,
+      inProjects: ev.inProjects,
+      inExperience: ev.inExperience,
+      weight: ev.weight,
+      evidence: ev,
     };
   });
 
   const finalProfile = {
     skills: skillsArray,
     education: parsedData.education || [],
-    experience: parsedData.experience || [],
-    projects: parsedData.projects || [],
+    experience: normalizedExperience,
+    projects: normalizedProjects,
     certifications: parsedData.certifications || [],
     summary: parsedData.summary || '',
     status,

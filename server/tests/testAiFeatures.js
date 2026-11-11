@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const assert = require('assert');
 const PDFDocument = require('pdfkit');
@@ -32,6 +33,11 @@ const {
   sanitizeSkillList,
   extractResumeText,
   streamToBuffer,
+  extractWithRules,
+  getSkillEvidence,
+  matchSkillInText,
+  parseStudentResume,
+  buildRuleBasedExplanation,
 } = require('../services/ai');
 const { getTestDbUri } = require('./testHelper');
 
@@ -984,6 +990,640 @@ async function runAiFeatureTests() {
     const getAfterDeleteData = await getAfterDeleteRes.json();
     assert.strictEqual(getAfterDeleteData.resumeProfile, null);
     console.log('✓ Daily usage returned and student parsed data deletion verified (200)\n');
+
+    // =========================================================================
+    // TEST 17: Drive with No Required Skills Returns score: null and reason: 'no_skill_requirements'
+    // =========================================================================
+    console.log('TEST 17: Drive with no required skills returns score: null and reason: no_skill_requirements...');
+    const driveNoReq = {
+      role: 'General Campus Hire',
+      requiredSkills: [],
+      preferredSkills: [],
+      minCgpa: 6.0,
+      maxBacklogs: 2,
+      allowedBranches: ['CSE'],
+    };
+
+    const matchNoReq = computeMatchScore(testCandidate, driveNoReq);
+    assert.strictEqual(matchNoReq.score, null, 'Score must be null when drive has no required skills');
+    assert.strictEqual(matchNoReq.reason, 'no_skill_requirements');
+    assert.strictEqual(matchNoReq.breakdown.requiredSkillCoverage, null);
+    assert.strictEqual(matchNoReq.breakdown.preferredSkillCoverage, null);
+    assert.strictEqual(matchNoReq.breakdown.projectExperienceRelevance, null);
+    assert(matchNoReq.eligibility, 'Eligibility object must be returned');
+    assert.strictEqual(matchNoReq.eligibility.eligible, true);
+    assert.strictEqual(matchNoReq.eligibility.eligibilityFit, 20);
+    assert(
+      matchNoReq.reasons.some((r) => r.includes('No skill requirements listed')),
+      'Reasons must state that no skill requirements are listed'
+    );
+
+    const explNoReq = buildRuleBasedExplanation(matchNoReq, 'General Campus Hire');
+    assert(
+      explNoReq.includes('No specific technical skill requirements are listed'),
+      'Explanation must clearly state no specific technical skills are required'
+    );
+    console.log('✓ Drives with no required skills handled honestly as non-computable (score: null)\n');
+
+    // =========================================================================
+    // TEST 18: Evidence-Based Skill Matching Mathematics
+    // =========================================================================
+    console.log('TEST 18: Evidence-based matching: project/experience 1.0 vs list-only 0.7...');
+    const skillDrive = {
+      role: 'Full Stack Engineer',
+      requiredSkills: ['react', 'nodejs'],
+      preferredSkills: [],
+      minCgpa: 0,
+      maxBacklogs: 10,
+    };
+
+    // Candidate 1: Skills listed ONLY in skills array (no projects or experience)
+    const listOnlyCandidate = {
+      cgpa: 8.0,
+      backlogs: 0,
+      branch: 'CSE',
+      skills: ['react', 'nodejs'],
+      resumeProfile: { skills: [{ name: 'react' }, { name: 'nodejs' }], projects: [], experience: [] },
+    };
+
+    const evListReact = getSkillEvidence('react', listOnlyCandidate);
+    assert.strictEqual(evListReact.weight, 0.7, 'List-only skill must have weight 0.7');
+    assert.strictEqual(evListReact.inProjects, false);
+    assert.strictEqual(evListReact.inExperience, false);
+    assert(evListReact.sources.includes('skills_list'));
+
+    const match1 = computeMatchScore(listOnlyCandidate, skillDrive);
+    // (0.7 + 0.7) / 2 = 0.7 * 50 = 35 points
+    assert.strictEqual(
+      match1.breakdown.requiredSkillCoverage,
+      35,
+      'List-only candidate must receive 35/50 required skills coverage'
+    );
+    assert.strictEqual(match1.matchedSkillDetails[0].weight, 0.7);
+
+    // Candidate 2: Both skills used in projects
+    const practicalCandidate = {
+      cgpa: 8.0,
+      backlogs: 0,
+      branch: 'CSE',
+      skills: ['react', 'nodejs'],
+      resumeProfile: {
+        skills: [{ name: 'react' }, { name: 'nodejs' }],
+        projects: [
+          {
+            title: 'Web Portal',
+            technologies: ['react', 'nodejs'],
+            bullets: ['Built fullstack application with react and nodejs.'],
+          },
+        ],
+        experience: [],
+      },
+    };
+
+    const evProjReact = getSkillEvidence('react', practicalCandidate);
+    assert.strictEqual(evProjReact.weight, 1.0, 'Skill with project evidence must have weight 1.0');
+    assert.strictEqual(evProjReact.inProjects, true);
+    assert.strictEqual(evProjReact.projectCount, 1);
+    assert(evProjReact.sources.includes('projects'));
+
+    const match2 = computeMatchScore(practicalCandidate, skillDrive);
+    // (1.0 + 1.0) / 2 = 1.0 * 50 = 50 points
+    assert.strictEqual(
+      match2.breakdown.requiredSkillCoverage,
+      50,
+      'Practical candidate must receive full 50/50 required skills coverage'
+    );
+    assert.strictEqual(match2.matchedSkillDetails[0].weight, 1.0);
+    assert.strictEqual(match2.matchedSkillDetails[0].projectCount, 1);
+
+    // Candidate 3: Mixed (react in project, nodejs list-only)
+    const mixedCandidate = {
+      cgpa: 8.0,
+      backlogs: 0,
+      branch: 'CSE',
+      skills: ['react', 'nodejs'],
+      resumeProfile: {
+        skills: [{ name: 'react' }, { name: 'nodejs' }],
+        projects: [
+          {
+            title: 'Frontend Portal',
+            technologies: ['react'],
+            bullets: ['Built UI components.'],
+          },
+        ],
+        experience: [],
+      },
+    };
+
+    const match3 = computeMatchScore(mixedCandidate, skillDrive);
+    // (1.0 + 0.7) / 2 = 1.7 / 2 = 0.85 * 50 = 42.5 -> 43 points
+    assert.strictEqual(
+      match3.breakdown.requiredSkillCoverage,
+      43,
+      'Mixed candidate must receive Math.round(0.85 * 50) = 43 points'
+    );
+    console.log('✓ Evidence-based scoring math and weightings verified\n');
+
+    // =========================================================================
+    // TEST 19: Rule-Based Fallback Multi-Line Entry Grouping & Bullets
+    // =========================================================================
+    console.log('TEST 19: Rule-based fallback groups lines into entries with bullets...');
+    const multiLineResume = `
+    Jane Candidate
+    Technical Skills: React, Node.js, Python, Docker, MongoDB
+
+    WORK EXPERIENCE
+    Software Engineering Intern | Google | Mountain View, CA | June 2023 - August 2023
+    - Built real-time analytics dashboard with React and Node.js
+    - Reduced query latency by 40% using Redis caching
+
+    Junior Developer | Acme Corp | Remote | 2022 - 2023
+    * Designed RESTful microservices with Express and MongoDB
+    * Implemented CI/CD pipelines using GitHub Actions
+
+    PROJECTS
+    Placement Management Portal (React, Node.js, MongoDB)
+    - Developed full-stack recruitment portal handling 1000+ students
+    - Integrated AI resume ranking and automated email notifications
+
+    E-Commerce Platform
+    Tech Stack: Python, Django, PostgreSQL
+    - Created shopping cart and checkout flows with Stripe integration
+    - Deployed on AWS ECS with Docker containers
+
+    EDUCATION
+    B.Tech in Computer Science | Stanford University | 2020 - 2024
+    High School Diploma | Delhi Public School | 2018 - 2020
+    `;
+
+    const ruleParsed = extractWithRules(multiLineResume);
+    assert(Array.isArray(ruleParsed.experience), 'experience must be an array');
+    assert.strictEqual(ruleParsed.experience.length, 2, 'Must group lines into 2 distinct experience entries');
+    assert.strictEqual(ruleParsed.experience[0].title, 'Software Engineering Intern');
+    assert.strictEqual(ruleParsed.experience[0].company, 'Google');
+    assert.strictEqual(ruleParsed.experience[0].location, 'Mountain View, CA');
+    assert.strictEqual(ruleParsed.experience[0].duration, 'June 2023 - August 2023');
+    assert.strictEqual(ruleParsed.experience[0].bullets.length, 2);
+    assert.strictEqual(ruleParsed.experience[0].bullets[0], 'Built real-time analytics dashboard with React and Node.js');
+
+    assert.strictEqual(ruleParsed.experience[1].title, 'Junior Developer');
+    assert.strictEqual(ruleParsed.experience[1].company, 'Acme Corp');
+    assert.strictEqual(ruleParsed.experience[1].bullets.length, 2);
+
+    assert(Array.isArray(ruleParsed.projects), 'projects must be an array');
+    assert.strictEqual(ruleParsed.projects.length, 2, 'Must group lines into 2 distinct project entries');
+    assert.strictEqual(ruleParsed.projects[0].title, 'Placement Management Portal');
+    assert(ruleParsed.projects[0].technologies.includes('react'));
+    assert.strictEqual(ruleParsed.projects[0].bullets.length, 2);
+
+    assert.strictEqual(ruleParsed.projects[1].title, 'E-Commerce Platform');
+    assert(ruleParsed.projects[1].technologies.includes('python'));
+    assert.strictEqual(ruleParsed.projects[1].bullets.length, 2);
+
+    assert.strictEqual(ruleParsed.education.length, 2);
+    assert.strictEqual(ruleParsed.education[0].degree, 'B.Tech');
+    assert.strictEqual(ruleParsed.education[0].institution, 'Stanford University');
+    assert.strictEqual(ruleParsed.education[0].year, '2020 - 2024');
+    console.log('✓ Rule-based extractor groups lines into structured multi-line entries with bullets\n');
+
+    // =========================================================================
+    // TEST 20: Original Uploaded Resume Filename Persistence & Graceful Migration
+    // =========================================================================
+    console.log('TEST 20: Student original resume filename persistence and graceful migration...');
+    // Create candidate user & student
+    const studentUser20 = await User.create({
+      name: 'Original Filename Student',
+      email: `orig-file-${Date.now()}@portal.com`,
+      password: 'Test@12345',
+      role: 'student',
+      isApproved: true,
+      college: collegeA._id,
+    });
+    createdUserIds.push(studentUser20._id);
+
+    const student20 = await Student.create({
+      user: studentUser20._id,
+      college: collegeA._id,
+      enrollmentNo: `EN-ORIG-${Date.now()}`,
+      branch: 'CSE',
+      batchYear: 2025,
+      cgpa: 8.5,
+      backlogs: 0,
+      phone: '9876543210',
+      resumeUrl: '/uploads/legacy-archive-sample-1234.pdf',
+      resumeOriginalName: '', // legacy record without original filename
+    });
+    createdStudentIds.push(student20._id);
+
+    const token20 = createToken(studentUser20);
+
+    // Call GET /api/students/me/resume-profile
+    const origRes = await fetch(`${BASE_URL}/students/me/resume-profile`, {
+      headers: { Authorization: `Bearer ${token20}` },
+    });
+    assert.strictEqual(origRes.status, 200);
+    const origJson = await origRes.json();
+    assert.strictEqual(origJson.success, true);
+    assert.strictEqual(
+      origJson.resumeFilename,
+      'legacy-archive-sample-1234.pdf',
+      'Should resolve and return user-facing filename'
+    );
+
+    // Verify DB was gracefully migrated
+    const migratedStudent = await Student.findById(student20._id);
+    assert.strictEqual(
+      migratedStudent.resumeOriginalName,
+      'legacy-archive-sample-1234.pdf',
+      'Student record in DB must be gracefully migrated'
+    );
+
+    // Test explicit original name preservation
+    migratedStudent.resumeOriginalName = 'Official_Placement_Curriculum_Vitae_2025.pdf';
+    await migratedStudent.save();
+
+    const preservedRes = await fetch(`${BASE_URL}/students/me/resume-profile`, {
+      headers: { Authorization: `Bearer ${token20}` },
+    });
+    const preservedJson = await preservedRes.json();
+    assert.strictEqual(preservedJson.resumeFilename, 'Official_Placement_Curriculum_Vitae_2025.pdf');
+    console.log('✓ Original resume filename persisted and legacy records gracefully migrated\n');
+
+    // =================================================================
+    // TEST 21: Resume Parse Cache (Rules does not block LLM) & Force flag
+    // =================================================================
+    console.log('TEST 21: Resume parse cache source check and force flag...');
+    const studentUser21 = await User.create({
+      name: 'Cache Test Student',
+      email: `cache.student.${Date.now()}@example.com`,
+      role: 'student',
+      college: collegeA._id,
+      password: 'Test@12345',
+      isVerified: true,
+    });
+    createdUserIds.push(studentUser21._id);
+
+    // Create a real PDF on disk for extraction
+    const pdfPath21 = path.join(uploadDir, `test-resume-cache-${Date.now()}.pdf`);
+    const pdfBuf21 = await createSamplePdfBuffer('Cache Student Resume\nSkills: React, Node.js\nProjects: Built web portal');
+    fs.writeFileSync(pdfPath21, pdfBuf21);
+    createdFiles.push(pdfPath21);
+
+    const pdfHash21 = crypto.createHash('sha256').update(pdfBuf21).digest('hex');
+
+    const student21 = await Student.create({
+      user: studentUser21._id,
+      college: collegeA._id,
+      enrollmentNo: `EN-CACHE-${Date.now()}`,
+      branch: 'CSE',
+      batchYear: 2025,
+      cgpa: 8.5,
+      backlogs: 0,
+      phone: '9876543210',
+      resumeUrl: `/uploads/${path.basename(pdfPath21)}`,
+      resumeProfile: {
+        status: 'parsed',
+        source: 'rules', // Stored 'rules' result
+        resumeHash: pdfHash21,
+        skills: [{ name: 'react', foundInResume: true }],
+        parsedAt: new Date(Date.now() - 3600000),
+      },
+    });
+    createdStudentIds.push(student21._id);
+
+    const token21 = createToken(studentUser21);
+
+    // 1. Calling parse when stored result has source 'rules' MUST NOT hit cache; it attempts LLM
+    const parseRes1 = await fetch(`${BASE_URL}/students/me/resume/parse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token21}`,
+      },
+      body: JSON.stringify({}),
+    });
+    assert.strictEqual(parseRes1.status, 200);
+    const json1 = await parseRes1.json();
+    assert.strictEqual(json1.success, true);
+    assert.strictEqual(json1.cached, false, 'Stored rules result must not hit cache when LLM provider is available');
+    assert.strictEqual(json1.source, 'llm', 'Profile must be upgraded to source llm');
+
+    // 2. Calling parse again without force should now hit cache (source is 'llm' and hash matches)
+    const parseRes2 = await fetch(`${BASE_URL}/students/me/resume/parse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token21}`,
+      },
+      body: JSON.stringify({}),
+    });
+    assert.strictEqual(parseRes2.status, 200);
+    const json2 = await parseRes2.json();
+    assert.strictEqual(json2.success, true);
+    assert.strictEqual(json2.cached, true, 'LLM profile with identical hash must hit cache when force is false');
+
+    // 3. Calling parse with force: true forces a fresh parse
+    const parseRes3 = await fetch(`${BASE_URL}/students/me/resume/parse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token21}`,
+      },
+      body: JSON.stringify({ force: true }),
+    });
+    assert.strictEqual(parseRes3.status, 200);
+    const json3 = await parseRes3.json();
+    assert.strictEqual(json3.success, true);
+    assert.strictEqual(json3.cached, false, 'force: true must bypass cache and force a fresh parse');
+    console.log('✓ Cache hit verified for llm only, rules does not block LLM, force flag bypasses cache\n');
+
+    // =================================================================
+    // TEST 22: Merge technologies from projects & experience into skills
+    // =================================================================
+    console.log('TEST 22: Merging project & experience technologies into skills with getSkillEvidence...');
+    const studentUser22 = await User.create({
+      name: 'Merge Skills Student',
+      email: `merge.student.${Date.now()}@example.com`,
+      role: 'student',
+      college: collegeA._id,
+      password: 'Test@12345',
+      isVerified: true,
+    });
+    createdUserIds.push(studentUser22._id);
+
+    const pdfPath22 = path.join(uploadDir, `test-resume-merge-${Date.now()}.pdf`);
+    const mergeResumeText = [
+      'Alex Johnson',
+      'alex@example.com',
+      'TECHNICAL SKILLS',
+      'Python, JavaScript',
+      'PROJECTS',
+      'E-Commerce Platform',
+      'Built frontend using Redux Toolkit and Axios for REST API calls.',
+      'Technologies: Redux Toolkit, Axios',
+      'EXPERIENCE',
+      'Backend Intern at Acme Systems (2024)',
+      'Implemented secure authentication with JWT and Bcrypt.',
+      'Automated email notifications using Nodemailer.',
+      'Technologies: Bcrypt, Nodemailer, JWT',
+    ].join('\n');
+
+    const pdfBuf22 = await createSamplePdfBuffer(mergeResumeText);
+    fs.writeFileSync(pdfPath22, pdfBuf22);
+    createdFiles.push(pdfPath22);
+
+    const student22 = await Student.create({
+      user: studentUser22._id,
+      college: collegeA._id,
+      enrollmentNo: `EN-MERGE-${Date.now()}`,
+      branch: 'CSE',
+      batchYear: 2025,
+      cgpa: 8.8,
+      backlogs: 0,
+      phone: '9876543210',
+      resumeUrl: `/uploads/${path.basename(pdfPath22)}`,
+    });
+    createdStudentIds.push(student22._id);
+
+    const token22 = createToken(studentUser22);
+    const parseResMerge = await fetch(`${BASE_URL}/students/me/resume/parse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token22}`,
+      },
+      body: JSON.stringify({ force: true }),
+    });
+    assert.strictEqual(parseResMerge.status, 200);
+    const jsonMerge = await parseResMerge.json();
+    assert.strictEqual(jsonMerge.success, true);
+
+    const savedSkills = jsonMerge.resumeProfile.skills || [];
+    const skillNames = savedSkills.map((s) => s.name);
+
+    // Assert technologies from projects & experience were merged
+    assert(skillNames.includes('redux toolkit'), 'redux toolkit from projects must be merged into skills');
+    assert(skillNames.includes('axios'), 'axios from projects must be merged into skills');
+    assert(skillNames.includes('bcrypt'), 'bcrypt from experience must be merged into skills');
+    assert(skillNames.includes('nodemailer'), 'nodemailer from experience must be merged into skills');
+
+    // Assert flagged as foundInResume: true and has evidence
+    const reduxSkill = savedSkills.find((s) => s.name === 'redux toolkit');
+    assert.strictEqual(reduxSkill.foundInResume, true, 'Merged skill must have foundInResume: true');
+    assert.strictEqual(reduxSkill.inProjects, true, 'Redux toolkit must have inProjects: true');
+    assert.strictEqual(reduxSkill.weight, 1.0, 'Skill with project evidence must have weight 1.0');
+
+    const bcryptSkill = savedSkills.find((s) => s.name === 'bcrypt');
+    assert.strictEqual(bcryptSkill.foundInResume, true, 'Bcrypt must have foundInResume: true');
+    assert.strictEqual(bcryptSkill.inExperience, true, 'Bcrypt must have inExperience: true');
+    assert.strictEqual(bcryptSkill.weight, 1.0, 'Skill with experience evidence must have weight 1.0');
+
+    console.log('✓ Project and experience technologies merged into skills list with evidence\n');
+
+    // =================================================================
+    // TEST 23: Whole-token boundary matching and special names
+    // =================================================================
+    console.log('TEST 23: Whole-token boundary matching and special names in getSkillEvidence & matchSkillInText...');
+    // Substring vs whole-token tests
+    assert.strictEqual(
+      matchSkillInText('java', 'Built modern frontend with JavaScript and HTML5'),
+      false,
+      'java must NOT match text containing only javascript'
+    );
+    assert.strictEqual(
+      matchSkillInText('c', 'A cat can achieve the best result at acme'),
+      false,
+      'c must NOT match arbitrary words like cat, can, acme'
+    );
+    assert.strictEqual(
+      matchSkillInText('go', 'Interned as a software engineer at Google'),
+      false,
+      'go must NOT match google'
+    );
+    assert.strictEqual(
+      matchSkillInText('r', 'Used React, Docker, and car simulation tools'),
+      false,
+      'r must NOT match ordinary words like react, docker, car'
+    );
+    assert.strictEqual(
+      matchSkillInText('c', 'Developed high-performance trading engine in C++'),
+      false,
+      'c must NOT match C++'
+    );
+    assert.strictEqual(
+      matchSkillInText('c++', 'Developed high-performance engine in C++ and C++17'),
+      true,
+      'c++ MUST match correctly'
+    );
+    assert.strictEqual(
+      matchSkillInText('node.js', 'Engineered resilient microservices with Node.js'),
+      true,
+      'node.js MUST match correctly'
+    );
+    assert.strictEqual(
+      matchSkillInText('c#', 'Fullstack engineer developing in C# and ASP.NET'),
+      true,
+      'c# MUST match correctly'
+    );
+    assert.strictEqual(
+      matchSkillInText('.net', 'Backend services built on .NET Core framework'),
+      true,
+      '.net MUST match correctly'
+    );
+    assert.strictEqual(
+      matchSkillInText('next.js', 'Dynamic web applications built with Next.js'),
+      true,
+      'next.js MUST match correctly'
+    );
+    assert.strictEqual(
+      matchSkillInText('ci/cd', 'Configured automated CI/CD deployment pipelines'),
+      true,
+      'ci/cd MUST match correctly'
+    );
+
+    // Test getSkillEvidence with practical student objects
+    const candidateJsOnly = {
+      skills: ['java'],
+      resumeProfile: {
+        skills: [{ name: 'java' }],
+        projects: [{ title: 'Web Project', description: 'Built with JavaScript and HTML' }],
+      },
+    };
+    const evJava = getSkillEvidence('java', candidateJsOnly);
+    assert.strictEqual(evJava.inProjects, false, 'java must not have inProjects: true when project only has JavaScript');
+    assert.strictEqual(evJava.weight, 0.7, 'java without real project evidence must receive weight 0.7');
+
+    const candidateCatAcme = {
+      skills: ['c'],
+      resumeProfile: {
+        skills: [{ name: 'c' }],
+        projects: [{ title: 'Acme Cat Project', description: 'A cat can achieve at acme' }],
+      },
+    };
+    const evC = getSkillEvidence('c', candidateCatAcme);
+    assert.strictEqual(evC.inProjects, false, 'c must not match cat or acme');
+    assert.strictEqual(evC.weight, 0.7);
+
+    const candidateGoogle = {
+      skills: ['go'],
+      resumeProfile: {
+        skills: [{ name: 'go' }],
+        projects: [{ title: 'Internship', description: 'Interned at Google' }],
+      },
+    };
+    const evGo = getSkillEvidence('go', candidateGoogle);
+    assert.strictEqual(evGo.inProjects, false, 'go must not match Google');
+    assert.strictEqual(evGo.weight, 0.7);
+
+    const candidateReactCar = {
+      skills: ['r'],
+      resumeProfile: {
+        skills: [{ name: 'r' }],
+        projects: [{ title: 'Car App', description: 'Used React, Docker, and car simulation' }],
+      },
+    };
+    const evR = getSkillEvidence('r', candidateReactCar);
+    assert.strictEqual(evR.inProjects, false, 'r must not match React or car');
+    assert.strictEqual(evR.weight, 0.7);
+
+    const candidateCpp = {
+      skills: ['c++'],
+      resumeProfile: {
+        skills: [{ name: 'c++' }],
+        projects: [{ title: 'Renderer', description: 'Developed 3D renderer in C++' }],
+      },
+    };
+    const evCpp = getSkillEvidence('c++', candidateCpp);
+    assert.strictEqual(evCpp.inProjects, true, 'c++ must match C++');
+    assert.strictEqual(evCpp.weight, 1.0, 'c++ with project evidence must have weight 1.0');
+
+    const candidateNode = {
+      skills: ['nodejs'],
+      resumeProfile: {
+        skills: [{ name: 'nodejs' }],
+        projects: [{ title: 'Backend', description: 'REST APIs built with Node.js' }],
+      },
+    };
+    const evNode = getSkillEvidence('node.js', candidateNode);
+    assert.strictEqual(evNode.inProjects, true, 'node.js must match Node.js in text');
+    assert.strictEqual(evNode.weight, 1.0, 'node.js with project evidence must have weight 1.0');
+
+    console.log('✓ Whole-token boundary matching confirmed across all test cases and special names\n');
+
+    // =================================================================
+    // TEST 24: Skill Categorizer classifications
+    // =================================================================
+    console.log('TEST 24: Skill categorizer classifications (Frontend, Backend, Tools, CS Fundamentals)...');
+    const clientCategorizerPath = path.resolve(__dirname, '../../client/src/utils/skillCategorizer.js');
+    const categorizerFileContent = fs.readFileSync(clientCategorizerPath, 'utf8');
+
+    assert(
+      categorizerFileContent.includes("'CS Fundamentals'"),
+      'skillCategorizer must export CS Fundamentals category'
+    );
+
+    const vm = require('vm');
+    const transformed = categorizerFileContent
+      .replace(/export const/g, 'const')
+      .replace(/export function/g, 'function')
+      .replace(/export default.*/g, '');
+    const script = new vm.Script(`${transformed}\n({ SKILL_CATEGORIES, getSkillCategory, groupSkillsByCategory })`);
+    const { getSkillCategory, SKILL_CATEGORIES, groupSkillsByCategory } = script.runInNewContext();
+
+    assert(SKILL_CATEGORIES.includes('CS Fundamentals'), 'SKILL_CATEGORIES must contain CS Fundamentals');
+
+    // Frontend: axios, redux toolkit, react query, bootstrap, tailwind
+    assert.strictEqual(getSkillCategory('axios'), 'Frontend');
+    assert.strictEqual(getSkillCategory('redux toolkit'), 'Frontend');
+    assert.strictEqual(getSkillCategory('react query'), 'Frontend');
+    assert.strictEqual(getSkillCategory('bootstrap'), 'Frontend');
+    assert.strictEqual(getSkillCategory('tailwind'), 'Frontend');
+
+    // Backend: jwt, bcrypt, nodemailer, rest/restful apis
+    assert.strictEqual(getSkillCategory('jwt'), 'Backend');
+    assert.strictEqual(getSkillCategory('bcrypt'), 'Backend');
+    assert.strictEqual(getSkillCategory('nodemailer'), 'Backend');
+    assert.strictEqual(getSkillCategory('rest/restful apis'), 'Backend');
+    assert.strictEqual(getSkillCategory('restful api'), 'Backend');
+
+    // Tools & Platforms: vercel, render, netlify, cloudinary, postman, vs code, git, github
+    assert.strictEqual(getSkillCategory('vercel'), 'Tools & Platforms');
+    assert.strictEqual(getSkillCategory('render'), 'Tools & Platforms');
+    assert.strictEqual(getSkillCategory('netlify'), 'Tools & Platforms');
+    assert.strictEqual(getSkillCategory('cloudinary'), 'Tools & Platforms');
+    assert.strictEqual(getSkillCategory('postman'), 'Tools & Platforms');
+    assert.strictEqual(getSkillCategory('vs code'), 'Tools & Platforms');
+    assert.strictEqual(getSkillCategory('git'), 'Tools & Platforms');
+    assert.strictEqual(getSkillCategory('github'), 'Tools & Platforms');
+
+    // CS Fundamentals: dbms, os, computer networks, data structures, oop
+    assert.strictEqual(getSkillCategory('dbms'), 'CS Fundamentals');
+    assert.strictEqual(getSkillCategory('os'), 'CS Fundamentals');
+    assert.strictEqual(getSkillCategory('computer networks'), 'CS Fundamentals');
+    assert.strictEqual(getSkillCategory('data structures'), 'CS Fundamentals');
+    assert.strictEqual(getSkillCategory('oop'), 'CS Fundamentals');
+
+    // Grouping
+    const grouped = groupSkillsByCategory([
+      'axios',
+      'jwt',
+      'vercel',
+      'dbms',
+      'python',
+      'mongodb',
+      'system design',
+      'obscure-custom-skill',
+    ]);
+    assert.strictEqual(grouped.Frontend[0], 'axios');
+    assert.strictEqual(grouped.Backend[0], 'jwt');
+    assert.strictEqual(grouped['Tools & Platforms'][0], 'vercel');
+    assert.strictEqual(grouped['CS Fundamentals'][0], 'dbms');
+    assert.strictEqual(grouped.Languages[0], 'python');
+    assert.strictEqual(grouped.Databases[0], 'mongodb');
+    assert.strictEqual(grouped.Concepts[0], 'system design');
+    assert.strictEqual(grouped.Other[0], 'obscure-custom-skill');
+
+    console.log('✓ Skill categorizer accurately categorizes all technical domains including CS Fundamentals\n');
 
     console.log('=================================================================');
     console.log('            ALL AI & MATCHING TESTS PASSED (100%)                ');
