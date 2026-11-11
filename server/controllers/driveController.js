@@ -58,6 +58,9 @@ const createDrive = async (req, res, next) => {
       lastDateToApply,
       driveDate,
       status,
+      requiredSkills,
+      preferredSkills,
+      colleges,
     } = req.body;
 
     // Validate company existence
@@ -100,14 +103,19 @@ const createDrive = async (req, res, next) => {
 
     const collegeId = req.user.college?._id || req.user.college;
 
+    const { sanitizeSkillList } = require('../services/ai');
+
     const drive = await Drive.create({
       college: collegeId,
+      colleges: Array.isArray(colleges) && colleges.length > 0 ? colleges : (collegeId ? [collegeId] : []),
       company,
       role: role.trim(),
       packageLpa: Number(packageLpa),
       location: location.trim(),
       minCgpa: minCgpa !== undefined ? Number(minCgpa) : 0,
       maxBacklogs: maxBacklogs !== undefined ? Number(maxBacklogs) : 0,
+      requiredSkills: sanitizeSkillList(requiredSkills, 50),
+      preferredSkills: sanitizeSkillList(preferredSkills, 50),
       allowedBranches: branches,
       lastDateToApply: applyDeadline,
       driveDate: parseISTDateTime(driveDate),
@@ -257,23 +265,34 @@ const getEligibleDrives = async (req, res, next) => {
     };
 
     if (studentCollegeId) {
-      eligibleQuery.college = studentCollegeId;
+      eligibleQuery.$or = [
+        { college: studentCollegeId },
+        { colleges: studentCollegeId },
+      ];
     }
 
     const drives = await Drive.find(eligibleQuery)
       .populate('company')
       .sort({ lastDateToApply: 1 });
 
-    // Return matching drives whose deadline hasn't passed in IST, with applicationsClosed flag
+    const { computeMatchScore } = require('../services/ai');
+
+    // Return matching drives whose deadline hasn't passed in IST, with applicationsClosed flag and match analysis
     const eligibleDrives = drives
       .filter((d) => {
         const deadlineEnd = getEndOfDayIST(d.lastDateToApply);
         return deadlineEnd && deadlineEnd >= now;
       })
-      .map((d) => ({
-        ...d.toObject(),
-        applicationsClosed: Boolean(d.applicationsClosed),
-      }));
+      .map((d) => {
+        const obj = d.toObject();
+        obj.applicationsClosed = Boolean(d.applicationsClosed);
+        try {
+          obj.match = computeMatchScore(student, d);
+        } catch (_) {
+          obj.match = null;
+        }
+        return obj;
+      });
 
     const total = eligibleDrives.length;
     const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -354,6 +373,9 @@ const updateDrive = async (req, res, next) => {
       lastDateToApply,
       driveDate,
       status,
+      requiredSkills,
+      preferredSkills,
+      colleges,
     } = req.body;
 
     if (company) {
@@ -372,6 +394,18 @@ const updateDrive = async (req, res, next) => {
     if (location !== undefined) drive.location = location.trim();
     if (minCgpa !== undefined) drive.minCgpa = Number(minCgpa);
     if (maxBacklogs !== undefined) drive.maxBacklogs = Number(maxBacklogs);
+
+    if (requiredSkills !== undefined) {
+      const { sanitizeSkillList } = require('../services/ai');
+      drive.requiredSkills = sanitizeSkillList(requiredSkills, 50);
+    }
+    if (preferredSkills !== undefined) {
+      const { sanitizeSkillList } = require('../services/ai');
+      drive.preferredSkills = sanitizeSkillList(preferredSkills, 50);
+    }
+    if (Array.isArray(colleges)) {
+      drive.colleges = colleges;
+    }
 
     if (allowedBranches !== undefined) {
       if (Array.isArray(allowedBranches)) {

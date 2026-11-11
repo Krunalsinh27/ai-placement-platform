@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
+import RankedApplicantsView from '../../components/recruitment/RankedApplicantsView';
 
 const DrivePipeline = () => {
   const { id } = useParams();
@@ -58,6 +59,7 @@ const DrivePipeline = () => {
   const [batchFilter, setBatchFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [resultFilter, setResultFilter] = useState('all');
+  const [showAiRanked, setShowAiRanked] = useState(false);
 
   // Modals
   const [autoSplitModalOpen, setAutoSplitModalOpen] = useState(false);
@@ -1376,6 +1378,19 @@ const DrivePipeline = () => {
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <button
+              type="button"
+              onClick={() => setShowAiRanked((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                showAiRanked
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+              }`}
+              title="Toggle AI Match Ranking"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{showAiRanked ? 'Back to Rounds' : 'Rank by AI match'}</span>
+            </button>
+            <button
               onClick={fetchDriveProgress}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
               title="Refresh Pipeline"
@@ -1424,8 +1439,10 @@ const DrivePipeline = () => {
         </div>
       )}
 
-      {/* Rounds Navigation Tabs */}
-      {rounds.length === 0 ? (
+      {/* AI Ranked Applicants or Rounds Navigation Tabs */}
+      {showAiRanked ? (
+        <RankedApplicantsView driveId={id} driveRole={drive?.role} />
+      ) : rounds.length === 0 ? (
         <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3">
           <Layers className="w-12 h-12 text-slate-300 mx-auto" />
           <h3 className="text-base font-bold text-slate-800">Recruitment Rounds Not Initialized</h3>

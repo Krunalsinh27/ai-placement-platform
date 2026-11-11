@@ -19,6 +19,7 @@ import {
   Save,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import ResumeInsightsCard from '../../components/student/ResumeInsightsCard';
 
 const BRANCH_OPTIONS = [
   'CSE',
@@ -255,6 +256,14 @@ const StudentProfile = () => {
               )}
             </div>
           </div>
+
+          {/* AI Resume Insights Card */}
+          <ResumeInsightsCard
+            hasResume={Boolean(student?.resumeUrl)}
+            onSkillsUpdated={(newSkills) =>
+              setFormData((prev) => ({ ...prev, skills: newSkills.join(', ') }))
+            }
+          />
         </div>
 
         {/* Right Column: Editable Profile Details */}

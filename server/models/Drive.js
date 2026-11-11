@@ -12,6 +12,20 @@ const driveSchema = new mongoose.Schema(
       ref: 'College',
       default: null,
     },
+    colleges: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'College',
+      },
+    ],
+    requiredSkills: {
+      type: [String],
+      default: [],
+    },
+    preferredSkills: {
+      type: [String],
+      default: [],
+    },
     jobRequirement: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'JobRequirement',
@@ -112,6 +126,37 @@ driveSchema.index({ company: 1, status: 1 });
 driveSchema.index({ college: 1, applicationsClosed: 1, status: 1 });
 driveSchema.index({ college: 1, createdAt: -1 });
 driveSchema.index({ company: 1, createdAt: -1 });
+
+// Multi-college helper methods to treat drive colleges as a list
+driveSchema.methods.getAllCollegeIds = function () {
+  const ids = new Set();
+  if (this.college) {
+    ids.add((this.college._id || this.college).toString());
+  }
+  if (Array.isArray(this.colleges)) {
+    for (const c of this.colleges) {
+      if (c) ids.add((c._id || c).toString());
+    }
+  }
+  return Array.from(ids);
+};
+
+driveSchema.statics.getDriveCollegeIds = function (drive) {
+  if (!drive) return [];
+  if (typeof drive.getAllCollegeIds === 'function') {
+    return drive.getAllCollegeIds();
+  }
+  const ids = new Set();
+  if (drive.college) {
+    ids.add((drive.college._id || drive.college).toString());
+  }
+  if (Array.isArray(drive.colleges)) {
+    for (const c of drive.colleges) {
+      if (c) ids.add((c._id || c).toString());
+    }
+  }
+  return Array.from(ids);
+};
 
 const Drive = mongoose.model('Drive', driveSchema);
 

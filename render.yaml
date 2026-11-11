@@ -33,4 +33,15 @@ services:
         sync: false
       - key: BREVO_SENDER_NAME
         value: Placement Portal
+      - key: AI_PROVIDER
+        value: groq
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: llama-3.3-70b-versatile
+      - key: AI_DAILY_CALL_CAP
+        value: 400
+      - key: AI_USER_DAILY_PARSE_CAP
+        value: 5
+
 

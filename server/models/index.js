@@ -19,6 +19,7 @@ const EmailLog = require('./EmailLog');
 const Question = require('./Question');
 const TestAttempt = require('./TestAttempt');
 const Aspirant = require('./Aspirant');
+const AiUsage = require('./AiUsage');
 
 module.exports = {
   User,
@@ -42,4 +43,5 @@ module.exports = {
   Question,
   TestAttempt,
   Aspirant,
+  AiUsage,
 };

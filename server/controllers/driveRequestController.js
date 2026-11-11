@@ -527,6 +527,8 @@ const respondToDriveRequest = async (req, res, next) => {
         const driveDoc = await Drive.create({
           company: request.company,
           college: request.college,
+          colleges: [request.college],
+          requiredSkills: jobReq.skills || [],
           jobRequirement: jobReq._id,
           driveRequest: request._id,
           role: jobReq.title,
@@ -725,6 +727,8 @@ const acceptTpoProposedDate = async (req, res, next) => {
       const driveDoc = await Drive.create({
         company: request.company,
         college: request.college,
+        colleges: [request.college],
+        requiredSkills: jobReq.skills || [],
         jobRequirement: jobReq._id,
         driveRequest: request._id,
         role: jobReq.title,
@@ -1033,6 +1037,8 @@ const finalizeAndPublishDrive = async (req, res, next) => {
       driveDoc = await Drive.create({
         company: request.company._id || request.company,
         college: request.college,
+        colleges: [request.college],
+        requiredSkills: jobReq.skills || [],
         jobRequirement: jobReq._id,
         driveRequest: request._id,
         role: jobReq.title,
