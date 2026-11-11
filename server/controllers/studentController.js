@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const { Student, User, Application, Drive } = require('../models');
-const { isValidPdf, saveResumeFile, getResumeStream, deleteResumeFile } = require('../utils/storage');
+const { isValidPdf, saveResumeFile, getResumeStream, deleteResumeFile, resolveResumeOriginalName } = require('../utils/storage');
 
 /**
  * Validate that the uploaded file has %PDF as first 4 bytes (backwards-compatibility helper)
@@ -30,6 +30,11 @@ const getMyProfile = async (req, res, next) => {
         success: false,
         message: 'Student profile not found',
       });
+    }
+
+    if (!student.resumeOriginalName && student.resumeUrl) {
+      student.resumeOriginalName = await resolveResumeOriginalName(student.resumeUrl);
+      await student.save().catch(() => {});
     }
 
     res.status(200).json({
@@ -105,6 +110,7 @@ const updateMyProfile = async (req, res, next) => {
         existingResumeUrl: student.resumeUrl,
       });
       student.resumeUrl = newResumeUrl;
+      student.resumeOriginalName = req.file.originalname;
     }
     // Note: resumeUrl from req.body is intentionally ignored to prevent mass assignment
 
@@ -171,12 +177,14 @@ const uploadResume = async (req, res, next) => {
     });
 
     student.resumeUrl = newResumeUrl;
+    student.resumeOriginalName = req.file.originalname;
     await student.save();
 
     res.status(200).json({
       success: true,
       message: 'Resume uploaded successfully',
       resumeUrl: student.resumeUrl,
+      resumeOriginalName: student.resumeOriginalName,
     });
   } catch (error) {
     next(error);

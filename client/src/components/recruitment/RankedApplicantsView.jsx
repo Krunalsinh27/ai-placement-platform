@@ -195,25 +195,35 @@ const RankedApplicantsView = ({ driveId, driveRole = 'Drive' }) => {
 
                       {/* Match Score & Progress Bar */}
                       <td className="py-3.5 px-4">
-                        <div className="flex items-center justify-between text-xs font-bold mb-1">
-                          <span className={color.text}>{score} / 100</span>
-                          <span className="text-[10px] text-slate-400 font-normal">
-                            Req: {breakdown.requiredSkillCoverage || 0}/50
-                          </span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                          <div
-                            className={`h-full ${color.bar} rounded-full transition-all duration-300`}
-                            style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
-                          />
-                        </div>
+                        {item.match?.score === null || item.match?.score === undefined ? (
+                          <div className="text-[11px] font-medium text-slate-500 italic">
+                            No skill requirements listed
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between text-xs font-bold mb-1">
+                              <span className={color.text}>{score} / 100</span>
+                              <span className="text-[10px] text-slate-400 font-normal">
+                                Req: {breakdown.requiredSkillCoverage || 0}/50
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                              <div
+                                className={`h-full ${color.bar} rounded-full transition-all duration-300`}
+                                style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
+                              />
+                            </div>
+                          </>
+                        )}
                       </td>
 
                       {/* Skills Alignment */}
                       <td className="py-3.5 px-4">
                         <div className="flex flex-wrap gap-1 max-w-sm">
                           {matched.slice(0, 3).map((sk) => {
-                            const isSelfDeclared = item.match?.matchedSkillDetails?.find((d) => d.name === sk)?.selfDeclared;
+                            const detail = item.match?.matchedSkillDetails?.find((d) => d.name === sk);
+                            const isSelfDeclared = detail?.selfDeclared;
+                            const projectCount = detail?.projectCount || 0;
                             return (
                               <span
                                 key={sk}
@@ -222,11 +232,22 @@ const RankedApplicantsView = ({ driveId, driveRole = 'Drive' }) => {
                                     ? 'bg-amber-50 text-amber-800 border border-amber-200'
                                     : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 }`}
-                                title={isSelfDeclared ? 'Self-declared by candidate (not verified in resume)' : 'Verified in resume'}
+                                title={
+                                  projectCount > 0
+                                    ? `Used in ${projectCount} project(s)`
+                                    : isSelfDeclared
+                                    ? 'Self-declared by candidate (not verified in resume)'
+                                    : 'Verified in resume'
+                                }
                               >
                                 <CheckCircle2 className="w-2.5 h-2.5" />
                                 <span>{sk}</span>
-                                {isSelfDeclared && (
+                                {projectCount > 0 && (
+                                  <span className="text-[9px] font-medium px-1 bg-indigo-100 text-indigo-800 rounded">
+                                    {projectCount} proj
+                                  </span>
+                                )}
+                                {isSelfDeclared && projectCount === 0 && (
                                   <span className="text-[9px] font-medium px-1 bg-amber-100/90 text-amber-900 rounded">
                                     self-declared
                                   </span>
@@ -332,7 +353,11 @@ const RankedApplicantsView = ({ driveId, driveRole = 'Drive' }) => {
                 <h4 className="text-sm font-bold text-slate-900">{activeApplicant?.student?.name}</h4>
                 <p className="text-xs text-slate-500">
                   {activeApplicant?.student?.branch} • CGPA {activeApplicant?.student?.cgpa} • Match Score:{' '}
-                  <strong className="text-indigo-600">{activeApplicant?.match?.score}/100</strong>
+                  {activeApplicant?.match?.score !== null && activeApplicant?.match?.score !== undefined ? (
+                    <strong className="text-indigo-600">{activeApplicant.match.score}/100</strong>
+                  ) : (
+                    <span className="text-slate-500 font-medium">No skill requirements listed</span>
+                  )}
                 </p>
               </div>
 

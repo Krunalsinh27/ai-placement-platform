@@ -145,7 +145,11 @@ const StudentProfile = () => {
       });
 
       if (res.data.success) {
-        updateStudent({ ...student, resumeUrl: res.data.resumeUrl });
+        updateStudent({
+          ...student,
+          resumeUrl: res.data.resumeUrl,
+          resumeOriginalName: res.data.resumeOriginalName || selectedFile.name,
+        });
         setSelectedFile(null);
         toast.success('Resume uploaded successfully!');
       }
@@ -194,8 +198,8 @@ const StudentProfile = () => {
             {student?.resumeUrl ? (
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
                 <div className="flex items-center gap-2 text-emerald-800 text-xs font-semibold">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Resume Attached</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="truncate">{student?.resumeOriginalName || 'Resume Attached'}</span>
                 </div>
                 <div className="flex gap-2 pt-1">
                   <button
@@ -211,7 +215,7 @@ const StudentProfile = () => {
                     onClick={() =>
                       downloadResumePdf(
                         'me',
-                        `${user?.name ? user.name.replace(/\s+/g, '_') + '_Resume.pdf' : 'Resume.pdf'}`
+                        student?.resumeOriginalName || (user?.name ? user.name.replace(/\s+/g, '_') + '_Resume.pdf' : 'Resume.pdf')
                       )
                     }
                     className="inline-flex items-center justify-center p-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
