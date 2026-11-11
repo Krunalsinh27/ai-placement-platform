@@ -26,6 +26,10 @@ router.get('/by-year', getByYear);
 router.get('/top-recruiters', getTopRecruiters);
 router.get('/compare', compareColleges);
 router.get('/export/excel', exportExcel);
+router.get('/export/csv', (req, res, next) => {
+  req.query.format = 'csv';
+  return exportExcel(req, res, next);
+});
 router.get('/export/pdf', exportPdf);
 
 module.exports = router;

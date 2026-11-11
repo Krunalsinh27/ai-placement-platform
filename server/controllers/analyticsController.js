@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const { College, Student, Application, Offer, Company } = require('../models');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const { sanitizeSpreadsheetValue, escapeCsvCell } = require('../utils/spreadsheet');
 
 /**
  * Escape string for RegExp
@@ -793,17 +794,7 @@ const compareColleges = async (req, res, next) => {
 const exportExcel = async (req, res, next) => {
   try {
     const scope = await getFilteredScope(req.query);
-
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Placement Analytics Portal';
-    workbook.created = new Date();
-
-    // 1. Overview Sheet
-    const overviewSheet = workbook.addWorksheet('Overview');
-    overviewSheet.columns = [
-      { header: 'Metric', key: 'metric', width: 30 },
-      { header: 'Value', key: 'value', width: 25 },
-    ];
+    const format = (req.query.format || req.query.type || 'xlsx').toLowerCase();
 
     const collegesCount = scope.colleges.length;
     const totalStudentsCount = scope.students.length;
@@ -821,7 +812,141 @@ const exportExcel = async (req, res, next) => {
       packageStats = calculatePackageStats(placedPackages);
     }
 
-    overviewSheet.addRows([
+    // Top Recruiters aggregation across scope.acceptedOffers
+    const compMap = new Map();
+    for (const offer of scope.acceptedOffers) {
+      if (!offer.company) continue;
+      const compId = offer.company._id ? offer.company._id.toString() : offer.company.toString();
+      const compName = offer.company.name || 'Unknown Recruiter';
+      const compIndustry = offer.company.industry || 'Technology';
+
+      if (!compMap.has(compId)) {
+        compMap.set(compId, {
+          companyId: compId,
+          companyName: compName,
+          industry: compIndustry,
+          placedStudents: new Set(),
+          colleges: new Set(),
+          packages: [],
+        });
+      }
+
+      const entry = compMap.get(compId);
+      entry.placedStudents.add(offer.student.toString());
+      if (offer.college) {
+        entry.colleges.add(offer.college.toString());
+      }
+      if (typeof offer.packageLpa === 'number') {
+        entry.packages.push(offer.packageLpa);
+      }
+    }
+
+    const recruiters = Array.from(compMap.values()).map((c) => {
+      const hiresCount = c.placedStudents.size;
+      const collegesCount = c.colleges.size;
+      const stats = calculatePackageStats(c.packages);
+      const isSubgroupSmall = hiresCount > 0 && hiresCount < 5;
+
+      return {
+        company: sanitizeSpreadsheetValue(c.companyName),
+        rawCompanyName: c.companyName,
+        industry: sanitizeSpreadsheetValue(c.industry),
+        rawIndustry: c.industry,
+        collegesHiredFrom: isSubgroupSmall ? 'lt5' : collegesCount,
+        hires: isSubgroupSmall ? 'lt5' : hiresCount,
+        averagePackage: isSubgroupSmall || stats.averagePackage === 0 ? '-' : stats.averagePackage,
+        highestPackage: isSubgroupSmall || stats.highestPackage === 0 ? '-' : stats.highestPackage,
+        _rawHires: hiresCount,
+      };
+    });
+    recruiters.sort((a, b) => b._rawHires - a._rawHires);
+
+    // CSV format output
+    if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename=placement_analytics.csv');
+
+      if (req.query.view === 'colleges' || req.query.sheet === 'colleges') {
+        const header = [
+          'College Name',
+          'Code',
+          'City',
+          'State',
+          'Total Students',
+          'Applied',
+          'Placed',
+          'Placement %',
+          'Average Package (LPA)',
+          'Highest Package (LPA)',
+        ];
+        const rows = scope.colleges.map((college) => {
+          const cStudents = scope.students.filter(
+            (s) => s.college.toString() === college._id.toString()
+          );
+          const totalCount = cStudents.length;
+          const applied = cStudents.filter((s) => scope.appliedStudentSet.has(s._id.toString())).length;
+          const placed = cStudents.filter((s) => scope.placedStudentSet.has(s._id.toString())).length;
+          const isSubgroupSmall = totalCount > 0 && totalCount < 5;
+          const isPlacedSubgroupSmall = placed > 0 && placed < 5;
+          const cOffers = scope.acceptedOffers.filter((o) =>
+            cStudents.some((s) => s._id.toString() === o.student.toString())
+          );
+          const cPackages = cOffers.map((o) => o.packageLpa).filter((p) => typeof p === 'number');
+          const stats = calculatePackageStats(cPackages);
+          const rate = totalCount > 0 ? Number(((placed / totalCount) * 100).toFixed(1)) : 0;
+
+          return [
+            escapeCsvCell(college.name),
+            escapeCsvCell(college.code),
+            escapeCsvCell(college.city),
+            escapeCsvCell(college.state),
+            escapeCsvCell(isSubgroupSmall ? 'lt5' : totalCount),
+            escapeCsvCell(isSubgroupSmall ? 'lt5' : applied),
+            escapeCsvCell(isSubgroupSmall || isPlacedSubgroupSmall ? 'lt5' : placed),
+            escapeCsvCell(isSubgroupSmall || isPlacedSubgroupSmall ? 'lt5' : `${rate}%`),
+            escapeCsvCell(isSubgroupSmall || isPlacedSubgroupSmall || stats.averagePackage === 0 ? '-' : stats.averagePackage),
+            escapeCsvCell(isSubgroupSmall || isPlacedSubgroupSmall || stats.highestPackage === 0 ? '-' : stats.highestPackage),
+          ];
+        });
+        const csvContent = [header.join(','), ...rows.map((row) => row.join(','))].join('\r\n');
+        return res.status(200).send(csvContent);
+      }
+
+      // Default: Top Recruiters / Companies CSV
+      const header = [
+        'Company Name',
+        'Industry',
+        'Colleges Hired From',
+        'Total Hires',
+        'Average Package (LPA)',
+        'Highest Package (LPA)',
+      ];
+      const rows = recruiters.map((r) => [
+        escapeCsvCell(r.rawCompanyName),
+        escapeCsvCell(r.rawIndustry),
+        escapeCsvCell(r.collegesHiredFrom),
+        escapeCsvCell(r.hires),
+        escapeCsvCell(r.averagePackage),
+        escapeCsvCell(r.highestPackage),
+      ]);
+      const csvContent = [header.join(','), ...rows.map((row) => row.join(','))].join('\r\n');
+      return res.status(200).send(csvContent);
+    }
+
+    // Default: Excel (xlsx) using exceljs
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Placement Analytics Portal';
+    workbook.created = new Date();
+
+    // 1. Overview Sheet
+    const overviewSheet = workbook.addWorksheet('Overview');
+    overviewSheet.columns = [
+      { header: 'Metric', key: 'metric', width: 30 },
+      { header: 'Value', key: 'value', width: 25 },
+    ];
+    overviewSheet.getRow(1).font = { bold: true };
+
+    const overviewRows = [
       { metric: 'Total Approved Colleges', value: collegesCount },
       { metric: 'Total Students', value: suppressCount(totalStudentsCount) },
       { metric: 'Applied Students (Unique)', value: suppressCount(appliedCount) },
@@ -847,7 +972,14 @@ const exportExcel = async (req, res, next) => {
         metric: 'Median Package (LPA)',
         value: isCohortSmall || isPlacedSmall ? '-' : packageStats.medianPackage,
       },
-    ]);
+    ];
+
+    overviewRows.forEach((r) => {
+      overviewSheet.addRow({
+        metric: sanitizeSpreadsheetValue(r.metric),
+        value: typeof r.value === 'number' ? r.value : sanitizeSpreadsheetValue(r.value),
+      });
+    });
 
     // 2. Colleges Sheet
     const collegesSheet = workbook.addWorksheet('Colleges');
@@ -863,6 +995,7 @@ const exportExcel = async (req, res, next) => {
       { header: 'Average Package (LPA)', key: 'averagePackage', width: 22 },
       { header: 'Highest Package (LPA)', key: 'highestPackage', width: 22 },
     ];
+    collegesSheet.getRow(1).font = { bold: true };
 
     for (const college of scope.colleges) {
       const cStudents = scope.students.filter(
@@ -881,10 +1014,10 @@ const exportExcel = async (req, res, next) => {
 
       if (isSubgroupSmall || isPlacedSubgroupSmall) {
         collegesSheet.addRow({
-          name: college.name,
-          code: college.code,
-          city: college.city,
-          state: college.state,
+          name: sanitizeSpreadsheetValue(college.name),
+          code: sanitizeSpreadsheetValue(college.code),
+          city: sanitizeSpreadsheetValue(college.city),
+          state: sanitizeSpreadsheetValue(college.state),
           students: isSubgroupSmall ? 'lt5' : totalCount,
           applied: isSubgroupSmall ? 'lt5' : applied,
           placed: 'lt5',
@@ -896,10 +1029,10 @@ const exportExcel = async (req, res, next) => {
         const stats = calculatePackageStats(cPackages);
         const rate = totalCount > 0 ? Number(((placed / totalCount) * 100).toFixed(1)) : 0;
         collegesSheet.addRow({
-          name: college.name,
-          code: college.code,
-          city: college.city,
-          state: college.state,
+          name: sanitizeSpreadsheetValue(college.name),
+          code: sanitizeSpreadsheetValue(college.code),
+          city: sanitizeSpreadsheetValue(college.city),
+          state: sanitizeSpreadsheetValue(college.state),
           students: totalCount,
           applied,
           placed,
@@ -921,6 +1054,7 @@ const exportExcel = async (req, res, next) => {
       { header: 'Average Package (LPA)', key: 'averagePackage', width: 22 },
       { header: 'Highest Package (LPA)', key: 'highestPackage', width: 22 },
     ];
+    branchSheet.getRow(1).font = { bold: true };
 
     const branches = Array.from(new Set(scope.students.map((s) => s.branch))).sort();
     for (const br of branches) {
@@ -940,7 +1074,7 @@ const exportExcel = async (req, res, next) => {
 
       if (isSubgroupSmall || isPlacedSubgroupSmall) {
         branchSheet.addRow({
-          branch: br,
+          branch: sanitizeSpreadsheetValue(br),
           students: isSubgroupSmall ? 'lt5' : bTotal,
           applied: isSubgroupSmall ? 'lt5' : bApplied,
           placed: 'lt5',
@@ -952,7 +1086,7 @@ const exportExcel = async (req, res, next) => {
         const stats = calculatePackageStats(bPackages);
         const rate = bTotal > 0 ? Number(((bPlaced / bTotal) * 100).toFixed(1)) : 0;
         branchSheet.addRow({
-          branch: br,
+          branch: sanitizeSpreadsheetValue(br),
           students: bTotal,
           applied: bApplied,
           placed: bPlaced,
@@ -962,6 +1096,29 @@ const exportExcel = async (req, res, next) => {
         });
       }
     }
+
+    // 4. Top Recruiters Sheet
+    const recruitersSheet = workbook.addWorksheet('Top Recruiters');
+    recruitersSheet.columns = [
+      { header: 'Company Name', key: 'company', width: 35 },
+      { header: 'Industry', key: 'industry', width: 22 },
+      { header: 'Colleges Hired From', key: 'collegesHiredFrom', width: 20 },
+      { header: 'Total Hires', key: 'hires', width: 16 },
+      { header: 'Average Package (LPA)', key: 'averagePackage', width: 22 },
+      { header: 'Highest Package (LPA)', key: 'highestPackage', width: 22 },
+    ];
+    recruitersSheet.getRow(1).font = { bold: true };
+
+    recruiters.forEach(({ _rawHires, rawCompanyName, rawIndustry, ...r }) => {
+      recruitersSheet.addRow({
+        company: sanitizeSpreadsheetValue(r.company),
+        industry: sanitizeSpreadsheetValue(r.industry),
+        collegesHiredFrom: typeof r.collegesHiredFrom === 'number' ? r.collegesHiredFrom : sanitizeSpreadsheetValue(r.collegesHiredFrom),
+        hires: typeof r.hires === 'number' ? r.hires : sanitizeSpreadsheetValue(r.hires),
+        averagePackage: typeof r.averagePackage === 'number' ? r.averagePackage : sanitizeSpreadsheetValue(r.averagePackage),
+        highestPackage: typeof r.highestPackage === 'number' ? r.highestPackage : sanitizeSpreadsheetValue(r.highestPackage),
+      });
+    });
 
     res.setHeader(
       'Content-Type',

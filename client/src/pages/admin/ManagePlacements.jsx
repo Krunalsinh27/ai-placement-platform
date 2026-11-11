@@ -132,7 +132,9 @@ const ManagePlacements = () => {
   }, [page, branchFilter, yearFilter, companyFilter]);
 
   // Compute metrics for current records
-  const packages = placements.map((p) => p.packageLpa || 0);
+  const packages = placements
+    .map((p) => p.packageLpa)
+    .filter((pkg) => typeof pkg === 'number' && !isNaN(pkg));
   const highestPackage = packages.length > 0 ? Math.max(...packages) : 0;
   const avgPackage =
     packages.length > 0
@@ -183,8 +185,10 @@ const ManagePlacements = () => {
       header: 'Offered Package',
       accessor: (row) => (
         <div className="inline-flex items-baseline gap-1 text-emerald-600 font-extrabold text-sm">
-          <span>{row.packageLpa} LPA</span>
-          <span className="text-[10px] text-slate-400 font-normal">CTC</span>
+          <span>{row.packageLpa != null && !isNaN(row.packageLpa) ? `${row.packageLpa} LPA` : '—'}</span>
+          {row.packageLpa != null && !isNaN(row.packageLpa) && (
+            <span className="text-[10px] text-slate-400 font-normal">CTC</span>
+          )}
         </div>
       ),
     },

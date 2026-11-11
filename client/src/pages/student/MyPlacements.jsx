@@ -90,7 +90,11 @@ const MyPlacements = () => {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-slate-500">Offered CTC Package:</span>
-                    <span className="font-extrabold text-emerald-600 text-sm">{placement.packageLpa} LPA</span>
+                    <span className="font-extrabold text-emerald-600 text-sm">
+                      {placement.packageLpa != null && !isNaN(placement.packageLpa)
+                        ? `${placement.packageLpa} LPA`
+                        : '—'}
+                    </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-slate-500">Offer Recorded Date:</span>

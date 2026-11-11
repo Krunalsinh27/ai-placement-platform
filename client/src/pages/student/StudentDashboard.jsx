@@ -227,7 +227,7 @@ const StudentDashboard = () => {
                     </h2>
                     <p className="text-xs sm:text-sm text-amber-50 font-medium">
                       Designation: <span className="font-bold text-white">{offer.role}</span> • Package:{' '}
-                      <span className="font-black text-amber-200 text-base">{offer.packageLpa} LPA</span>
+                      <span className="font-black text-amber-200 text-base">{offer.packageLpa ? `${offer.packageLpa} LPA` : 'As per policy'}</span>
                     </p>
                     <div className="flex flex-wrap items-center gap-3 text-xs text-amber-100 pt-1">
                       {offer.joiningDate && (
@@ -283,7 +283,7 @@ const StudentDashboard = () => {
                 </h2>
                 <p className="text-sm text-emerald-100 mt-0.5">
                   Role: <span className="font-semibold text-white">{primaryPlacement.drive?.role || 'Engineer'}</span> •
-                  Package: <span className="font-bold text-amber-200">{primaryPlacement.packageLpa} LPA</span>
+                  Package: <span className="font-bold text-amber-200">{primaryPlacement.packageLpa ? `${primaryPlacement.packageLpa} LPA` : 'As per policy'}</span>
                 </p>
               </div>
             </div>

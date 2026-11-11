@@ -544,7 +544,7 @@ const renderOfferReceivedTemplate = ({
   const detailsRows = [
     ['Hiring Company', companyName],
     ['Designation / Role', role],
-    ['Offered Package (CTC)', `${packageLpa} LPA`],
+    ['Offered Package (CTC)', typeof packageLpa === 'number' ? `${packageLpa} LPA` : (packageLpa ? `${packageLpa} LPA` : 'As per policy / Undisclosed')],
     ['Response Deadline (IST)', formatIST(deadline)],
     ['Status', 'OFFER EXTENDED (ACTION REQUIRED)'],
   ];
@@ -586,7 +586,7 @@ const renderOfferExpiringTemplate = ({
   const detailsRows = [
     ['Company', companyName],
     ['Offered Position', role],
-    ['Compensation', `${packageLpa} LPA`],
+    ['Compensation', typeof packageLpa === 'number' ? `${packageLpa} LPA` : (packageLpa ? `${packageLpa} LPA` : 'As per policy / Undisclosed')],
     ['Deadline Expiry (IST)', formatIST(deadline)],
   ];
 

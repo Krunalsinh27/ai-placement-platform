@@ -120,6 +120,7 @@ app.use('/api/questions', require('./routes/questionRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/superadmin', require('./routes/superadminRoutes'));
 app.use('/api/aspirant', publicApiLimiter, require('./routes/aspirantRoutes'));
+app.use('/api/reports', require('./routes/reportRoutes'));
 
 // 404 Handler
 app.use(notFound);

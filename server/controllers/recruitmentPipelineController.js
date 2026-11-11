@@ -1268,13 +1268,14 @@ const extendBulkOffers = async (req, res, next) => {
       // Notify student with in-app notification & official offer email
       const student = await Student.findById(studentId).populate('user');
       if (student?.user?._id) {
+        const pkgText = typeof offerDoc.packageLpa === 'number' ? ` (${offerDoc.packageLpa} LPA)` : '';
         notifyUser(student.user._id, 'offer_received', {
           collegeId: drive.college,
           companyName: drive.company?.name || 'Recruiter',
           role: offerDoc.role,
           packageLpa: offerDoc.packageLpa,
           deadline: offerDoc.expiryDate,
-          message: `Congratulations! ${drive.company?.name || 'Recruiter'} has extended you an employment offer for ${offerDoc.role} (${offerDoc.packageLpa} LPA). Accept before ${new Date(offerDoc.expiryDate).toLocaleDateString()}.`,
+          message: `Congratulations! ${drive.company?.name || 'Recruiter'} has extended you an employment offer for ${offerDoc.role}${pkgText}. Accept before ${new Date(offerDoc.expiryDate).toLocaleDateString()}.`,
           link: '/student/dashboard',
         }).catch((err) => console.error('Failed to notify student of offer:', err));
       }
@@ -1344,15 +1345,18 @@ const acceptOffer = async (req, res, next) => {
     await offer.save();
 
     // 3. Update application status
-    await Application.findByIdAndUpdate(offer.application, { $set: { status: 'selected' } });
+    if (offer.application) {
+      await Application.findByIdAndUpdate(offer.application, { $set: { status: 'selected' } });
+    }
 
     // 4. Notify recruiter & TPO
     const companyRecruiters = await User.find({ company: offer.company._id, role: 'recruiter' });
+    const acceptedPkgText = typeof offer.packageLpa === 'number' ? ` (${offer.packageLpa} LPA)` : '';
     for (const r of companyRecruiters) {
       createNotification({
         user: r._id,
         type: 'general',
-        message: `${req.user.name} has ACCEPTED your placement offer for ${offer.role} (${offer.packageLpa} LPA)!`,
+        message: `${req.user.name} has ACCEPTED your placement offer for ${offer.role}${acceptedPkgText}!`,
         link: '/recruiter/dashboard',
       }).catch((err) => console.error('Failed to notify recruiter of offer acceptance:', err));
     }

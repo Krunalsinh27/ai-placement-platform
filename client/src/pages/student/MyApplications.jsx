@@ -767,7 +767,9 @@ const MyApplications = () => {
                             <div>
                               <span className="text-slate-400 block font-medium">Annual CTC</span>
                               <span className="font-black text-emerald-600 text-sm">
-                                {timelineData.offer.packageLpa} LPA
+                                {timelineData.offer.packageLpa != null && !isNaN(timelineData.offer.packageLpa)
+                                  ? `${timelineData.offer.packageLpa} LPA`
+                                  : 'As per policy'}
                               </span>
                             </div>
                           </div>

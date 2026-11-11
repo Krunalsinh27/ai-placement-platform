@@ -273,7 +273,7 @@ const ManageApplications = () => {
           >
             {drives.map((d) => (
               <option key={d._id} value={d._id}>
-                {d.company?.name} — {d.role} ({d.packageLpa} LPA)
+                {d.company?.name} — {d.role} {d.packageLpa != null && !isNaN(d.packageLpa) ? `(${d.packageLpa} LPA)` : ''}
               </option>
             ))}
           </select>
@@ -292,7 +292,7 @@ const ManageApplications = () => {
                 {currentDrive.company?.name} • {currentDrive.role}
               </h2>
               <p className="text-xs text-slate-500">
-                Package: <strong>{currentDrive.packageLpa} LPA</strong> • Min CGPA:{' '}
+                Package: <strong>{currentDrive.packageLpa != null && !isNaN(currentDrive.packageLpa) ? `${currentDrive.packageLpa} LPA` : '—'}</strong> • Min CGPA:{' '}
                 {currentDrive.minCgpa} • Location: {currentDrive.location}
               </p>
             </div>
