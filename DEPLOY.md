@@ -129,6 +129,7 @@ Under the **Environment** tab, configure the following keys:
 | `AI_MODEL_FAST` | `llama-3.1-8b-instant` | Optional faster model for TPO assistant intent routing (falls back to `AI_MODEL`) |
 | `AI_DAILY_CALL_CAP` | `400` | Global daily maximum AI completions cap persisted in MongoDB |
 | `AI_USER_DAILY_PARSE_CAP` | `5` | Personal daily resume parsing limit per candidate |
+| `AI_USER_DAILY_ANALYZE_CAP` | `10` | Personal daily resume analysis against job targets limit per candidate |
 
 > [!WARNING]
 > **Render Free Tier Spin-Down & Scheduled Jobs**:

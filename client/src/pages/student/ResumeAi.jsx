@@ -28,6 +28,12 @@ import {
   Calendar,
   Clock,
   Download,
+  Copy,
+  Target,
+  BookOpen,
+  RefreshCw,
+  ListOrdered,
+  Lightbulb,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -58,6 +64,15 @@ const ResumeAi = () => {
   const [appliedDriveIds, setAppliedDriveIds] = useState(new Set());
   const [applyingId, setApplyingId] = useState(null);
 
+  // Target Job Analyzer State
+  const [activeTargetTab, setActiveTargetTab] = useState('jd'); // 'jd' | 'drive'
+  const [jdInput, setJdInput] = useState('');
+  const [selectedTargetDriveId, setSelectedTargetDriveId] = useState('');
+  const [analyzingTarget, setAnalyzingTarget] = useState(false);
+  const [targetAnalysis, setTargetAnalysis] = useState(null);
+  const [copiedIndex, setCopiedIndex] = useState(null);
+  const [targetError, setTargetError] = useState(null);
+
   // 1. Fetch Resume Profile & Usage
   const fetchResumeProfile = async () => {
     try {
@@ -67,6 +82,9 @@ const ResumeAi = () => {
         setSkills(res.data.resumeProfile?.skills || []);
         setHasResume(Boolean(res.data.hasResume || student?.resumeUrl));
         setResumeFilename(res.data.resumeFilename);
+        if (res.data.resumeAnalysis) {
+          setTargetAnalysis(res.data.resumeAnalysis);
+        }
         if (res.data.dailyUsage) {
           setDailyUsage(res.data.dailyUsage);
         }
@@ -270,6 +288,7 @@ const ResumeAi = () => {
       if (res.data.success) {
         setProfile(null);
         setSkills([]);
+        setTargetAnalysis(null);
         if (res.data.dailyUsage) {
           setDailyUsage(res.data.dailyUsage);
         }
@@ -300,6 +319,113 @@ const ResumeAi = () => {
     } finally {
       setApplyingId(null);
     }
+  };
+
+  // Sample JD helper
+  const handleUseSampleJd = () => {
+    const sample = `Role: Full Stack Software Engineer
+Responsibilities:
+- Build responsive frontend interfaces and reusable components
+- Design and implement scalable RESTful APIs and backend services
+- Integrate relational and NoSQL databases with query optimization
+- Configure CI/CD pipelines, automated tests, and containerized deployments
+
+Requirements:
+- Strong hands-on experience with Python, JavaScript, React, and Node.js
+- Proficiency with SQL, PostgreSQL, MongoDB, and Redis
+- Familiarity with Docker, Git, REST APIs, and microservices architecture
+- Preferred: Experience with AWS/Cloud, TypeScript, GraphQL, and Agile workflows`;
+    setJdInput(sample);
+    setActiveTargetTab('jd');
+    toast.success('Sample job description loaded!');
+  };
+
+  // Analyze against Target (Job Description or Eligible Drive)
+  const handleAnalyzeTarget = async ({ force = false } = {}) => {
+    if (!profile || profile.status !== 'parsed') {
+      toast.error('Please analyze your resume with AI first.');
+      return;
+    }
+
+    if (activeTargetTab === 'jd') {
+      if (!jdInput.trim()) {
+        toast.error('Please paste a job description first.');
+        return;
+      }
+      if (jdInput.length > 6000) {
+        toast.error('Job description cannot exceed 6000 characters.');
+        return;
+      }
+    } else {
+      if (!selectedTargetDriveId) {
+        toast.error('Please select an eligible placement drive.');
+        return;
+      }
+    }
+
+    setAnalyzingTarget(true);
+    setTargetError(null);
+
+    try {
+      const payload = {
+        force,
+        ...(activeTargetTab === 'jd'
+          ? { jdText: jdInput.trim() }
+          : { driveId: selectedTargetDriveId }),
+      };
+
+      const res = await api.post('/students/me/resume/analyze', payload);
+      if (res.data.success) {
+        setTargetAnalysis(res.data);
+        if (res.data.dailyUsage) {
+          setDailyUsage(res.data.dailyUsage);
+        }
+        toast.success(
+          res.data.cached
+            ? 'Loaded cached ATS readiness estimate!'
+            : 'ATS readiness estimate complete!'
+        );
+      }
+    } catch (err) {
+      const status = err.response?.status;
+      const msg = err.response?.data?.message || 'Failed to analyze resume against target.';
+      if (status === 429) {
+        setRateLimited(true);
+        toast.error('Daily AI analysis cap reached. Try again tomorrow.');
+      } else {
+        toast.error(msg);
+      }
+      setTargetError(msg);
+    } finally {
+      setAnalyzingTarget(false);
+    }
+  };
+
+  const handleCopyRewrite = (text, idx) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(idx);
+    toast.success('Rewrite copied to clipboard!');
+    setTimeout(() => setCopiedIndex(null), 2500);
+  };
+
+  const renderHighlightedRewrite = (text) => {
+    if (!text || typeof text !== 'string') return text;
+    // Match bracketed placeholders like [add your real number], [X%], [metric], [tool]
+    const parts = text.split(/(\[[^\]]+\])/g);
+    if (parts.length === 1) return text;
+    return parts.map((part, i) => {
+      if (part.startsWith('[') && part.endsWith(']')) {
+        return (
+          <span
+            key={i}
+            className="inline-block px-1.5 py-0.5 mx-0.5 rounded-md bg-amber-200 text-amber-950 font-bold border border-amber-400 text-[11px] shadow-2xs"
+          >
+            {part}
+          </span>
+        );
+      }
+      return part;
+    });
   };
 
   // Group skills by category
@@ -470,6 +596,589 @@ const ResumeAi = () => {
             >
               Go to Profile &rarr;
             </Link>
+          </div>
+        )}
+      </div>
+
+      {/* 2. Full Resume Analyzer & ATS Readiness Workspace */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 lg:p-6 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-violet-50 text-violet-700 flex items-center justify-center shrink-0">
+              <Target className="w-5 h-5 text-violet-600" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900 leading-tight">
+                Analyze Against a Job (ATS Readiness)
+              </h2>
+              <p className="text-xs text-slate-500">
+                Deterministic 0-100 ATS-readiness estimate, keyword coverage, and bullet rewrites
+              </p>
+            </div>
+          </div>
+
+          {/* Tab Selector */}
+          <div className="flex items-center p-1 bg-slate-100 rounded-xl self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setActiveTargetTab('jd')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTargetTab === 'jd'
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Paste Job Description</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTargetTab('drive')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTargetTab === 'drive'
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Pick a Drive</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tab 1: Paste JD */}
+        {activeTargetTab === 'jd' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span className="font-semibold text-slate-700">Paste Job Description or Requirements</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleUseSampleJd}
+                  className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                >
+                  Try Sample JD
+                </button>
+                <span>•</span>
+                <span className={jdInput.length > 5500 ? 'text-amber-600 font-bold' : ''}>
+                  {jdInput.length} / 6000 chars
+                </span>
+              </div>
+            </div>
+
+            <textarea
+              value={jdInput}
+              onChange={(e) => setJdInput(e.target.value.slice(0, 6000))}
+              placeholder="Paste the target job description here (e.g. required skills, responsibilities, role details)..."
+              rows={4}
+              className="w-full text-xs font-mono p-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all placeholder:text-slate-400"
+            />
+          </div>
+        )}
+
+        {/* Tab 2: Pick Drive */}
+        {activeTargetTab === 'drive' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span className="font-semibold text-slate-700">Select an Eligible Placement Drive</span>
+              <span>{drives.length} available drives</span>
+            </div>
+
+            {drives.length === 0 ? (
+              <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-xs text-slate-400 text-center italic">
+                No eligible placement drives available at this time.
+              </div>
+            ) : (
+              <select
+                value={selectedTargetDriveId}
+                onChange={(e) => setSelectedTargetDriveId(e.target.value)}
+                className="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all cursor-pointer"
+              >
+                <option value="">-- Choose an open placement drive --</option>
+                {drives.map((d) => (
+                  <option key={d._id} value={d._id}>
+                    {d.company?.name || 'Company'} — {d.role} ({d.packageLpa} LPA)
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
+        {/* Action Button & Quota Note */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">
+          <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+            <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span>
+              Target analysis quota: <strong className="text-indigo-600 font-bold">{dailyUsage.analyze?.remaining ?? dailyUsage.analyzeRemaining ?? 10}</strong> of {dailyUsage.analyze?.cap ?? dailyUsage.analyzeCap ?? 10} remaining today.
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {targetAnalysis && (
+              <button
+                type="button"
+                onClick={() => handleAnalyzeTarget({ force: true })}
+                disabled={analyzingTarget || profile?.status !== 'parsed'}
+                className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${analyzingTarget ? 'animate-spin' : ''}`} />
+                <span>Re-Analyze</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => handleAnalyzeTarget({ force: false })}
+              disabled={analyzingTarget || profile?.status !== 'parsed'}
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {analyzingTarget ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Evaluating ATS Fit...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
+                  <span>Analyze Target Job</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {targetError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{targetError}</span>
+          </div>
+        )}
+
+        {/* ANALYSIS RESULTS VIEW */}
+        {targetAnalysis && (
+          <div className="pt-4 border-t border-slate-100 space-y-6">
+            {/* Top Row: Score Ring + Breakdown Bars */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+              {/* Score Ring (4 cols) */}
+              <div className="md:col-span-4 flex flex-col items-center justify-center p-5 bg-slate-50/80 rounded-2xl border border-slate-200/80 text-center">
+                <div className="relative w-28 h-28 flex items-center justify-center">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      fill="transparent"
+                      stroke="#e2e8f0"
+                      strokeWidth="9"
+                    />
+                    {targetAnalysis.atsScore !== null && (
+                      <circle
+                        cx="50"
+                        cy="50"
+                        r="42"
+                        fill="transparent"
+                        stroke={
+                          targetAnalysis.atsScore >= 75
+                            ? '#10b981'
+                            : targetAnalysis.atsScore >= 50
+                            ? '#6366f1'
+                            : '#f43f5e'
+                        }
+                        strokeWidth="9"
+                        strokeDasharray="263.89"
+                        strokeDashoffset={263.89 - (targetAnalysis.atsScore / 100) * 263.89}
+                        strokeLinecap="round"
+                        className="transition-all duration-700 ease-out"
+                      />
+                    )}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    {targetAnalysis.atsScore === null ? (
+                      <span className="text-xl font-bold text-slate-400">N/A</span>
+                    ) : (
+                      <>
+                        <span className="text-2xl font-black text-slate-900 leading-none">
+                          {targetAnalysis.atsScore}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-400 mt-0.5">/ 100</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <span className="text-xs font-bold text-slate-900 block leading-tight">
+                    ATS-Readiness Estimate
+                  </span>
+                  <div className="flex items-center justify-center gap-1.5 mt-1">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      Target: {targetAnalysis.target?.title || 'Job Description'}
+                    </span>
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">
+                      {targetAnalysis.source === 'ai' ? 'AI' : 'Rules'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-2 max-w-[200px] leading-tight mx-auto italic">
+                    Note: Real ATS systems differ. This estimate is a deterministic guideline.
+                  </p>
+                </div>
+              </div>
+
+              {/* 5-Part Breakdown Bars (8 cols) */}
+              <div className="md:col-span-8 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider pb-1 border-b border-slate-100">
+                  ATS Score Breakdown (Deterministic)
+                </h3>
+
+                <div className="space-y-3">
+                  {/* Keywords Match (40 pts) */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                      <span className="text-slate-700">Keywords & Evidence Match</span>
+                      <span className="text-slate-900 font-bold">
+                        {targetAnalysis.breakdown?.keywordMatch !== null && targetAnalysis.breakdown?.keywordMatch !== undefined
+                          ? `${targetAnalysis.breakdown.keywordMatch} / 40 pts`
+                          : 'No Requirements'}
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.keywordMatch || 0) / 40) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Structure (20 pts) */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                      <span className="text-slate-700">Structure & Standard Sections</span>
+                      <span className="text-slate-900 font-bold">
+                        {targetAnalysis.breakdown?.structure || 0} / 20 pts
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.structure || 0) / 20) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Impact (15 pts) */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                      <span className="text-slate-700">Quantifiable Metrics & Scale</span>
+                      <span className="text-slate-900 font-bold">
+                        {targetAnalysis.breakdown?.impact || 0} / 15 pts
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-violet-500 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.impact || 0) / 15) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Action Verbs (10 pts) */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                      <span className="text-slate-700">Action Verbs Usage</span>
+                      <span className="text-slate-900 font-bold">
+                        {targetAnalysis.breakdown?.actionVerbs || 0} / 10 pts
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.actionVerbs || 0) / 10) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Formatting (15 pts) */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                      <span className="text-slate-700">Formatting, Length & Density</span>
+                      <span className="text-slate-900 font-bold">
+                        {targetAnalysis.breakdown?.formatting || 0} / 15 pts
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-teal-500 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.formatting || 0) / 15) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Matched vs Missing Skills */}
+            <div className="bg-slate-50/70 rounded-2xl border border-slate-200/80 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Skills Alignment Overview</span>
+                </h3>
+                <span className="text-[11px] text-slate-500">
+                  {targetAnalysis.matchedSkills?.length || 0} matched proficiencies
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Matched Skills */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">
+                    Matched Skills ({targetAnalysis.matchedSkills?.length || 0})
+                  </span>
+                  {(!targetAnalysis.matchedSkills || targetAnalysis.matchedSkills.length === 0) ? (
+                    <span className="text-[11px] text-slate-400 italic">No matching skills found</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {targetAnalysis.matchedSkills.map((sk) => (
+                        <span
+                          key={sk}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200"
+                        >
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>{sk}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Missing Required */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">
+                    Missing Required ({targetAnalysis.missingRequired?.length || 0})
+                  </span>
+                  {(!targetAnalysis.missingRequired || targetAnalysis.missingRequired.length === 0) ? (
+                    <span className="text-[11px] text-slate-400 italic">None — all required skills matched!</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {targetAnalysis.missingRequired.map((sk) => (
+                        <span
+                          key={sk}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-50 text-rose-800 border border-rose-200"
+                        >
+                          <AlertCircle className="w-3 h-3 text-rose-600" />
+                          <span>{sk}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Missing Preferred */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">
+                    Missing Preferred ({targetAnalysis.missingPreferred?.length || 0})
+                  </span>
+                  {(!targetAnalysis.missingPreferred || targetAnalysis.missingPreferred.length === 0) ? (
+                    <span className="text-[11px] text-slate-400 italic">No missing preferred skills</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {targetAnalysis.missingPreferred.map((sk) => (
+                        <span
+                          key={sk}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200"
+                        >
+                          <span>{sk}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Improvement Suggestions */}
+            {targetAnalysis.suggestions && targetAnalysis.suggestions.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border-b border-slate-100 pb-2">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Targeted Improvement Suggestions ({targetAnalysis.suggestions.length})</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Actionable recommendations to improve ATS compatibility and recruiter evaluation
+                    </p>
+                  </div>
+                  <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md font-semibold self-start sm:self-auto">
+                    AI-generated • Verify accuracy
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {targetAnalysis.suggestions.map((sug, idx) => {
+                    const priorityBadge =
+                      sug.priority === 'high'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : sug.priority === 'medium'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-blue-50 text-blue-700 border-blue-200';
+
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                            {sug.category || 'General'}
+                          </span>
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${priorityBadge}`}>
+                            {sug.priority} Priority
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-700 leading-snug">
+                          {sug.reason}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Bullet Rewrites */}
+            {targetAnalysis.rewrites && targetAnalysis.rewrites.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border-b border-slate-100 pb-2">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Suggested Bullet Rewrites</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Rephrased to lead with technical action verbs and prompt for measurable scale
+                    </p>
+                  </div>
+                  <span className="text-[10px] text-slate-400 italic">
+                    Nothing is auto-applied — review and copy.
+                  </span>
+                </div>
+
+                {/* Warning Banner */}
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-2.5 text-xs text-amber-900 shadow-2xs">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span className="font-medium leading-relaxed">
+                    <strong>Action Required:</strong> Replace <code>[add your real number]</code> with your real figure before using any text, and only keep claims that are true.
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                  {targetAnalysis.rewrites.map((rw, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3.5 bg-slate-50/70 rounded-xl border border-slate-200/80 space-y-2.5"
+                    >
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* Original */}
+                        <div className="p-2.5 bg-white rounded-lg border border-slate-200 text-xs">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                            Original Bullet
+                          </span>
+                          <p className="text-slate-600 italic">&ldquo;{rw.original}&rdquo;</p>
+                        </div>
+
+                        {/* Suggested */}
+                        <div className="p-2.5 bg-indigo-50/60 rounded-lg border border-indigo-200/80 text-xs relative group">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">
+                              Suggested Rewrite
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyRewrite(rw.suggested, idx)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold text-indigo-700 bg-white border border-indigo-200 hover:bg-indigo-100 transition-colors cursor-pointer"
+                              title="Copy to clipboard"
+                            >
+                              {copiedIndex === idx ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  <span className="text-emerald-700">Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3 text-indigo-600" />
+                                  <span>Copy</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                          <p className="text-slate-900 font-medium leading-relaxed">
+                            {renderHighlightedRewrite(rw.suggested)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {rw.why && (
+                        <div className="text-[11px] text-indigo-800 bg-indigo-50/80 px-2.5 py-1 rounded-md border border-indigo-100/80 flex items-center gap-1.5">
+                          <Info className="w-3 h-3 text-indigo-600 shrink-0" />
+                          <span><strong>Why this helps:</strong> {rw.why}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Learning Order */}
+            {targetAnalysis.learningOrder && targetAnalysis.learningOrder.length > 0 && (
+              <div className="space-y-3">
+                <div className="border-b border-slate-100 pb-2">
+                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <ListOrdered className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Recommended Skill Learning Order</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Prioritized sequence of missing proficiencies to bridge target job requirements
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  {targetAnalysis.learningOrder.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 bg-white rounded-xl border border-slate-200/80 shadow-2xs space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-extrabold flex items-center justify-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-full truncate">
+                          {item.resourceType || 'Resource'}
+                        </span>
+                      </div>
+                      <div className="font-bold text-xs text-slate-900 capitalize">
+                        {item.skill}
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-snug">
+                        {item.reason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

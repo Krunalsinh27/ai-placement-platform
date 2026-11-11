@@ -13,6 +13,7 @@ class MockProvider {
     this.forceInvalidJsonCount = 0;
     this.forceRateLimit = false;
     this.mockAssistantResponse = null;
+    this.mockAnalyzerResponse = null;
   }
 
   reset() {
@@ -21,6 +22,7 @@ class MockProvider {
     this.forceInvalidJsonCount = 0;
     this.forceRateLimit = false;
     this.mockAssistantResponse = null;
+    this.mockAnalyzerResponse = null;
   }
 
   /**
@@ -79,6 +81,54 @@ class MockProvider {
 
       const intent = matchRuleBasedIntent(rawQ, prev);
       return JSON.stringify(intent);
+    }
+
+    if (mode === 'analyze') {
+      if (this.mockAnalyzerResponse !== null && this.mockAnalyzerResponse !== undefined) {
+        return typeof this.mockAnalyzerResponse === 'string'
+          ? this.mockAnalyzerResponse
+          : JSON.stringify(this.mockAnalyzerResponse);
+      }
+
+      // Extract candidate bullets from prompt if available
+      const bulletsMatch = userPrompt.match(/Candidate Bullets:\s*([\s\S]*?)Calculated ATS Breakdown:/i);
+      let sampleOrig = 'Worked on backend apis and web features';
+      if (bulletsMatch) {
+        const lines = bulletsMatch[1]
+          .split('\n')
+          .map((l) => l.replace(/^\d+[\.\)]\s*/, '').trim())
+          .filter(Boolean);
+        if (lines.length > 0) sampleOrig = lines[0];
+      }
+
+      return JSON.stringify({
+        suggestions: [
+          {
+            category: 'Impact',
+            priority: 'high',
+            reason: 'Quantify technical contributions with numbers (e.g. latency reduced by [add your real number]%, users served).',
+          },
+          {
+            category: 'Action Verbs',
+            priority: 'medium',
+            reason: 'Begin project bullets with direct action verbs such as Architected, Implemented, or Optimized.',
+          },
+        ],
+        rewrites: [
+          {
+            original: sampleOrig,
+            suggested: `Architected scalable services delivering [add your real number]% faster response times`,
+            why: 'Leads with a decisive action verb and highlights quantifiable performance impact.',
+          },
+        ],
+        learningOrder: [
+          {
+            skill: 'docker',
+            reason: 'High-frequency containerization requirement across backend roles.',
+            resourceType: 'Hands-on Project',
+          },
+        ],
+      });
     }
 
     // Default: Resume parsing mode
