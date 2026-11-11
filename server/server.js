@@ -121,6 +121,7 @@ app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.use('/api/superadmin', require('./routes/superadminRoutes'));
 app.use('/api/aspirant', publicApiLimiter, require('./routes/aspirantRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
+app.use('/api/assistant', require('./routes/assistantRoutes'));
 
 // 404 Handler
 app.use(notFound);

@@ -126,6 +126,7 @@ Under the **Environment** tab, configure the following keys:
 | `AI_PROVIDER` | `groq` | AI provider (`groq`, `gemini`, `mock`, or `none`). Mock is blocked in production |
 | `AI_API_KEY` | *API Key from Groq/Gemini* | API Key for LLM provider (not needed if provider is none; missing key falls back to rules) |
 | `AI_MODEL` | `llama-3.3-70b-versatile` | Model name for chat completion (`llama-3.3-70b-versatile`, `gemini-1.5-flash`) |
+| `AI_MODEL_FAST` | `llama-3.1-8b-instant` | Optional faster model for TPO assistant intent routing (falls back to `AI_MODEL`) |
 | `AI_DAILY_CALL_CAP` | `400` | Global daily maximum AI completions cap persisted in MongoDB |
 | `AI_USER_DAILY_PARSE_CAP` | `5` | Personal daily resume parsing limit per candidate |
 

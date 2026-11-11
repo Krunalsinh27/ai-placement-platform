@@ -32,6 +32,7 @@ import {
   Analytics,
   ManageEmailLogs,
   PlacementReport,
+  TpoAssistant,
 } from './pages/admin/index';
 
 // Student Pages
@@ -178,6 +179,7 @@ function App() {
             <Route path="placements" element={<ManagePlacements />} />
             <Route path="reports" element={<PlacementReport />} />
             <Route path="analytics" element={<Analytics />} />
+            <Route path="assistant" element={<TpoAssistant />} />
             <Route path="email-logs" element={<ManageEmailLogs />} />
           </Route>
 

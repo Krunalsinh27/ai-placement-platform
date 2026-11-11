@@ -8,3 +8,4 @@ export { default as ManageDriveRequests } from './ManageTpoDriveRequests';
 export { default as Analytics } from './Analytics';
 export { default as ManageEmailLogs } from './ManageEmailLogs';
 export { default as PlacementReport } from './PlacementReport';
+export { default as TpoAssistant } from './TpoAssistant';

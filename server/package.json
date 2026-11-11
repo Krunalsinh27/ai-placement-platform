@@ -27,6 +27,7 @@
     "test:prodguard": "node tests/testProdGuard.js",
     "test:reports": "node tests/testReports.js",
     "test:ai": "node tests/testAiFeatures.js",
+    "test:assistant": "node tests/testAssistant.js",
     "test:all": "node tests/runAllTests.js",
     "test:fresh": "node tests/dropTestDb.js && node tests/runAllTests.js",
     "ai:check": "node scripts/aiCheck.js",

@@ -12,6 +12,7 @@ class MockProvider {
     this.lastReceivedPayload = null;
     this.forceInvalidJsonCount = 0;
     this.forceRateLimit = false;
+    this.mockAssistantResponse = null;
   }
 
   reset() {
@@ -19,6 +20,7 @@ class MockProvider {
     this.lastReceivedPayload = null;
     this.forceInvalidJsonCount = 0;
     this.forceRateLimit = false;
+    this.mockAssistantResponse = null;
   }
 
   /**
@@ -48,6 +50,35 @@ class MockProvider {
       return JSON.stringify({
         explanation: 'Candidate demonstrates strong alignment with required technical proficiencies. Academic performance and backlogs record satisfy all placement eligibility criteria. Relevant project background reinforces domain readiness for this role.',
       });
+    }
+
+    if (mode === 'assistant') {
+      if (this.mockAssistantResponse !== null && this.mockAssistantResponse !== undefined) {
+        return typeof this.mockAssistantResponse === 'string'
+          ? this.mockAssistantResponse
+          : JSON.stringify(this.mockAssistantResponse);
+      }
+      const { matchRuleBasedIntent } = require('../../assistant/intentRouter');
+      const qMatch = userPrompt.match(/<USER_QUESTION>([\s\S]*?)<\/USER_QUESTION>/);
+      const rawQ = qMatch ? qMatch[1].trim() : userPrompt;
+
+      let prev = null;
+      const prevMatch = userPrompt.match(/<PREVIOUS_CONTEXT>([\s\S]*?)<\/PREVIOUS_CONTEXT>/);
+      if (prevMatch) {
+        try {
+          const toolM = prevMatch[1].match(/Previous Tool:\s*([a-zA-Z0-9_]+)/);
+          const paramsM = prevMatch[1].match(/Previous Params:\s*(\{.*\})/);
+          if (toolM) {
+            prev = {
+              tool: toolM[1],
+              params: paramsM ? JSON.parse(paramsM[1]) : {},
+            };
+          }
+        } catch (_) {}
+      }
+
+      const intent = matchRuleBasedIntent(rawQ, prev);
+      return JSON.stringify(intent);
     }
 
     // Default: Resume parsing mode

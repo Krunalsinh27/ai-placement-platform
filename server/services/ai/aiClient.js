@@ -64,6 +64,7 @@ async function callAiWithQuotaAndRetry({
   mode = 'parse',
   userId = null,
   validateFn = null,
+  model = null,
 }) {
   // 1. Check if configured
   if (!isAiConfigured()) {
@@ -121,10 +122,17 @@ async function callAiWithQuotaAndRetry({
   let lastError = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
+      const selectedModel =
+        model ||
+        (mode === 'assistant'
+          ? process.env.AI_MODEL_FAST || process.env.AI_MODEL
+          : process.env.AI_MODEL);
+
       const rawText = await provider.generateCompletion({
         systemPrompt,
         userPrompt,
         mode,
+        model: selectedModel,
       });
 
       const validatedData = parseAndValidate(rawText);

@@ -20,6 +20,7 @@ const Question = require('./Question');
 const TestAttempt = require('./TestAttempt');
 const Aspirant = require('./Aspirant');
 const AiUsage = require('./AiUsage');
+const ChatLog = require('./ChatLog');
 
 module.exports = {
   User,
@@ -44,4 +45,5 @@ module.exports = {
   TestAttempt,
   Aspirant,
   AiUsage,
+  ChatLog,
 };
