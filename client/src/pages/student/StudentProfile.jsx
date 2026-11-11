@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { openResumeInNewTab, downloadResumePdf } from '../../utils/resumeViewer';
@@ -17,9 +18,10 @@ import {
   ExternalLink,
   CheckCircle2,
   Save,
+  Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import ResumeInsightsCard from '../../components/student/ResumeInsightsCard';
 
 const BRANCH_OPTIONS = [
   'CSE',
@@ -257,13 +259,34 @@ const StudentProfile = () => {
             </div>
           </div>
 
-          {/* AI Resume Insights Card */}
-          <ResumeInsightsCard
-            hasResume={Boolean(student?.resumeUrl)}
-            onSkillsUpdated={(newSkills) =>
-              setFormData((prev) => ({ ...prev, skills: newSkills.join(', ') }))
-            }
-          />
+          {/* Resume AI Link Card */}
+          <div className="bg-gradient-to-br from-indigo-50/70 via-white to-purple-50/40 rounded-2xl border border-indigo-100 p-5 shadow-xs space-y-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900 leading-tight">
+                  Resume AI Insights
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Skills, categorized proficiencies & drive matching
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Explore your AI-parsed resume summary, categorized technical skills, and live matching scores against open placement drives.
+            </p>
+
+            <Link
+              to="/student/resume-ai"
+              className="inline-flex items-center justify-center gap-2 w-full py-2 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-xs hover:shadow cursor-pointer"
+            >
+              <span>Open Resume AI</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
         </div>
 
         {/* Right Column: Editable Profile Details */}
