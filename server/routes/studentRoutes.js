@@ -15,6 +15,7 @@ const {
   parseResume,
   getResumeProfile,
   updateResumeProfile,
+  deleteResumeProfile,
   getStudentSkillMatch,
 } = require('../controllers/aiResumeController');
 const { protect, authorize } = require('../middleware/authMiddleware');
@@ -32,7 +33,8 @@ router.post('/me/resume/parse', protect, authorize('student'), aiLimiter, parseR
 router
   .route('/me/resume-profile')
   .get(protect, authorize('student'), getResumeProfile)
-  .put(protect, authorize('student'), updateResumeProfile);
+  .put(protect, authorize('student'), updateResumeProfile)
+  .delete(protect, authorize('student'), deleteResumeProfile);
 router.get('/me/skill-match/:driveId', protect, authorize('student'), aiLimiter, getStudentSkillMatch);
 
 // Dedicated resume upload route

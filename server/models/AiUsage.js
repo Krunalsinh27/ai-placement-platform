@@ -71,6 +71,29 @@ aiUsageSchema.statics.canMakeCall = async function (userId = null) {
 };
 
 /**
+ * Get current user daily usage metrics (used, cap, remaining)
+ */
+aiUsageSchema.statics.getUserDailyUsage = async function (userId) {
+  const userCap = parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
+  if (!userId) {
+    return { used: 0, cap: userCap, remaining: userCap };
+  }
+
+  const dateKey = this.getTodayKey();
+  const record = await this.findOne({ date: dateKey });
+  if (!record || !record.userCounts) {
+    return { used: 0, cap: userCap, remaining: userCap };
+  }
+
+  const userCount = record.userCounts.get(String(userId)) || 0;
+  return {
+    used: userCount,
+    cap: userCap,
+    remaining: Math.max(0, userCap - userCount),
+  };
+};
+
+/**
  * Atomically record an AI call against today's quota
  */
 aiUsageSchema.statics.recordCall = async function (userId = null) {

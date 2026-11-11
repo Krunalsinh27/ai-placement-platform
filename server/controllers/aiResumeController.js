@@ -3,7 +3,7 @@
  */
 
 const mongoose = require('mongoose');
-const { Student, Drive, Application, User, College } = require('../models');
+const { Student, Drive, Application, User, College, AiUsage } = require('../models');
 const {
   parseStudentResume,
   computeMatchScore,
@@ -61,12 +61,22 @@ const parseResume = async (req, res, next) => {
     }
 
     if (parseResult.status === 'rate_limited') {
+      const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
       return res.status(429).json({
         success: false,
         status: 'rate_limited',
         message: parseResult.error || 'Daily AI parsing cap reached. Please try again tomorrow.',
         resumeProfile: student.resumeProfile,
+        dailyUsage,
       });
+    }
+
+    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+    let resumeFilename = null;
+    if (student.resumeUrl) {
+      resumeFilename = student.resumeUrl.includes('/')
+        ? student.resumeUrl.split('/').pop()
+        : student.resumeUrl;
     }
 
     return res.status(200).json({
@@ -75,6 +85,10 @@ const parseResume = async (req, res, next) => {
       status: parseResult.status || 'parsed',
       source: parseResult.source || student.resumeProfile?.source,
       resumeProfile: student.resumeProfile,
+      dailyUsage,
+      hasResume: Boolean(student.resumeUrl),
+      resumeUrl: student.resumeUrl || null,
+      resumeFilename,
     });
   } catch (error) {
     next(error);
@@ -93,9 +107,49 @@ const getResumeProfile = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Student profile not found' });
     }
 
+    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+    let resumeFilename = null;
+    if (student.resumeUrl) {
+      resumeFilename = student.resumeUrl.includes('/')
+        ? student.resumeUrl.split('/').pop()
+        : student.resumeUrl;
+    }
+
     return res.status(200).json({
       success: true,
       resumeProfile: student.resumeProfile || null,
+      hasResume: Boolean(student.resumeUrl),
+      resumeUrl: student.resumeUrl || null,
+      resumeFilename,
+      dailyUsage,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Delete parsed resume profile data for the current student
+ * @route   DELETE /api/students/me/resume-profile
+ * @access  Private (Student only)
+ */
+const deleteResumeProfile = async (req, res, next) => {
+  try {
+    const student = await Student.findOne({ user: req.user._id });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student profile not found' });
+    }
+
+    student.resumeProfile = null;
+    await student.save();
+
+    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Parsed resume data deleted successfully',
+      resumeProfile: null,
+      dailyUsage,
     });
   } catch (error) {
     next(error);
@@ -483,6 +537,7 @@ module.exports = {
   parseResume,
   getResumeProfile,
   updateResumeProfile,
+  deleteResumeProfile,
   getStudentSkillMatch,
   getRankedApplicants,
   getApplicantExplanationHandler,

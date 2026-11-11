@@ -941,6 +941,50 @@ async function runAiFeatureTests() {
     assert.strictEqual(apiK8sDetail.selfDeclared, true);
     console.log('✓ Self-declared skills correctly flagged and returned to ranked view\n');
 
+    // =========================================================================
+    // TEST 16: Daily Usage Tracking and Delete Parsed Profile
+    // =========================================================================
+    console.log('TEST 16: Daily usage tracking and parsed profile deletion...');
+
+    // 16.1 GET /api/students/me/resume-profile returns dailyUsage and file metadata
+    const profileRes = await fetch(`${BASE_URL}/students/me/resume-profile`, {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    assert.strictEqual(profileRes.status, 200);
+    const profileData = await profileRes.json();
+    assert.strictEqual(profileData.success, true);
+    assert(profileData.dailyUsage, 'Must return dailyUsage object');
+    assert(typeof profileData.dailyUsage.cap === 'number');
+    assert(typeof profileData.dailyUsage.used === 'number');
+    assert(typeof profileData.dailyUsage.remaining === 'number');
+    assert.strictEqual(profileData.hasResume, true);
+    assert(typeof profileData.resumeFilename === 'string');
+
+    // 16.2 Unauthorized role cannot delete resume profile (403)
+    const recruiterDeleteRes = await fetch(`${BASE_URL}/students/me/resume-profile`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${recruiterOwnerToken}` },
+    });
+    assert.strictEqual(recruiterDeleteRes.status, 403, 'Recruiter must be forbidden from student endpoint');
+
+    // 16.3 Student can delete parsed resume data
+    const studentDeleteRes = await fetch(`${BASE_URL}/students/me/resume-profile`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    assert.strictEqual(studentDeleteRes.status, 200);
+    const deleteJson = await studentDeleteRes.json();
+    assert.strictEqual(deleteJson.success, true);
+    assert.strictEqual(deleteJson.resumeProfile, null);
+
+    // Verify DB and subsequent GET returns resumeProfile: null
+    const getAfterDeleteRes = await fetch(`${BASE_URL}/students/me/resume-profile`, {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    const getAfterDeleteData = await getAfterDeleteRes.json();
+    assert.strictEqual(getAfterDeleteData.resumeProfile, null);
+    console.log('✓ Daily usage returned and student parsed data deletion verified (200)\n');
+
     console.log('=================================================================');
     console.log('            ALL AI & MATCHING TESTS PASSED (100%)                ');
     console.log('=================================================================\n');

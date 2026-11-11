@@ -15,6 +15,7 @@ import {
   CalendarCheck,
   Mail,
   FileSpreadsheet,
+  Sparkles,
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose }) => {
@@ -37,6 +38,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     { name: 'Dashboard', path: '/student/dashboard', icon: LayoutDashboard },
     { name: 'Eligible Drives', path: '/student/drives', icon: Briefcase },
     { name: 'My Applications', path: '/student/applications', icon: FileCheck2 },
+    { name: 'Resume AI', path: '/student/resume-ai', icon: Sparkles },
     { name: 'My Placements', path: '/student/placements', icon: Award },
     { name: 'My Profile', path: '/student/profile', icon: UserCheck },
   ];

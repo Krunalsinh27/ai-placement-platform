@@ -39,6 +39,7 @@ import StudentDashboard from './pages/student/StudentDashboard';
 import {
   EligibleDrives,
   MyApplications,
+  ResumeAi,
   MyPlacements,
   StudentProfile,
   StudentInterviewRoom,
@@ -228,6 +229,7 @@ function App() {
             <Route path="dashboard" element={<StudentDashboard />} />
             <Route path="drives" element={<EligibleDrives />} />
             <Route path="applications" element={<MyApplications />} />
+            <Route path="resume-ai" element={<ResumeAi />} />
             <Route path="placements" element={<MyPlacements />} />
             <Route path="profile" element={<StudentProfile />} />
             <Route path="interview/:slotId" element={<StudentInterviewRoom />} />
