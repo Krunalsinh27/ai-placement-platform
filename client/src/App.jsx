@@ -198,6 +198,7 @@ function App() {
             <Route path="drives/:id/pipeline" element={<DrivePipeline />} />
             <Route path="requirements" element={<ManageRequirements />} />
             <Route path="drive-requests" element={<ManageRecruiterDriveRequests />} />
+            <Route path="assistant" element={<TpoAssistant />} />
             <Route path="profile" element={<CompanyProfile />} />
           </Route>
 
@@ -231,6 +232,7 @@ function App() {
             <Route path="dashboard" element={<StudentDashboard />} />
             <Route path="drives" element={<EligibleDrives />} />
             <Route path="applications" element={<MyApplications />} />
+            <Route path="assistant" element={<TpoAssistant />} />
             <Route path="resume-ai" element={<ResumeAi />} />
             <Route path="placements" element={<MyPlacements />} />
             <Route path="profile" element={<StudentProfile />} />

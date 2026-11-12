@@ -15,10 +15,22 @@ const chatLogSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    role: {
+      type: String,
+      enum: ['student', 'tpo', 'recruiter', 'superadmin', 'admin'],
+      required: true,
+      index: true,
+    },
     college: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'College',
-      required: true,
+      required: false,
+      index: true,
+    },
+    company: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Company',
+      required: false,
       index: true,
     },
     question: {

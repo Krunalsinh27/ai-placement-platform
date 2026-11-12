@@ -100,6 +100,9 @@ async function callAiWithQuotaAndRetry({
 
   // Helper for JSON parsing & validation
   const parseAndValidate = (raw) => {
+    if (mode === 'career' || mode === 'text') {
+      return raw;
+    }
     let parsed;
     try {
       parsed = JSON.parse(raw);

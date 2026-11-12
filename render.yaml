@@ -47,5 +47,7 @@ services:
         value: 5
       - key: AI_USER_DAILY_ANALYZE_CAP
         value: 10
+      - key: AI_USER_DAILY_CHAT_CAP
+        value: 30
 
 

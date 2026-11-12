@@ -8,9 +8,9 @@ const {
   getAssistantSuggestions,
 } = require('../controllers/assistantController');
 
-// All assistant routes require TPO or Superadmin authorization and are rate-limited
+// Assistant routes allow student, tpo, recruiter, superadmin, and admin roles (analyst and aspirant strictly 403)
 router.use(protect);
-router.use(authorize('tpo', 'superadmin'));
+router.use(authorize('student', 'tpo', 'recruiter', 'superadmin', 'admin'));
 
 router.post('/ask', aiLimiter, askAssistant);
 router.post('/run', aiLimiter, runAssistantTool);
