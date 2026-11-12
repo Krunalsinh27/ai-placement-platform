@@ -22,6 +22,11 @@ const aiUsageSchema = new mongoose.Schema(
       of: Number,
       default: {},
     },
+    userChatCounts: {
+      type: Map,
+      of: Number,
+      default: {},
+    },
   },
   {
     timestamps: true,
@@ -45,9 +50,14 @@ aiUsageSchema.statics.getTodayKey = function () {
 aiUsageSchema.statics.canMakeCall = async function (userId = null, mode = 'parse') {
   const globalCap = parseInt(process.env.AI_DAILY_CALL_CAP || '400', 10);
   const isAnalyze = mode === 'analyze';
-  const userCap = isAnalyze
-    ? parseInt(process.env.AI_USER_DAILY_ANALYZE_CAP || '10', 10)
-    : parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
+  const isChat = mode === 'assistant' || mode === 'chat' || mode === 'career';
+
+  let userCap = parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
+  if (isAnalyze) {
+    userCap = parseInt(process.env.AI_USER_DAILY_ANALYZE_CAP || '10', 10);
+  } else if (isChat) {
+    userCap = parseInt(process.env.AI_USER_DAILY_CHAT_CAP || '30', 10);
+  }
 
   const dateKey = this.getTodayKey();
   const record = await this.findOne({ date: dateKey });
@@ -65,15 +75,26 @@ aiUsageSchema.statics.canMakeCall = async function (userId = null, mode = 'parse
   }
 
   if (userId) {
-    const userMap = isAnalyze ? record.userAnalyzeCounts : record.userCounts;
+    let userMap = record.userCounts;
+    if (isAnalyze) {
+      userMap = record.userAnalyzeCounts;
+    } else if (isChat) {
+      userMap = record.userChatCounts;
+    }
+
     const userCount = userMap ? userMap.get(String(userId)) || 0 : 0;
     if (userCount >= userCap) {
+      let capMessage = 'Your personal daily AI parsing quota has been reached for today.';
+      if (isAnalyze) {
+        capMessage = 'Your personal daily AI resume analysis quota has been reached for today.';
+      } else if (isChat) {
+        capMessage = 'Your personal daily AI chat quota has been reached for today.';
+      }
+
       return {
         allowed: false,
         reason: 'user_cap_reached',
-        message: isAnalyze
-          ? 'Your personal daily AI resume analysis quota has been reached for today.'
-          : 'Your personal daily AI parsing quota has been reached for today.',
+        message: capMessage,
       };
     }
   }
@@ -82,11 +103,12 @@ aiUsageSchema.statics.canMakeCall = async function (userId = null, mode = 'parse
 };
 
 /**
- * Get current user daily usage metrics (used, cap, remaining, analyze metrics)
+ * Get current user daily usage metrics (used, cap, remaining, analyze metrics, chat metrics)
  */
 aiUsageSchema.statics.getUserDailyUsage = async function (userId) {
   const parseCap = parseInt(process.env.AI_USER_DAILY_PARSE_CAP || '5', 10);
   const analyzeCap = parseInt(process.env.AI_USER_DAILY_ANALYZE_CAP || '10', 10);
+  const chatCap = parseInt(process.env.AI_USER_DAILY_CHAT_CAP || '30', 10);
 
   if (!userId) {
     return {
@@ -97,6 +119,10 @@ aiUsageSchema.statics.getUserDailyUsage = async function (userId) {
       analyzeUsed: 0,
       analyzeCap: analyzeCap,
       analyzeRemaining: analyzeCap,
+      chat: { used: 0, cap: chatCap, remaining: chatCap },
+      chatUsed: 0,
+      chatCap: chatCap,
+      chatRemaining: chatCap,
     };
   }
 
@@ -104,6 +130,7 @@ aiUsageSchema.statics.getUserDailyUsage = async function (userId) {
   const record = await this.findOne({ date: dateKey });
   const parseUsed = record?.userCounts ? record.userCounts.get(String(userId)) || 0 : 0;
   const analyzeUsed = record?.userAnalyzeCounts ? record.userAnalyzeCounts.get(String(userId)) || 0 : 0;
+  const chatUsed = record?.userChatCounts ? record.userChatCounts.get(String(userId)) || 0 : 0;
 
   return {
     used: parseUsed,
@@ -117,6 +144,14 @@ aiUsageSchema.statics.getUserDailyUsage = async function (userId) {
     analyzeUsed,
     analyzeCap,
     analyzeRemaining: Math.max(0, analyzeCap - analyzeUsed),
+    chat: {
+      used: chatUsed,
+      cap: chatCap,
+      remaining: Math.max(0, chatCap - chatUsed),
+    },
+    chatUsed,
+    chatCap,
+    chatRemaining: Math.max(0, chatCap - chatUsed),
   };
 };
 
@@ -130,7 +165,12 @@ aiUsageSchema.statics.recordCall = async function (userId = null, mode = 'parse'
   };
 
   if (userId) {
-    const fieldName = mode === 'analyze' ? 'userAnalyzeCounts' : 'userCounts';
+    let fieldName = 'userCounts';
+    if (mode === 'analyze') {
+      fieldName = 'userAnalyzeCounts';
+    } else if (mode === 'assistant' || mode === 'chat' || mode === 'career') {
+      fieldName = 'userChatCounts';
+    }
     update.$inc[`${fieldName}.${String(userId)}`] = 1;
   }
 

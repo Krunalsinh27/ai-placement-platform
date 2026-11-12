@@ -13,8 +13,11 @@ const {
   Company,
   RoundParticipant,
   User,
+  InterviewSlot,
+  DriveRequest,
 } = require('../../models');
 const { normalizeSkill } = require('../ai/skillsDictionary');
+const { computeMatchScore } = require('../ai/matchingEngine');
 
 /**
  * Ensures valid ObjectId format
@@ -897,7 +900,529 @@ async function topPackages(collegeId, params = {}) {
   }));
 }
 
+// =====================================================================
+// STUDENT TOOLS (Strictly scoped to the calling student's own record)
+// =====================================================================
+
+/**
+ * S1. My Applications
+ * List of drives the student has applied to with current status.
+ */
+async function myApplications(student) {
+  if (!student || !student._id) throw new Error('Student profile required');
+
+  const applications = await Application.find({ student: student._id })
+    .populate({
+      path: 'drive',
+      populate: { path: 'company', select: 'name' },
+    })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const items = applications.map((app) => ({
+    applicationId: app._id.toString(),
+    driveId: app.drive?._id?.toString(),
+    role: app.drive?.role || app.drive?.title || 'Placement Drive',
+    company: app.drive?.company?.name || 'Recruiting Partner',
+    packageLpa: app.drive?.packageLpa,
+    status: app.status || 'applied',
+    currentRound: app.currentRound || null,
+    appliedAt: app.createdAt ? new Date(app.createdAt).toLocaleDateString() : 'N/A',
+  }));
+
+  const byStatus = {};
+  items.forEach((item) => {
+    byStatus[item.status] = (byStatus[item.status] || 0) + 1;
+  });
+
+  return {
+    count: items.length,
+    byStatus,
+    applications: items,
+  };
+}
+
+/**
+ * S2. My Upcoming Interviews
+ * Scheduled interview time slots and room links for the student.
+ */
+async function myUpcomingInterviews(student) {
+  if (!student || !student._id) throw new Error('Student profile required');
+
+  const now = new Date();
+  const slots = await InterviewSlot.find({
+    student: student._id,
+    status: { $in: ['scheduled', 'checked_in', 'in_progress'] },
+    startTime: { $gte: new Date(now.getTime() - 2 * 60 * 60 * 1000) },
+  })
+    .populate({
+      path: 'drive',
+      populate: { path: 'company', select: 'name' },
+    })
+    .populate('round', 'name roundNumber')
+    .sort({ startTime: 1 })
+    .lean();
+
+  const interviews = slots.map((s) => ({
+    slotId: s._id.toString(),
+    company: s.drive?.company?.name || 'Company',
+    role: s.drive?.role || s.drive?.title || 'Drive',
+    round: s.round?.name || `Round ${s.round?.roundNumber || ''}`.trim() || 'Interview Round',
+    startTime: s.startTime,
+    endTime: s.endTime,
+    queueNumber: s.queueNumber,
+    status: s.status,
+    meetingLink: s.meetingLink || '',
+  }));
+
+  return {
+    count: interviews.length,
+    interviews,
+  };
+}
+
+/**
+ * S3. Upcoming Eligible Drives
+ * Open campus drives at the student's college that match academic criteria.
+ */
+async function upcomingEligibleDrives(student) {
+  if (!student || !student._id) throw new Error('Student profile required');
+
+  const studentCollegeId = student.college?._id || student.college;
+  const eligibleQuery = {
+    minCgpa: { $lte: typeof student.cgpa === 'number' ? student.cgpa : 0 },
+    maxBacklogs: { $gte: typeof student.backlogs === 'number' ? student.backlogs : 0 },
+  };
+
+  if (student.branch) {
+    eligibleQuery.allowedBranches = String(student.branch).toUpperCase().trim();
+  }
+
+  if (studentCollegeId) {
+    eligibleQuery.$or = [{ college: studentCollegeId }, { colleges: studentCollegeId }];
+  }
+
+  const drives = await Drive.find(eligibleQuery)
+    .populate('company', 'name')
+    .sort({ lastDateToApply: 1 })
+    .lean();
+
+  const now = new Date();
+  const validDrives = drives
+    .filter((d) => {
+      if (!d.lastDateToApply) return true;
+      return new Date(d.lastDateToApply) >= now;
+    })
+    .map((d) => {
+      let match;
+      try {
+        match = computeMatchScore(student, d);
+      } catch (_) {
+        match = { score: null };
+      }
+      return {
+        driveId: d._id.toString(),
+        company: d.company?.name || 'Corporate Partner',
+        role: d.role,
+        packageLpa: d.packageLpa,
+        lastDateToApply: d.lastDateToApply ? new Date(d.lastDateToApply).toLocaleDateString() : 'TBD',
+        driveDate: d.driveDate ? new Date(d.driveDate).toLocaleDateString() : 'TBD',
+        matchScore: match?.score !== undefined ? match.score : null,
+      };
+    });
+
+  return {
+    count: validDrives.length,
+    drives: validDrives.slice(0, 10),
+  };
+}
+
+/**
+ * S4. My Eligibility
+ * Deterministically explains eligibility for a specific drive with exact reasons.
+ */
+async function myEligibility(student, params = {}) {
+  if (!student || !student._id) throw new Error('Student profile required');
+
+  const studentCollegeId = student.college?._id || student.college;
+  const targetTerm = String(params.company || params.driveId || params.drive || '').trim();
+
+  const query = {};
+  if (studentCollegeId) {
+    query.$or = [{ college: studentCollegeId }, { colleges: studentCollegeId }];
+  }
+
+  if (params.driveId && mongoose.Types.ObjectId.isValid(params.driveId)) {
+    query._id = toObjectId(params.driveId);
+  } else if (targetTerm) {
+    if (mongoose.Types.ObjectId.isValid(targetTerm)) {
+      query._id = toObjectId(targetTerm);
+    } else {
+      const comp = await Company.findOne({ name: new RegExp(targetTerm, 'i') });
+      if (comp) {
+        query.company = comp._id;
+      } else {
+        query.$or = [
+          { role: new RegExp(targetTerm, 'i') },
+          { title: new RegExp(targetTerm, 'i') },
+        ];
+      }
+    }
+  }
+
+  const drive = await Drive.findOne(query).populate('company', 'name').sort({ createdAt: -1 });
+
+  if (!drive) {
+    return {
+      found: false,
+      message: targetTerm
+        ? `No placement drive found matching "${targetTerm}" at your college.`
+        : 'Please specify the company or drive name to check your eligibility.',
+    };
+  }
+
+  const reasons = [];
+  const checks = {};
+
+  // 1. Branch
+  const studentBranch = String(student.branch || '').toUpperCase().trim();
+  const allowedBranches = (drive.allowedBranches || []).map((b) => String(b).toUpperCase().trim());
+  const branchPass = allowedBranches.length === 0 || allowedBranches.includes(studentBranch);
+  checks.branch = {
+    pass: branchPass,
+    studentValue: studentBranch,
+    required: allowedBranches,
+  };
+  if (!branchPass) {
+    reasons.push(
+      `Your department (${studentBranch || 'Unspecified'}) is not included in allowed branches: ${allowedBranches.join(', ')}`
+    );
+  }
+
+  // 2. CGPA
+  const studentCgpa = typeof student.cgpa === 'number' ? student.cgpa : 0;
+  const minCgpa = typeof drive.minCgpa === 'number' ? drive.minCgpa : 0;
+  const cgpaPass = studentCgpa >= minCgpa;
+  checks.cgpa = {
+    pass: cgpaPass,
+    studentValue: studentCgpa,
+    requiredMin: minCgpa,
+  };
+  if (!cgpaPass) {
+    reasons.push(`Your CGPA (${studentCgpa}) is below the required minimum of ${minCgpa}`);
+  }
+
+  // 3. Backlogs
+  const studentBacklogs = typeof student.backlogs === 'number' ? student.backlogs : 0;
+  const maxBacklogs = typeof drive.maxBacklogs === 'number' ? drive.maxBacklogs : 0;
+  const backlogsPass = studentBacklogs <= maxBacklogs;
+  checks.backlogs = {
+    pass: backlogsPass,
+    studentValue: studentBacklogs,
+    allowedMax: maxBacklogs,
+  };
+  if (!backlogsPass) {
+    reasons.push(`You have ${studentBacklogs} backlog(s), exceeding the maximum allowed limit of ${maxBacklogs}`);
+  }
+
+  // 4. Deadline
+  const now = new Date();
+  const deadlinePass = !drive.lastDateToApply || new Date(drive.lastDateToApply) >= now;
+  checks.deadline = {
+    pass: deadlinePass,
+    lastDateToApply: drive.lastDateToApply,
+  };
+  if (!deadlinePass) {
+    reasons.push(`Application deadline closed on ${new Date(drive.lastDateToApply).toLocaleDateString()}`);
+  }
+
+  const existingApp = await Application.findOne({ drive: drive._id, student: student._id });
+
+  const isEligible = reasons.length === 0;
+
+  return {
+    found: true,
+    driveId: drive._id.toString(),
+    company: drive.company?.name || 'Company',
+    role: drive.role,
+    packageLpa: drive.packageLpa,
+    isEligible,
+    alreadyApplied: Boolean(existingApp),
+    applicationStatus: existingApp?.status || null,
+    reasons,
+    checks,
+  };
+}
+
+/**
+ * S5. My Resume Status
+ * Reads stored resume profile and ATS readiness analysis (no new LLM invocation).
+ */
+async function myResumeStatus(student) {
+  if (!student || !student._id) throw new Error('Student profile required');
+
+  const hasResume = Boolean(student.resumeUrl);
+  const profile = student.resumeProfile;
+  const isParsed = Boolean(profile && profile.status === 'parsed');
+  const analysis = student.resumeAnalysis;
+
+  const skillsCount = profile?.skills?.length || 0;
+  const confirmedSkillsCount = (profile?.skills || []).filter((s) => s.confirmedByStudent).length;
+
+  return {
+    hasResume,
+    isParsed,
+    source: profile?.source || null,
+    parsedAt: profile?.parsedAt || null,
+    skillsCount,
+    confirmedSkillsCount,
+    hasAnalysis: Boolean(analysis),
+    atsScore: analysis ? analysis.atsScore : null,
+    targetTitle: analysis?.target?.title || null,
+    missingRequiredSkills: analysis?.missingRequired || [],
+    missingPreferredSkills: analysis?.missingPreferred || [],
+    breakdown: analysis?.breakdown || null,
+  };
+}
+
+// =====================================================================
+// RECRUITER TOOLS (Strictly scoped to the recruiter's company)
+// =====================================================================
+
+/**
+ * R1. My Drives Summary
+ * Overview of drives, applicants, and offers for the recruiter's company.
+ */
+async function myDrivesSummary(companyId) {
+  const compObjId = toObjectId(companyId);
+  if (!compObjId) throw new Error('Invalid companyId');
+
+  const drives = await Drive.find({ company: compObjId })
+    .populate('college', 'name code')
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const driveIds = drives.map((d) => d._id);
+  const totalApplicants = driveIds.length > 0 ? await Application.countDocuments({ drive: { $in: driveIds } }) : 0;
+  const totalOffers = driveIds.length > 0 ? await Offer.countDocuments({ drive: { $in: driveIds }, status: 'accepted' }) : 0;
+
+  const now = new Date();
+  const activeDrives = drives.filter(
+    (d) => d.status === 'open' && (!d.lastDateToApply || new Date(d.lastDateToApply) >= now)
+  );
+  const completedDrives = drives.filter((d) => d.status === 'completed');
+
+  return {
+    totalDrives: drives.length,
+    activeDrivesCount: activeDrives.length,
+    completedDrivesCount: completedDrives.length,
+    totalApplicants,
+    totalOffers,
+    drives: drives.slice(0, 10).map((d) => ({
+      id: d._id.toString(),
+      role: d.role,
+      title: d.title,
+      packageLpa: d.packageLpa,
+      status: d.status,
+      college: d.college?.name || 'Campus Drive',
+      driveDate: d.driveDate ? new Date(d.driveDate).toLocaleDateString() : 'TBD',
+    })),
+  };
+}
+
+/**
+ * R2. My Drive Funnel
+ * Conversion funnel (applied -> shortlisted -> offered -> accepted) for a recruiter drive.
+ */
+async function myDriveFunnel(companyId, params = {}) {
+  const compObjId = toObjectId(companyId);
+  if (!compObjId) throw new Error('Invalid companyId');
+
+  const driveQuery = { company: compObjId };
+  if (params.driveId && mongoose.Types.ObjectId.isValid(params.driveId)) {
+    driveQuery._id = toObjectId(params.driveId);
+  } else if (params.driveName || params.drive) {
+    const term = String(params.driveName || params.drive).trim();
+    if (mongoose.Types.ObjectId.isValid(term)) {
+      driveQuery._id = toObjectId(term);
+    } else {
+      driveQuery.$or = [
+        { role: new RegExp(term, 'i') },
+        { title: new RegExp(term, 'i') },
+      ];
+    }
+  }
+
+  const drive = await Drive.findOne(driveQuery).sort({ createdAt: -1 });
+  if (!drive) {
+    return {
+      found: false,
+      message: 'No matching placement drive found under your recruiter account.',
+    };
+  }
+
+  const totalApplied = await Application.countDocuments({ drive: drive._id });
+  const shortlisted = await Application.countDocuments({
+    drive: drive._id,
+    status: { $in: ['shortlisted', 'in_round', 'selected', 'offered'] },
+  });
+  const offered = await Application.countDocuments({
+    drive: drive._id,
+    status: { $in: ['selected', 'offered'] },
+  });
+  const accepted = await Offer.countDocuments({
+    drive: drive._id,
+    status: 'accepted',
+  });
+
+  const conversionRate = totalApplied > 0 ? Math.round((accepted / totalApplied) * 100) : 0;
+
+  return {
+    found: true,
+    driveId: drive._id.toString(),
+    driveTitle: drive.title || drive.role,
+    role: drive.role,
+    applied: totalApplied,
+    shortlisted,
+    offered,
+    accepted,
+    conversionRate,
+  };
+}
+
+/**
+ * R3. My Top Applicants
+ * Top ranked candidates for a recruiter drive using deterministic AI scoring.
+ */
+async function myTopApplicants(companyId, params = {}) {
+  const compObjId = toObjectId(companyId);
+  if (!compObjId) throw new Error('Invalid companyId');
+
+  const limit = Math.min(10, Math.max(1, Number(params.limit) || 5));
+
+  const driveQuery = { company: compObjId };
+  if (params.driveId && mongoose.Types.ObjectId.isValid(params.driveId)) {
+    driveQuery._id = toObjectId(params.driveId);
+  } else if (params.drive) {
+    if (mongoose.Types.ObjectId.isValid(params.drive)) {
+      driveQuery._id = toObjectId(params.drive);
+    } else {
+      driveQuery.$or = [
+        { role: new RegExp(String(params.drive).trim(), 'i') },
+        { title: new RegExp(String(params.drive).trim(), 'i') },
+      ];
+    }
+  }
+
+  const drive = await Drive.findOne(driveQuery).sort({ createdAt: -1 });
+  if (!drive) {
+    return {
+      found: false,
+      message: 'No matching placement drive found under your recruiter account.',
+      applicants: [],
+    };
+  }
+
+  const applications = await Application.find({ drive: drive._id })
+    .populate({
+      path: 'student',
+      populate: [
+        { path: 'user', select: 'name email' },
+        { path: 'college', select: 'name code' },
+      ],
+    })
+    .lean();
+
+  const ranked = applications
+    .filter((app) => app.student)
+    .map((app) => {
+      let match;
+      try {
+        match = computeMatchScore(app.student, drive);
+      } catch (_) {
+        match = { score: null, missingSkills: [] };
+      }
+      return {
+        studentId: app.student._id,
+        name: app.student.user?.name || 'Applicant',
+        enrollmentNo: app.student.enrollmentNo || '',
+        branch: app.student.branch || '',
+        college: app.student.college?.name || 'College',
+        collegeCode: app.student.college?.code || '',
+        cgpa: typeof app.student.cgpa === 'number' ? app.student.cgpa : null,
+        status: app.status || 'applied',
+        matchScore: match?.score !== undefined ? match.score : null,
+        missingSkills: match?.missingSkills || [],
+        appliedAt: app.createdAt,
+      };
+    })
+    .sort((a, b) => {
+      const scoreA = a.matchScore !== null ? a.matchScore : -1;
+      const scoreB = b.matchScore !== null ? b.matchScore : -1;
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return (b.cgpa || 0) - (a.cgpa || 0);
+    })
+    .slice(0, limit);
+
+  return {
+    found: true,
+    driveId: drive._id.toString(),
+    driveTitle: drive.title || drive.role,
+    role: drive.role,
+    totalApplicants: applications.length,
+    applicants: ranked,
+  };
+}
+
+/**
+ * R4. My Drive Requests
+ * Summary of campus drive invitations sent by the recruiter to colleges.
+ */
+async function myDriveRequests(companyId, params = {}) {
+  const compObjId = toObjectId(companyId);
+  if (!compObjId) throw new Error('Invalid companyId');
+
+  const query = { company: compObjId };
+  if (params.status) {
+    query.status = String(params.status).trim().toLowerCase();
+  }
+
+  const requests = await DriveRequest.find(query)
+    .populate('college', 'name code')
+    .populate('jobRequirement', 'title role packageLpa')
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const statusCounts = {
+    pending: 0,
+    accepted: 0,
+    rejected: 0,
+    reschedule_proposed: 0,
+  };
+
+  requests.forEach((r) => {
+    if (statusCounts[r.status] !== undefined) {
+      statusCounts[r.status]++;
+    }
+  });
+
+  return {
+    totalRequests: requests.length,
+    statusCounts,
+    requests: requests.slice(0, 10).map((r) => ({
+      id: r._id.toString(),
+      college: r.college?.name || 'Partner College',
+      role: r.jobRequirement?.role || r.jobRequirement?.title || 'Drive Request',
+      status: r.status,
+      mode: r.mode,
+      proposedDates: (r.proposedDates || []).map((d) => new Date(d).toLocaleDateString()),
+      createdAt: r.createdAt,
+    })),
+  };
+}
+
 module.exports = {
+  // TPO Tools
   placementSummary,
   departmentBreakdown,
   unplacedStudents,
@@ -908,4 +1433,15 @@ module.exports = {
   studentsWithSkill,
   studentsWithoutResume,
   topPackages,
+  // Student Tools
+  myApplications,
+  myUpcomingInterviews,
+  upcomingEligibleDrives,
+  myEligibility,
+  myResumeStatus,
+  // Recruiter Tools
+  myDrivesSummary,
+  myDriveFunnel,
+  myTopApplicants,
+  myDriveRequests,
 };

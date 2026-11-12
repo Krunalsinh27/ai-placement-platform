@@ -54,7 +54,39 @@ class MockProvider {
       });
     }
 
-    if (mode === 'assistant') {
+    if (mode === 'assistant' || mode === 'career') {
+      // 1. General Mode Career Advisory prompt check
+      if (mode === 'career' || (systemPrompt && (systemPrompt.includes('career and placement') || systemPrompt.includes('CAREER_ADVISOR')))) {
+        if (this.mockCareerAdvisorResponse !== null && this.mockCareerAdvisorResponse !== undefined) {
+          return typeof this.mockCareerAdvisorResponse === 'string'
+            ? this.mockCareerAdvisorResponse
+            : JSON.stringify(this.mockCareerAdvisorResponse);
+        }
+
+        const qMatch = userPrompt.match(/<USER_QUESTION>([\s\S]*?)<\/USER_QUESTION>/);
+        const rawQ = (qMatch ? qMatch[1].trim() : userPrompt).toLowerCase();
+
+        // Check for off-topic, non-career questions or prompt injection
+        const isOffTopic =
+          rawQ.includes('pizza') ||
+          rawQ.includes('recipe') ||
+          rawQ.includes('weather') ||
+          rawQ.includes('movie') ||
+          rawQ.includes('song') ||
+          rawQ.includes('president') ||
+          rawQ.includes('system_override') ||
+          rawQ.includes('ignore previous instructions') ||
+          rawQ.includes('hack') ||
+          rawQ.includes('capital of');
+
+        if (isOffTopic) {
+          return 'I can only answer questions related to careers, placement preparation, interviews, and technical skills.';
+        }
+
+        return 'To prepare effectively for technical placement interviews: focus on core data structures and algorithms (arrays, trees, graphs, dynamic programming), practice problem-solving daily on standard platforms, and review CS fundamentals (DBMS, OS, and Networks). For behavioral rounds, structure answers using the STAR method (Situation, Task, Action, Result) with concrete metrics from your academic projects.';
+      }
+
+      // 2. Intent routing prompt check
       if (this.mockAssistantResponse !== null && this.mockAssistantResponse !== undefined) {
         return typeof this.mockAssistantResponse === 'string'
           ? this.mockAssistantResponse
@@ -79,7 +111,21 @@ class MockProvider {
         } catch (_) {}
       }
 
-      const intent = matchRuleBasedIntent(rawQ, prev);
+      const isStudentPrompt = Boolean(systemPrompt && (systemPrompt.includes('STUDENT TOOLS') || systemPrompt.includes('myApplications')));
+      const isRecruiterPrompt = Boolean(systemPrompt && (systemPrompt.includes('RECRUITER TOOLS') || systemPrompt.includes('myDrivesSummary')));
+      const detectedRole = isStudentPrompt ? 'student' : isRecruiterPrompt ? 'recruiter' : 'tpo';
+
+      const isConversationalGeneral =
+        rawQ.includes('capital of') ||
+        rawQ.includes('recipe') ||
+        rawQ.includes('pizza') ||
+        rawQ.includes('weather');
+
+      if (isConversationalGeneral) {
+        return JSON.stringify({ tool: 'general', params: { question: rawQ } });
+      }
+
+      const intent = matchRuleBasedIntent(rawQ, prev, detectedRole);
       return JSON.stringify(intent);
     }
 

@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   CalendarCheck,
   GitBranch,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -25,6 +26,7 @@ const RecruiterSidebar = ({ isOpen, onClose }) => {
     { name: 'Job Requirements', path: '/recruiter/requirements', icon: Briefcase },
     { name: 'Drive Requests', path: '/recruiter/drive-requests', icon: CalendarCheck },
     { name: 'Drive Pipeline', path: '/recruiter/pipeline', icon: GitBranch },
+    { name: 'Ask AI', path: '/recruiter/assistant', icon: Sparkles },
     { name: 'Company Profile', path: '/recruiter/profile', icon: Building2 },
     { name: 'Public Placement Record', path: '/placements', icon: Award },
   ];

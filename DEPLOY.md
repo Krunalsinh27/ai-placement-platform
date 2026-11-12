@@ -130,6 +130,7 @@ Under the **Environment** tab, configure the following keys:
 | `AI_DAILY_CALL_CAP` | `400` | Global daily maximum AI completions cap persisted in MongoDB |
 | `AI_USER_DAILY_PARSE_CAP` | `5` | Personal daily resume parsing limit per candidate |
 | `AI_USER_DAILY_ANALYZE_CAP` | `10` | Personal daily resume analysis against job targets limit per candidate |
+| `AI_USER_DAILY_CHAT_CAP` | `30` | Personal daily assistant chat/routing limit per user |
 
 > [!WARNING]
 > **Render Free Tier Spin-Down & Scheduled Jobs**:
