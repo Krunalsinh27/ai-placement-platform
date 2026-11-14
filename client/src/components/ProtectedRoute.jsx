@@ -7,10 +7,25 @@ import { useAuth } from '../context/AuthContext';
  * @param {Array} allowedRoles - e.g. ['admin'], ['student'] or ['admin', 'student']
  */
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user, isAuthenticated, loading } = useAuth();
+  const { user, isAuthenticated, loading, isWakingUp } = useAuth();
   const location = useLocation();
 
   if (loading) {
+    if (isWakingUp) {
+      return (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white text-center">
+          <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-6" />
+          <h2 className="text-2xl font-bold tracking-tight mb-2">Server is starting, please wait...</h2>
+          <p className="text-sm text-slate-400 max-w-md mb-4">
+            The server is initializing services. Reconnecting automatically...
+          </p>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-950/80 border border-indigo-700/50 text-xs text-indigo-300">
+            <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+            Connecting to server
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-3">

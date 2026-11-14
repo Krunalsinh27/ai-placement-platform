@@ -15,6 +15,35 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+/**
+ * Helper to normalize email key for account-keyed rate limiting (trim, lowercase).
+ * Gracefully falls back to IP address if email is invalid or missing.
+ */
+const normalizeAccountKey = (prefix, rawEmail, fallbackIp) => {
+  if (typeof rawEmail === 'string') {
+    const normalized = rawEmail.trim().toLowerCase();
+    if (normalized) {
+      return `${prefix}:${normalized}`;
+    }
+  }
+  return fallbackIp || 'unknown';
+};
+
+// Account-keyed login rate limiter: 10 attempts per 15 minutes per target account email
+const accountLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skip: isTestEnv,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => normalizeAccountKey('account_login', req.body?.email, req.ip),
+  message: {
+    success: false,
+    message: 'Too many login attempts for this account. Please try again after 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // OTP verify limiter: 25 attempts per 15 minutes per IP
 const otpVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -23,6 +52,21 @@ const otpVerifyLimiter = rateLimit({
   message: {
     success: false,
     message: 'Too many verification attempts from this IP address. Please try again after 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Account-keyed OTP rate limiter: 10 attempts per 15 minutes per target account email
+const accountOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skip: isTestEnv,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => normalizeAccountKey('account_otp', req.body?.email, req.ip),
+  message: {
+    success: false,
+    message: 'Too many OTP requests or verification attempts for this account. Please try again after 15 minutes.',
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -81,8 +125,11 @@ const aiLimiter = rateLimit({
 });
 
 module.exports = {
+  normalizeAccountKey,
   loginLimiter,
+  accountLoginLimiter,
   otpVerifyLimiter,
+  accountOtpLimiter,
   otpResendLimiter,
   publicApiLimiter,
   reportLimiter,

@@ -18,7 +18,12 @@ const getRecruiterCompanyId = (user) => {
  */
 const createJobRequirement = async (req, res, next) => {
   try {
-    const companyId = getRecruiterCompanyId(req.user) || req.body.company;
+    let companyId;
+    if (req.user?.role === 'superadmin') {
+      companyId = req.body.company || getRecruiterCompanyId(req.user);
+    } else {
+      companyId = getRecruiterCompanyId(req.user);
+    }
 
     if (!companyId) {
       return res.status(400).json({

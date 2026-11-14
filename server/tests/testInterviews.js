@@ -77,7 +77,7 @@ async function runInterviewTests() {
       tpoUser = await User.create({
         name: 'TPO Administrator',
         email: 'admin@college.com',
-        password: 'Admin@123',
+        password: 'Falcon#2026!Secured',
         role: 'tpo',
         college: college._id,
         isApproved: true,
@@ -90,7 +90,7 @@ async function runInterviewTests() {
       recUser = await User.create({
         name: 'Google Recruiter',
         email: 'recruiter@google.com',
-        password: 'Recruiter@123',
+        password: 'Vanguard#2026!Access',
         role: 'recruiter',
         company: googleCompany._id,
         isApproved: true,
@@ -104,7 +104,7 @@ async function runInterviewTests() {
       const u = await User.create({
         name: `Interview Student ${idx}`,
         email: `interview.student${idx}@nitd.edu`,
-        password: 'Student@123',
+        password: 'Quantum#2026!Target',
         role: 'student',
         college: college._id,
         isApproved: true,
@@ -127,7 +127,7 @@ async function runInterviewTests() {
     const tpoRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@college.com', password: 'Admin@123' }),
+      body: JSON.stringify({ email: 'admin@college.com', password: 'Falcon#2026!Secured' }),
     });
     const tpoData = await tpoRes.json();
     const tpoToken = tpoData.token;
@@ -137,7 +137,7 @@ async function runInterviewTests() {
     const recRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'recruiter@google.com', password: 'Recruiter@123' }),
+      body: JSON.stringify({ email: 'recruiter@google.com', password: 'Vanguard#2026!Access' }),
     });
     const recData = await recRes.json();
     const recToken = recData.token;
@@ -151,7 +151,7 @@ async function runInterviewTests() {
     const st1Login = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: student1.user.email, password: 'Student@123' }),
+      body: JSON.stringify({ email: student1.user.email, password: 'Quantum#2026!Target' }),
     });
     const st1Data = await st1Login.json();
     const st1Token = st1Data.token;

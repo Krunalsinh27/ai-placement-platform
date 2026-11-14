@@ -121,8 +121,8 @@ const StudentProfile = () => {
       return;
     }
 
-    if (file.size > 2 * 1024 * 1024) {
-      toast.error('File size exceeds the 2MB limit!');
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size exceeds the 5MB limit!');
       return;
     }
 
@@ -234,7 +234,7 @@ const StudentProfile = () => {
             {/* Upload form */}
             <div className="space-y-3 pt-2 border-t border-slate-100">
               <label className="block text-xs font-semibold text-slate-700">
-                Upload New Resume (PDF only, max 2MB)
+                Upload New Resume (PDF only, max 5MB)
               </label>
               <input
                 type="file"

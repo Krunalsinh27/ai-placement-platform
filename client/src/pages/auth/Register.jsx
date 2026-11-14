@@ -30,6 +30,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { validatePasswordPolicy } from '../../utils/passwordPolicy';
 import {
   INDIAN_STATES_AND_UTS as INDIAN_STATES,
   TWELFTH_STREAMS,
@@ -45,8 +46,7 @@ const ORGANISATION_TYPES = [
 ];
 
 const PASSWORD_RULE_TEXT =
-  'Password must be at least 8 characters long and contain at least one letter and one number';
-const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+  'Password must be at least 10 characters long, not easily guessed, and cannot contain parts of your name or email';
 
 const Register = () => {
   // First Screen: null -> "I am a..." card selector
@@ -247,8 +247,9 @@ const Register = () => {
 
     if (!aspirantForm.password) {
       newErrors.password = 'Password is required';
-    } else if (!PASSWORD_REGEX.test(aspirantForm.password)) {
-      newErrors.password = PASSWORD_RULE_TEXT;
+    } else {
+      const pCheck = validatePasswordPolicy(aspirantForm.password, { email: aspirantForm.email, name: aspirantForm.name });
+      if (!pCheck.valid) newErrors.password = pCheck.message;
     }
 
     if (!aspirantForm.state.trim()) newErrors.state = 'State / Region is required';
@@ -268,8 +269,9 @@ const Register = () => {
 
     if (!studentForm.password) {
       newErrors.password = 'Password is required';
-    } else if (!PASSWORD_REGEX.test(studentForm.password)) {
-      newErrors.password = PASSWORD_RULE_TEXT;
+    } else {
+      const pCheck = validatePasswordPolicy(studentForm.password, { email: studentForm.email, name: studentForm.name });
+      if (!pCheck.valid) newErrors.password = pCheck.message;
     }
 
     if (!studentForm.college) newErrors.college = 'Please select your college';
@@ -318,8 +320,9 @@ const Register = () => {
 
     if (!tpoForm.password) {
       newErrors.password = 'Password is required';
-    } else if (!PASSWORD_REGEX.test(tpoForm.password)) {
-      newErrors.password = PASSWORD_RULE_TEXT;
+    } else {
+      const pCheck = validatePasswordPolicy(tpoForm.password, { email: tpoForm.email, name: tpoForm.name });
+      if (!pCheck.valid) newErrors.password = pCheck.message;
     }
 
     if (!tpoForm.college) newErrors.college = 'Please select your affiliated college';
@@ -344,8 +347,9 @@ const Register = () => {
 
     if (!newCollegeForm.tpoPassword) {
       newErrors.tpoPassword = 'Password is required';
-    } else if (!PASSWORD_REGEX.test(newCollegeForm.tpoPassword)) {
-      newErrors.tpoPassword = PASSWORD_RULE_TEXT;
+    } else {
+      const pCheck = validatePasswordPolicy(newCollegeForm.tpoPassword, { email: newCollegeForm.tpoEmail, name: newCollegeForm.tpoName });
+      if (!pCheck.valid) newErrors.tpoPassword = pCheck.message;
     }
 
     if (!newCollegeForm.tpoPhone.trim()) newErrors.tpoPhone = 'Contact phone number is required';
@@ -365,8 +369,9 @@ const Register = () => {
 
     if (!recruiterForm.password) {
       newErrors.password = 'Password is required';
-    } else if (!PASSWORD_REGEX.test(recruiterForm.password)) {
-      newErrors.password = PASSWORD_RULE_TEXT;
+    } else {
+      const pCheck = validatePasswordPolicy(recruiterForm.password, { email: recruiterForm.email, name: recruiterForm.name });
+      if (!pCheck.valid) newErrors.password = pCheck.message;
     }
 
     if (recruiterForm.companyMode === 'new') {
@@ -396,8 +401,9 @@ const Register = () => {
     }
     if (!analystForm.password) {
       newErrors.password = 'Password is required';
-    } else if (!PASSWORD_REGEX.test(analystForm.password)) {
-      newErrors.password = PASSWORD_RULE_TEXT;
+    } else {
+      const pCheck = validatePasswordPolicy(analystForm.password, { email: analystForm.email, name: analystForm.name });
+      if (!pCheck.valid) newErrors.password = pCheck.message;
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -666,7 +672,7 @@ const Register = () => {
         id: 'analyst',
         title: 'Analyst / Observer',
         subtitle: 'Higher Ed Research',
-        desc: 'Access nationwide aggregate recruitment intelligence across approved institutions with small-group privacy protection.',
+        desc: 'Access nationwide aggregate recruitment intelligence across approved institutions with small-group suppression (k-anonymity, k=5) protection.',
         icon: BarChart3,
         accent: 'amber',
         badge: 'Research Access',

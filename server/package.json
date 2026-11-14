@@ -2,6 +2,9 @@
   "name": "server",
   "version": "1.0.0",
   "description": "Backend API for College Placement Record Management System",
+  "engines": {
+    "node": "22.x"
+  },
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -28,6 +31,7 @@
     "test:reports": "node tests/testReports.js",
     "test:ai": "node tests/testAiFeatures.js",
     "test:assistant": "node tests/testAssistant.js",
+    "test:security": "node tests/testSecurityHardening.js",
     "test:all": "node tests/runAllTests.js",
     "test:fresh": "node tests/dropTestDb.js && node tests/runAllTests.js",
     "ai:check": "node scripts/aiCheck.js",

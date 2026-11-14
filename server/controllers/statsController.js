@@ -7,10 +7,10 @@ const { Student, Application, Placement, Company, Drive } = require('../models')
  */
 const getStudentMatch = (query, user) => {
   const match = {};
-  if (query.batchYear) {
+  if (query.batchYear && !isNaN(Number(query.batchYear))) {
     match.batchYear = Number(query.batchYear);
   }
-  if (query.branch) {
+  if (typeof query.branch === 'string' && query.branch.trim() !== '') {
     match.branch = query.branch.trim().toUpperCase();
   }
   if (user?.college) {

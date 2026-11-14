@@ -11,7 +11,9 @@ const getColleges = async (req, res, next) => {
     const query = {
       $or: [{ status: 'approved' }, { status: { $exists: false } }],
     };
-    const colleges = await College.find(query).sort({ name: 1 });
+    const colleges = await College.find(query)
+      .select('_id name code city state website accreditation status')
+      .sort({ name: 1 });
     res.status(200).json({
       success: true,
       count: colleges.length,
@@ -30,7 +32,8 @@ const getColleges = async (req, res, next) => {
  */
 const getCollegeById = async (req, res, next) => {
   try {
-    const college = await College.findById(req.params.id);
+    const college = await College.findById(req.params.id)
+      .select('_id name code city state website accreditation status');
     if (!college) {
       return res.status(404).json({
         success: false,
@@ -64,6 +67,14 @@ const createCollege = async (req, res, next) => {
       });
     }
 
+    // TPO/Admin who already has an assigned college cannot register additional colleges
+    if (req.user.role !== 'superadmin' && req.user.college) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You are already associated with a college and cannot register new institutions',
+      });
+    }
+
     const existingCode = await College.findOne({ code: code.trim().toUpperCase() });
     if (existingCode) {
       return res.status(400).json({
@@ -71,6 +82,14 @@ const createCollege = async (req, res, next) => {
         message: `A college with code '${code.trim().toUpperCase()}' already exists`,
       });
     }
+
+    // Non-superadmins always create pending colleges; superadmin can specify approved/pending
+    const initialStatus =
+      req.user.role === 'superadmin' && req.body.status
+        ? req.body.status
+        : req.user.role === 'superadmin'
+        ? 'approved'
+        : 'pending';
 
     const college = await College.create({
       name: name.trim(),
@@ -81,6 +100,7 @@ const createCollege = async (req, res, next) => {
       accreditation: accreditation ? accreditation.trim() : '',
       contactEmail: contactEmail ? contactEmail.trim().toLowerCase() : undefined,
       contactPhone: contactPhone ? contactPhone.trim() : '',
+      status: initialStatus,
     });
 
     res.status(201).json({

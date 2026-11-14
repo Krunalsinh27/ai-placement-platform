@@ -452,7 +452,7 @@ const getPublicCompareColleges = async (req, res, next) => {
             ? Number(((placedStudents / totalStudents) * 100).toFixed(1))
             : 0;
 
-        // Aggregate by branch with small-group privacy suppression
+        // Aggregate by branch with small-group suppression (k-anonymity, k=5)
         const branchMap = new Map();
         for (const student of students) {
           const br = student.branch || 'Unknown';

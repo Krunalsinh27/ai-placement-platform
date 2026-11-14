@@ -65,7 +65,7 @@ async function runSecurityProof() {
     userA = await User.create({
       name: 'Student A',
       email: 'studentA@prooftest.edu',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: college._id,
       isApproved: true,
@@ -88,7 +88,7 @@ async function runSecurityProof() {
     userB = await User.create({
       name: 'Student B',
       email: 'studentB@prooftest.edu',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: college._id,
       isApproved: true,
@@ -101,7 +101,7 @@ async function runSecurityProof() {
     recruiterUser = await User.create({
       name: 'Unapproved Recruiter',
       email: 'recruiter@proofunapproved.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: company._id,
       isApproved: false, // Pending superadmin approval
@@ -112,7 +112,7 @@ async function runSecurityProof() {
     const loginARes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'studentA@prooftest.edu', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'studentA@prooftest.edu', password: 'Krypton#2026!Valid' }),
     });
     const loginAData = await loginARes.json();
     const tokenA = loginAData.token;
@@ -121,7 +121,7 @@ async function runSecurityProof() {
     const loginBRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'studentB@prooftest.edu', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'studentB@prooftest.edu', password: 'Krypton#2026!Valid' }),
     });
     const loginBData = await loginBRes.json();
     const tokenB = loginBData.token;
@@ -165,7 +165,7 @@ async function runSecurityProof() {
     const recruiterLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'recruiter@proofunapproved.com', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'recruiter@proofunapproved.com', password: 'Krypton#2026!Valid' }),
     });
     const recruiterLoginBody = await recruiterLoginRes.json();
     console.log(`2A. Unapproved Recruiter Login -> HTTP Status: ${recruiterLoginRes.status}`);
@@ -180,7 +180,7 @@ async function runSecurityProof() {
     const cookieLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'studentA@prooftest.edu', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'studentA@prooftest.edu', password: 'Krypton#2026!Valid' }),
     });
     const setCookieHeader = cookieLoginRes.headers.get('set-cookie');
     const cookieBody = await cookieLoginRes.json();

@@ -53,12 +53,12 @@ router.get('/my-interview-slots', protect, authorize('student'), getStudentMyInt
 // Resume streaming route (must come before /:id)
 router.get('/:studentId/resume', protect, streamResume);
 
-// Admin student management routes
-router.route('/').get(protect, authorize('admin'), getStudents);
+// Admin / TPO student management routes
+router.route('/').get(protect, authorize('admin', 'tpo', 'superadmin'), getStudents);
 router
   .route('/:id')
-  .get(protect, authorize('admin'), getStudentById)
-  .delete(protect, authorize('admin'), deleteStudent);
+  .get(protect, authorize('admin', 'tpo', 'superadmin'), getStudentById)
+  .delete(protect, authorize('admin', 'tpo', 'superadmin'), deleteStudent);
 
 module.exports = router;
 

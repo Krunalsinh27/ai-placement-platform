@@ -15,7 +15,33 @@ function getTestDbUri() {
   return `${base.replace(/_test$/, '')}_test`;
 }
 
+/**
+ * Test database safety guard:
+ * Refuses to run destructive test cleanup operations unless the target database
+ * name strictly ends with "_test". Aborts the entire process/suite with a clear message otherwise.
+ *
+ * @param {string|Object} connectionOrDbName - Mongoose connection, database instance, or database name string
+ */
+function assertTestDatabase(connectionOrDbName) {
+  let dbName = '';
+  if (typeof connectionOrDbName === 'string') {
+    dbName = connectionOrDbName;
+  } else if (connectionOrDbName?.name) {
+    dbName = connectionOrDbName.name;
+  } else if (connectionOrDbName?.db?.databaseName) {
+    dbName = connectionOrDbName.db.databaseName;
+  }
+
+  if (!dbName || !dbName.endsWith('_test')) {
+    const errorMsg = `FATAL: Test cleanup refused to run on non-test database "${dbName || 'unknown'}". Database name must end with "_test" to prevent accidental data deletion in development or production. Aborting test suite.`;
+    console.error(`\n❌ ${errorMsg}\n`);
+    throw new Error(errorMsg);
+  }
+  return true;
+}
+
 module.exports = {
   getTestDbUri,
+  assertTestDatabase,
 };
 

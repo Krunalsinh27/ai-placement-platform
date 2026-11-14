@@ -183,7 +183,7 @@ async function runAnalystTests() {
       const u = await User.create({
         name: `Student A${i}`,
         email: `studentA${i}@analyst-test.com`,
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: collegeA._id,
         isApproved: true,
@@ -209,7 +209,7 @@ async function runAnalystTests() {
       const u = await User.create({
         name: `Student B${i}`,
         email: `studentB${i}@analyst-test.com`,
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: collegeB._id,
         isApproved: true,
@@ -233,7 +233,7 @@ async function runAnalystTests() {
       const u = await User.create({
         name: `Student C${i}`,
         email: `studentC${i}@analyst-test.com`,
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: collegeC._id,
         isApproved: true,
@@ -360,7 +360,7 @@ async function runAnalystTests() {
     const tpoUser = await User.create({
       name: 'TPO Analyst Test',
       email: 'tpo@analyst-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeA._id,
       isApproved: true,
@@ -371,7 +371,7 @@ async function runAnalystTests() {
     const recruiterUser = await User.create({
       name: 'Recruiter Analyst Test',
       email: 'recruiter@analyst-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: companyGoogle._id,
       isApproved: true,
@@ -385,7 +385,7 @@ async function runAnalystTests() {
     const superadminUser = await User.create({
       name: 'SuperAdmin Analyst Test',
       email: 'superadmin@analyst-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'superadmin',
       isApproved: true,
       isEmailVerified: true,
@@ -407,7 +407,7 @@ async function runAnalystTests() {
         organisationType: 'Researcher',
         purpose: 'Academic research on higher education placement trends',
         designation: 'Senior Placement Analyst',
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
       }),
     });
     const regData = await regRes.json();
@@ -427,7 +427,7 @@ async function runAnalystTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'jane.analyst@analyst-test.com',
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
       }),
     });
     const unverifiedLoginData = await unverifiedLoginRes.json();
@@ -447,7 +447,7 @@ async function runAnalystTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'jane.analyst@analyst-test.com',
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
       }),
     });
     const unapprovedLoginData = await unapprovedLoginRes.json();
@@ -467,7 +467,7 @@ async function runAnalystTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'jane.analyst@analyst-test.com',
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
       }),
     });
     const approvedLoginData = await approvedLoginRes.json();

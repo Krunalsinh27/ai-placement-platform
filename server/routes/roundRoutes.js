@@ -32,7 +32,7 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 
 router.use(protect);
 
-router.get('/:id', getRoundDetails);
+router.get('/:id', authorize('recruiter', 'tpo', 'admin', 'superadmin'), getRoundDetails);
 router.get('/:id/attendance/pdf', authorize('recruiter', 'tpo', 'admin', 'superadmin'), exportRoundAttendancePdf);
 router.put('/:id', authorize('recruiter', 'tpo', 'admin', 'superadmin'), updateRoundSettings);
 router.put('/:id/settings', authorize('recruiter', 'tpo', 'admin', 'superadmin'), updateRoundSettings);
@@ -48,7 +48,7 @@ router.post('/:id/publish-results', authorize('recruiter', 'tpo', 'admin', 'supe
 router.post('/:id/panels', authorize('recruiter', 'tpo', 'admin', 'superadmin'), createRoundPanel);
 router.get('/:id/panels', authorize('recruiter', 'tpo', 'admin', 'superadmin'), getRoundPanels);
 router.post('/:id/slots/auto-schedule', authorize('recruiter', 'tpo', 'admin', 'superadmin'), autoScheduleInterviewSlots);
-router.get('/:id/slots', getRoundSlots);
+router.get('/:id/slots', authorize('student', 'recruiter', 'tpo', 'admin', 'superadmin'), getRoundSlots);
 
 // Aptitude Platform Test & Question Bank routes
 router.get('/:id/questions', authorize('recruiter', 'tpo', 'admin', 'superadmin'), getRoundQuestions);

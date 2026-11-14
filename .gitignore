@@ -47,3 +47,4 @@ venv/
 # Agent working notes (keep local only)
 PROGRESS.md
 PROJECT_CONTEXT.md
+.agents/

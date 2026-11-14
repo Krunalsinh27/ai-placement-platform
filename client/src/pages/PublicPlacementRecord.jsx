@@ -689,7 +689,7 @@ const PublicPlacementRecord = () => {
             </span>
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-400">
-                Data Privacy: Small cohorts (&lt;5) are anonymized
+                Data Privacy: Small-group suppression (k-anonymity, k=5)
               </span>
             </div>
           </div>

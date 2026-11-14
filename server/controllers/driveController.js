@@ -126,9 +126,11 @@ const createDrive = async (req, res, next) => {
 
     const populatedDrive = await Drive.findById(drive._id).populate('company');
 
-    // Notify eligible students if drive is open
+    // Notify eligible students asynchronously (tracked in pending set, non-blocking HTTP response)
     if (populatedDrive.status === 'open') {
-      await notifyDrivePublished(populatedDrive);
+      notifyDrivePublished(populatedDrive).catch((err) => {
+        console.error('Background notifyDrivePublished error:', err.message);
+      });
     }
 
     res.status(201).json({
@@ -158,14 +160,14 @@ const getDrives = async (req, res, next) => {
     if (req.user.role === 'tpo' || req.user.role === 'admin') {
       const collegeId = req.user.college?._id || req.user.college;
       if (collegeId) {
-        query.college = collegeId;
+        query.$or = [{ college: collegeId }, { colleges: collegeId }];
       }
     } else if (req.user.role === 'student') {
       // Students only see open drives from their own college
       query.status = 'open';
       const studentCollegeId = req.user.college?._id || req.user.college;
       if (studentCollegeId) {
-        query.college = studentCollegeId;
+        query.$or = [{ college: studentCollegeId }, { colleges: studentCollegeId }];
       }
     } else if (req.user.role === 'recruiter') {
       // Recruiters only see drives belonging to their own company
@@ -173,9 +175,16 @@ const getDrives = async (req, res, next) => {
       if (companyId) {
         query.company = companyId;
       }
-    } else if (status) {
+    } else if (req.user.role === 'superadmin') {
       // Superadmins can filter by specific status
-      query.status = status;
+      if (status) {
+        query.status = status;
+      }
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view drives',
+      });
     }
 
     // Filter by company
@@ -337,6 +346,37 @@ const getDriveById = async (req, res, next) => {
       });
     }
 
+    // Role-based tenant scoping
+    if (req.user.role !== 'superadmin') {
+      const driveCollegeIds = drive.getAllCollegeIds ? drive.getAllCollegeIds() : Drive.getDriveCollegeIds(drive);
+      if (req.user.role === 'tpo' || req.user.role === 'admin') {
+        const userCollegeId = (req.user.college?._id || req.user.college)?.toString();
+        if (!userCollegeId || !driveCollegeIds.includes(userCollegeId)) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view drives from another college',
+          });
+        }
+      } else if (req.user.role === 'recruiter') {
+        const userCompanyId = (req.user.company?._id || req.user.company)?.toString();
+        const driveCompanyId = (drive.company?._id || drive.company)?.toString();
+        if (!userCompanyId || !driveCompanyId || userCompanyId !== driveCompanyId) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view drives from another company',
+          });
+        }
+      } else if (req.user.role === 'student') {
+        const studentCollegeId = (req.student?.college?._id || req.student?.college || req.user.college?._id || req.user.college)?.toString();
+        if (!studentCollegeId || !driveCollegeIds.includes(studentCollegeId)) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view drives from another college',
+          });
+        }
+      }
+    }
+
     res.status(200).json({
       success: true,
       drive,
@@ -360,6 +400,18 @@ const updateDrive = async (req, res, next) => {
         success: false,
         message: 'Drive not found',
       });
+    }
+
+    // Role-based scoping: non-superadmin can only update their own college's drive
+    if (req.user.role !== 'superadmin') {
+      const driveCollegeIds = drive.getAllCollegeIds ? drive.getAllCollegeIds() : Drive.getDriveCollegeIds(drive);
+      const userCollegeId = (req.user.college?._id || req.user.college)?.toString();
+      if (!userCollegeId || !driveCollegeIds.includes(userCollegeId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to manage drives for another college',
+        });
+      }
     }
 
     const {
@@ -548,6 +600,18 @@ const deleteDrive = async (req, res, next) => {
         success: false,
         message: 'Drive not found',
       });
+    }
+
+    // Role-based scoping: non-superadmin can only delete their own college's drive
+    if (req.user.role !== 'superadmin') {
+      const driveCollegeIds = drive.getAllCollegeIds ? drive.getAllCollegeIds() : Drive.getDriveCollegeIds(drive);
+      const userCollegeId = (req.user.college?._id || req.user.college)?.toString();
+      if (!userCollegeId || !driveCollegeIds.includes(userCollegeId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to delete drives for another college',
+        });
+      }
     }
 
     // Delete associated applications

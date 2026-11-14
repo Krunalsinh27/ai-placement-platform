@@ -6,7 +6,8 @@ const path = require('path');
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
-const { getTestDbUri } = require('./testHelper');
+const { getTestDbUri, assertTestDatabase } = require('./testHelper');
+const { waitForPendingNotifications } = require('../utils/notificationService');
 
 const {
   User,
@@ -64,7 +65,7 @@ async function runNotificationTests() {
       tpoUser = await User.create({
         name: 'TPO Administrator',
         email: 'admin@college.com',
-        password: 'Admin@123',
+        password: 'Falcon#2026!Secured',
         role: 'tpo',
         college: defaultCollege._id,
         isApproved: true,
@@ -77,7 +78,7 @@ async function runNotificationTests() {
       recUser = await User.create({
         name: 'Google Recruiter',
         email: 'recruiter@google.com',
-        password: 'Recruiter@123',
+        password: 'Vanguard#2026!Access',
         role: 'recruiter',
         company: googleCompany._id,
         isApproved: true,
@@ -90,7 +91,7 @@ async function runNotificationTests() {
       studentUser = await User.create({
         name: 'Aarav Sharma',
         email: 'aarav.sharma1@college.com',
-        password: 'Student@123',
+        password: 'Quantum#2026!Target',
         role: 'student',
         college: defaultCollege._id,
         isApproved: true,
@@ -112,6 +113,17 @@ async function runNotificationTests() {
       });
     }
 
+    // Safety check: ensure we are operating strictly against a test database
+    assertTestDatabase(mongoose.connection.name);
+
+    // Clean test data at the start for pristine test slate
+    await Notification.deleteMany({
+      user: { $in: [tpoUser._id, recUser._id, studentUser._id] },
+    });
+    await Drive.deleteMany({ role: 'AI Research Associate' });
+    await Application.deleteMany({ student: studentProfile._id });
+    await DriveRequest.deleteMany({ company: googleCompany._id });
+
     console.log('\n--- 1. Testing Notification Model & Direct API Operations ---');
     // Clean up test notifications for this user
     await Notification.deleteMany({ user: tpoUser._id });
@@ -120,7 +132,7 @@ async function runNotificationTests() {
     const tpoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@college.com', password: 'Admin@123' }),
+      body: JSON.stringify({ email: 'admin@college.com', password: 'Falcon#2026!Secured' }),
     });
     const tpoLoginData = await tpoLoginRes.json();
     const tpoToken = tpoLoginData.token || tpoLoginData.data?.token;
@@ -197,7 +209,7 @@ async function runNotificationTests() {
     const recLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'recruiter@google.com', password: 'Recruiter@123' }),
+      body: JSON.stringify({ email: 'recruiter@google.com', password: 'Vanguard#2026!Access' }),
     });
     const recLoginData = await recLoginRes.json();
     const recToken = recLoginData.token || recLoginData.data?.token;
@@ -311,11 +323,20 @@ async function runNotificationTests() {
     const createdDrive = newDriveData.drive;
     if (!createdDrive) throw new Error('Failed to create published drive');
 
-    // Verify student received drive_published notification
-    const studentDriveNotif = await Notification.findOne({
-      user: studentUser._id,
-      type: 'drive_published',
-    });
+    // Wait for pending in-flight notifications to complete (with polling fallback)
+    await waitForPendingNotifications(5000);
+
+    // Verify student received drive_published notification (poll up to 5s, every 100ms fallback)
+    let studentDriveNotif = null;
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < 5000) {
+      studentDriveNotif = await Notification.findOne({
+        user: studentUser._id,
+        type: 'drive_published',
+      });
+      if (studentDriveNotif) break;
+      await new Promise((res) => setTimeout(res, 100));
+    }
     console.log('Student received drive_published notification:', !!studentDriveNotif);
     console.log('Student notification message:', studentDriveNotif?.message);
     if (!studentDriveNotif) throw new Error('Eligible student was not notified of published drive!');
@@ -325,7 +346,7 @@ async function runNotificationTests() {
     const studentLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'aarav.sharma1@college.com', password: 'Student@123' }),
+      body: JSON.stringify({ email: 'aarav.sharma1@college.com', password: 'Quantum#2026!Target' }),
     });
     const studentLoginData = await studentLoginRes.json();
     const studentToken = studentLoginData.token || studentLoginData.data?.token;

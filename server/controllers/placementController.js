@@ -24,17 +24,33 @@ const getPlacements = async (req, res, next) => {
         });
       }
       query.student = student._id;
-    } else {
-      // 2. Admin filters: year & branch reside in Student model + college scoping for TPO
+    } else if (req.user.role === 'recruiter') {
+      // 2. If recruiter, restrict strictly to their own company's placements
+      const companyId = (req.user.company?._id || req.user.company)?.toString();
+      if (!companyId) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          total: 0,
+          page: 1,
+          limit: 20,
+          totalPages: 1,
+          count: 0,
+          placements: [],
+        });
+      }
+      query.company = companyId;
+    } else if (req.user.role === 'admin' || req.user.role === 'tpo' || req.user.role === 'superadmin') {
+      // 3. Admin / TPO filters: year & branch reside in Student model + college scoping for TPO
       const studentFilters = {};
       if (req.user?.college) {
         studentFilters.college = req.user.college._id || req.user.college;
       }
       const targetYear = batchYear || year;
-      if (targetYear) {
+      if (targetYear && !isNaN(Number(targetYear))) {
         studentFilters.batchYear = Number(targetYear);
       }
-      if (branch) {
+      if (typeof branch === 'string' && branch.trim() !== '') {
         studentFilters.branch = branch.trim().toUpperCase();
       }
 
@@ -44,7 +60,7 @@ const getPlacements = async (req, res, next) => {
       }
 
       // Filter by company (ID or name search)
-      if (company) {
+      if (typeof company === 'string' && company.trim() !== '') {
         if (mongoose.Types.ObjectId.isValid(company)) {
           query.company = company;
         } else {
@@ -54,6 +70,11 @@ const getPlacements = async (req, res, next) => {
           query.company = { $in: matchingCompanies.map((c) => c._id) };
         }
       }
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view placements',
+      });
     }
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);

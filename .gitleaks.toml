@@ -1,0 +1,14 @@
+# Gitleaks configuration file
+title = "Placement Platform Gitleaks Config"
+
+[allowlist]
+description = "Allowlist test suites and mock test fixture tokens"
+paths = [
+  '''(?i)server/tests/.*''',
+  '''(?i)client/tests/.*''',
+]
+regexes = [
+  '''mock_dummy_jwt_secret_for_local_tests_only_32_chars''',
+  '''testsecret_at_least_32_characters_long_for_test''',
+]
+

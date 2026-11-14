@@ -115,7 +115,7 @@ async function runAssistantTests() {
       email: `tpo.a.${Date.now()}@collegea.edu`,
       role: 'tpo',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -128,7 +128,7 @@ async function runAssistantTests() {
       email: `tpo.b.${Date.now()}@collegeb.edu`,
       role: 'tpo',
       college: collegeB._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -140,7 +140,7 @@ async function runAssistantTests() {
       name: 'Platform Superadmin',
       email: `super.${Date.now()}@portal.com`,
       role: 'superadmin',
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -175,7 +175,7 @@ async function runAssistantTests() {
       email: `recruiter1.${Date.now()}@alphacorp.com`,
       role: 'recruiter',
       company: company1._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -188,7 +188,7 @@ async function runAssistantTests() {
       email: `recruiter2.${Date.now()}@betatech.com`,
       role: 'recruiter',
       company: company2._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -200,7 +200,7 @@ async function runAssistantTests() {
       name: 'Recruiter Unassigned',
       email: `recruiter.nocomp.${Date.now()}@company.com`,
       role: 'recruiter',
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -212,7 +212,7 @@ async function runAssistantTests() {
       name: 'Analyst Unauthorized',
       email: `analyst.${Date.now()}@analytics.com`,
       role: 'analyst',
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -224,7 +224,7 @@ async function runAssistantTests() {
       name: 'Aspirant Unauthorized',
       email: `aspirant.${Date.now()}@aspirant.com`,
       role: 'aspirant',
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -238,7 +238,7 @@ async function runAssistantTests() {
       email: `aarav.${Date.now()}@collegea.edu`,
       role: 'student',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -277,7 +277,7 @@ async function runAssistantTests() {
       email: `bhavna.${Date.now()}@collegea.edu`,
       role: 'student',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -308,7 +308,7 @@ async function runAssistantTests() {
       email: `chirag.${Date.now()}@collegea.edu`,
       role: 'student',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -338,7 +338,7 @@ async function runAssistantTests() {
       email: `deepa.${Date.now()}@collegea.edu`,
       role: 'student',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -365,7 +365,7 @@ async function runAssistantTests() {
       email: `zack.${Date.now()}@collegeb.edu`,
       role: 'student',
       college: collegeB._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -1237,7 +1237,7 @@ async function runAssistantTests() {
       email: `quota.${Date.now()}@collegea.edu`,
       role: 'student',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
       isApproved: true,
     });
@@ -1319,7 +1319,7 @@ async function runAssistantTests() {
     const freshUserRes = await User.create({
       name: 'Rules Matcher Quota Tester',
       email: `rules_quota_${Date.now()}@college-a.edu`,
-      password: 'password123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeA._id,
       isVerified: true,

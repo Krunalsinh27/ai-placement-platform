@@ -137,7 +137,7 @@ async function runAiFeatureTests() {
     const studentUser1 = await User.create({
       name: 'Alice Candidate',
       email: 'alice.student.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeA._id,
       isApproved: true,
@@ -148,7 +148,7 @@ async function runAiFeatureTests() {
     const studentUser2 = await User.create({
       name: 'Bob Candidate',
       email: 'bob.student.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeA._id,
       isApproved: true,
@@ -159,7 +159,7 @@ async function runAiFeatureTests() {
     const studentUser3 = await User.create({
       name: 'Charlie Candidate',
       email: 'charlie.student.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeB._id,
       isApproved: true,
@@ -170,7 +170,7 @@ async function runAiFeatureTests() {
     const recruiterOwner = await User.create({
       name: 'Rachel Recruiter',
       email: 'rachel.recruiter.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: companyA._id,
       isApproved: true,
@@ -181,7 +181,7 @@ async function runAiFeatureTests() {
     const recruiterOther = await User.create({
       name: 'Oscar Recruiter',
       email: 'oscar.other.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: companyB._id,
       isApproved: true,
@@ -192,7 +192,7 @@ async function runAiFeatureTests() {
     const tpoA = await User.create({
       name: 'Tom TPO Alpha',
       email: 'tom.tpo.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeA._id,
       isApproved: true,
@@ -203,7 +203,7 @@ async function runAiFeatureTests() {
     const tpoB = await User.create({
       name: 'Tina TPO Beta',
       email: 'tina.tpo.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeB._id,
       isApproved: true,
@@ -214,7 +214,7 @@ async function runAiFeatureTests() {
     const superadmin = await User.create({
       name: 'Sam Superadmin',
       email: 'sam.superadmin.ai@portal.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'superadmin',
       isApproved: true,
       isEmailVerified: true,
@@ -1198,7 +1198,7 @@ async function runAiFeatureTests() {
     const studentUser20 = await User.create({
       name: 'Original Filename Student',
       email: `orig-file-${Date.now()}@portal.com`,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       isApproved: true,
       college: collegeA._id,
@@ -1262,7 +1262,7 @@ async function runAiFeatureTests() {
       email: `cache.student.${Date.now()}@example.com`,
       role: 'student',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
     });
     createdUserIds.push(studentUser21._id);
@@ -1350,7 +1350,7 @@ async function runAiFeatureTests() {
       email: `merge.student.${Date.now()}@example.com`,
       role: 'student',
       college: collegeA._id,
-      password: 'Test@12345',
+      password: 'Krypton#2026!Valid',
       isVerified: true,
     });
     createdUserIds.push(studentUser22._id);

@@ -266,7 +266,7 @@ const getDriveRequests = async (req, res, next) => {
       filter.college = collegeId;
     }
 
-    // Optional query filters
+    // Optional query filters (role-scoped boundaries cannot be overridden)
     if (status) {
       filter.status = status;
     }
@@ -274,10 +274,14 @@ const getDriveRequests = async (req, res, next) => {
       filter.mode = mode;
     }
     if (college && mongoose.Types.ObjectId.isValid(college)) {
-      filter.college = college;
+      if (req.user.role === 'superadmin' || req.user.role === 'recruiter') {
+        filter.college = college;
+      }
     }
     if (company && mongoose.Types.ObjectId.isValid(company)) {
-      filter.company = company;
+      if (req.user.role === 'superadmin' || req.user.role === 'tpo' || req.user.role === 'admin') {
+        filter.company = company;
+      }
     }
     if (jobRequirement && mongoose.Types.ObjectId.isValid(jobRequirement)) {
       filter.jobRequirement = jobRequirement;
@@ -1103,8 +1107,10 @@ const finalizeAndPublishDrive = async (req, res, next) => {
       statusNote: `Drive officially finalized and scheduled for ${driveDateObj.toLocaleDateString()}`,
     });
 
-    // Notify eligible students of the newly published drive
-    await notifyDrivePublished(driveDoc);
+    // Notify eligible students of the newly published drive asynchronously
+    notifyDrivePublished(driveDoc).catch((err) => {
+      console.error('Background notifyDrivePublished error:', err.message);
+    });
 
     res.status(200).json({
       success: true,

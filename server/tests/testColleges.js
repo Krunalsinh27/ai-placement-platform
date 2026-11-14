@@ -59,7 +59,7 @@ async function runTests() {
         contactPhone: '9876543210',
         tpoName: 'Lead TPO Officer',
         tpoEmail: 'lead_tpo@testcollege.edu',
-        tpoPassword: 'Password@123',
+        tpoPassword: 'Krypton#2026!Valid',
         tpoPhone: '9988776655'
       })
     });
@@ -86,7 +86,7 @@ async function runTests() {
     const leadLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'lead_tpo@testcollege.edu', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'lead_tpo@testcollege.edu', password: 'Krypton#2026!Valid' }),
     });
     const leadLoginData = await leadLoginRes.json();
     const leadToken = leadLoginData.token;
@@ -104,7 +104,7 @@ async function runTests() {
         state: 'Maharashtra',
         tpoName: 'Another TPO',
         tpoEmail: 'different_email@testcollege.edu',
-        tpoPassword: 'Password@123'
+        tpoPassword: 'Krypton#2026!Valid'
       })
     });
     console.log('Duplicate Code Status (expected 400):', dupCodeRes.status);
@@ -121,7 +121,7 @@ async function runTests() {
         state: 'Maharashtra',
         tpoName: 'Another TPO',
         tpoEmail: 'diff2@testcollege.edu',
-        tpoPassword: 'Password@123'
+        tpoPassword: 'Krypton#2026!Valid'
       })
     });
     console.log('Duplicate Name Status (expected 400):', dupNameRes.status);
@@ -138,7 +138,7 @@ async function runTests() {
         state: 'Delhi',
         tpoName: 'Another TPO',
         tpoEmail: 'lead_tpo@testcollege.edu',
-        tpoPassword: 'Password@123'
+        tpoPassword: 'Krypton#2026!Valid'
       })
     });
     console.log('Duplicate Email Status (expected 400 or 409):', dupEmailRes.status);
@@ -151,7 +151,7 @@ async function runTests() {
       body: JSON.stringify({
         name: 'Second TPO Colleague',
         email: 'second_tpo@testcollege.edu',
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         college: testCollegeId,
         phone: '9123456780'
       })
@@ -172,7 +172,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'second_tpo@testcollege.edu',
-        password: 'Password@123'
+        password: 'Krypton#2026!Valid'
       })
     });
     console.log('Unapproved TPO login status (expected 403):', loginRes.status);
@@ -195,7 +195,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'admin@college.com',
-        password: 'Admin@123'
+        password: 'Falcon#2026!Secured'
       })
     });
     const nitdData = await nitdLoginRes.json();
@@ -230,7 +230,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'second_tpo@testcollege.edu',
-        password: 'Password@123'
+        password: 'Krypton#2026!Valid'
       })
     });
     console.log('Approved TPO login status (expected 200):', secondLoginRes.status);
@@ -244,7 +244,7 @@ async function runTests() {
       body: JSON.stringify({
         name: 'Third TPO Candidate',
         email: 'third_tpo@testcollege.edu',
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         college: testCollegeId,
         phone: '9555112233'
       })
@@ -289,7 +289,7 @@ async function runTests() {
     const legacyUser = await User.create({
       name: 'Legacy TPO Officer',
       email: 'legacy_tpo@testcollege.edu',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: testCollegeId,
       isEmailVerified: true,
@@ -310,7 +310,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'legacy_tpo@testcollege.edu',
-        password: 'Password@123'
+        password: 'Krypton#2026!Valid'
       })
     });
     console.log('Legacy TPO login status (expected 200):', legacyLoginRes.status);
@@ -345,7 +345,7 @@ async function runTests() {
         state: 'West Bengal',
         tpoName: 'Isolated TPO Officer',
         tpoEmail: 'isolated_tpo@isocollege.edu',
-        tpoPassword: 'Password@123'
+        tpoPassword: 'Krypton#2026!Valid'
       })
     });
     const isoRegData = await isoRegRes.json();
@@ -358,7 +358,7 @@ async function runTests() {
     const isoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'isolated_tpo@isocollege.edu', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'isolated_tpo@isocollege.edu', password: 'Krypton#2026!Valid' }),
     });
     const isoLoginData = await isoLoginRes.json();
     const isoToken = isoLoginData.token;

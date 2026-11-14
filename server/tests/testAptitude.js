@@ -93,7 +93,7 @@ async function runAptitudeTests() {
       tpoA = await User.create({
         name: 'TPO Delhi',
         email: 'admin@college.com',
-        password: 'Admin@123',
+        password: 'Falcon#2026!Secured',
         role: 'tpo',
         college: collegeA._id,
         isApproved: true,
@@ -107,7 +107,7 @@ async function runAptitudeTests() {
       recA = await User.create({
         name: 'Google Recruiter',
         email: 'recruiter@google.com',
-        password: 'Recruiter@123',
+        password: 'Vanguard#2026!Access',
         role: 'recruiter',
         company: companyA._id,
         isApproved: true,
@@ -121,7 +121,7 @@ async function runAptitudeTests() {
       recB = await User.create({
         name: 'Microsoft Recruiter',
         email: 'recruiter@microsoft.com',
-        password: 'Recruiter@123',
+        password: 'Vanguard#2026!Access',
         role: 'recruiter',
         company: companyB._id,
         isApproved: true,
@@ -136,7 +136,7 @@ async function runAptitudeTests() {
       const u = await User.create({
         name: `Aptitude Student ${idx}`,
         email: `aptitude.student${idx}@aptcollege.edu`,
-        password: 'Student@123',
+        password: 'Quantum#2026!Target',
         role: 'student',
         college: collegeA._id,
         isApproved: true,

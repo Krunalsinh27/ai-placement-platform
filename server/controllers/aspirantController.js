@@ -3,7 +3,7 @@ const { Aspirant, College, Student, Offer } = require('../models');
 const { INDIAN_STATES_AND_UTS } = require('../utils/constants');
 
 /**
- * Small-group privacy suppression helper:
+ * Small-group suppression (k-anonymity, k=5) helper:
  * Groups with < 5 students return 'lt5' with salary stats suppressed
  */
 const suppressCount = (count) => {
