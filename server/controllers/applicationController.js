@@ -72,6 +72,16 @@ const applyToDrive = async (req, res, next) => {
       });
     }
 
+    // Check college eligibility: Drive must include student's college
+    const driveCollegeIds = drive.getAllCollegeIds ? drive.getAllCollegeIds() : Drive.getDriveCollegeIds(drive);
+    const studentCollegeId = (student.college?._id || student.college)?.toString();
+    if (!studentCollegeId || !driveCollegeIds.includes(studentCollegeId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Ineligible: This placement drive is not open to students of your college.',
+      });
+    }
+
     // 5. Check eligibility criteria: CGPA
     if (student.cgpa < drive.minCgpa) {
       return res.status(400).json({
@@ -214,6 +224,28 @@ const getDriveApplications = async (req, res, next) => {
       });
     }
 
+    if (req.user.role !== 'superadmin') {
+      if (req.user.role === 'recruiter') {
+        const userCompanyId = (req.user.company?._id || req.user.company)?.toString();
+        const driveCompanyId = (drive.company?._id || drive.company)?.toString();
+        if (!userCompanyId || !driveCompanyId || userCompanyId !== driveCompanyId) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view applications for another company drive',
+          });
+        }
+      } else {
+        const driveCollegeIds = drive.getAllCollegeIds ? drive.getAllCollegeIds() : Drive.getDriveCollegeIds(drive);
+        const userCollegeId = (req.user.college?._id || req.user.college)?.toString();
+        if (!userCollegeId || !driveCollegeIds.includes(userCollegeId)) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view applications for another college drive',
+          });
+        }
+      }
+    }
+
     const appQuery = { drive: driveId };
     if (req.user?.college) {
       const collegeId = req.user.college._id || req.user.college;
@@ -278,6 +310,17 @@ const updateApplicationStatus = async (req, res, next) => {
         success: false,
         message: 'Application not found',
       });
+    }
+
+    if (req.user.role !== 'superadmin') {
+      const driveCollegeIds = application.drive.getAllCollegeIds ? application.drive.getAllCollegeIds() : Drive.getDriveCollegeIds(application.drive);
+      const userCollegeId = (req.user.college?._id || req.user.college)?.toString();
+      if (!userCollegeId || !driveCollegeIds.includes(userCollegeId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to update application status for another college',
+        });
+      }
     }
 
     const oldStatus = application.status;

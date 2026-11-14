@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+const crypto = require('crypto');
 const { User } = require('../models');
 
 dotenv.config();
@@ -14,6 +15,12 @@ const KNOWN_DEFAULT_PASSWORDS = [
   'Password@123',
   'Superadmin@123',
   'Superadmin@12345',
+  'Apex#2026!Shielded',
+  'Falcon#2026!Secured',
+  'Vanguard#2026!Access',
+  'Horizon#2026!Metric',
+  'Gateway#2026!Pathway',
+  'Quantum#2026!Target',
   'admin123',
   'password',
   '12345678',
@@ -21,27 +28,49 @@ const KNOWN_DEFAULT_PASSWORDS = [
   '123456789012',
 ];
 
+function generateSecureRandomPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
+  const bytes = crypto.randomBytes(16);
+  let result = '';
+  for (let i = 0; i < 16; i++) {
+    result += chars[bytes[i] % chars.length];
+  }
+  return result + 'A1!';
+}
+
 const seedSuperadmin = async () => {
-  const email = (process.env.SUPERADMIN_EMAIL || '').trim().toLowerCase();
-  const password = process.env.SUPERADMIN_PASSWORD;
+  const isProd = process.env.NODE_ENV === 'production';
+  let email = (process.env.SUPERADMIN_EMAIL || '').trim().toLowerCase();
+  let password = process.env.SUPERADMIN_PASSWORD;
   const name = process.env.SUPERADMIN_NAME || 'Platform Superadmin';
+  let isGenerated = false;
 
-  if (!email || !password) {
-    console.error('ERROR: Both SUPERADMIN_EMAIL and SUPERADMIN_PASSWORD environment variables are required.');
-    process.exit(1);
+  if (isProd) {
+    if (!email) {
+      console.error('ERROR: SUPERADMIN_EMAIL environment variable is required in production.');
+      process.exit(1);
+    }
+    if (!password) {
+      password = generateSecureRandomPassword();
+      isGenerated = true;
+    }
+  } else {
+    email = email || 'superadmin@portal.com';
+    password = password || 'Apex#2026!Shielded';
   }
 
-  const isKnownDefault = KNOWN_DEFAULT_PASSWORDS.some(
-    (known) => known.toLowerCase() === password.trim().toLowerCase()
-  );
-  if (isKnownDefault) {
-    console.error('ERROR: SUPERADMIN_PASSWORD cannot be a known default repository password.');
-    process.exit(1);
-  }
-
-  if (password.length < 12) {
-    console.error('ERROR: SUPERADMIN_PASSWORD must be at least 12 characters long for production security.');
-    process.exit(1);
+  if (password) {
+    const isKnownDefault = KNOWN_DEFAULT_PASSWORDS.some(
+      (known) => known.toLowerCase() === password.trim().toLowerCase()
+    );
+    if (isKnownDefault && (isProd || process.env.SUPERADMIN_PASSWORD)) {
+      console.error('ERROR: SUPERADMIN_PASSWORD cannot be a known default repository password.');
+      process.exit(1);
+    }
+    if (password.length < 12 && (isProd || process.env.SUPERADMIN_PASSWORD)) {
+      console.error('ERROR: SUPERADMIN_PASSWORD must be at least 12 characters long for production security.');
+      process.exit(1);
+    }
   }
 
   const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/placement_management';
@@ -70,6 +99,14 @@ const seedSuperadmin = async () => {
         isEmailVerified: true,
       });
       console.log(`Successfully created initial superadmin: "${email}" (ID: ${user._id}).`);
+    }
+
+    if (isGenerated) {
+      console.log('\n======================================================');
+      console.log(' [SUPERADMIN PROVISIONED] ONE-TIME INITIAL PASSWORD:');
+      console.log(`   ${password}`);
+      console.log(' Please save this password immediately; it cannot be recovered.');
+      console.log('======================================================\n');
     }
 
     await mongoose.connection.close();

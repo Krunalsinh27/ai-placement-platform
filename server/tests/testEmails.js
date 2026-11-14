@@ -298,7 +298,7 @@ async function runEmailTests() {
     fixtureTpoUser = await User.create({
       name: 'Hermetic TPO',
       email: 'test.email.tpo@testcollege.edu',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: fixtureCollege._id,
       isApproved: true,
@@ -308,7 +308,7 @@ async function runEmailTests() {
     fixtureRecUser = await User.create({
       name: 'Hermetic Recruiter',
       email: 'test.email.recruiter@emailtest.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: fixtureCompany._id,
       isApproved: true,
@@ -318,7 +318,7 @@ async function runEmailTests() {
     fixtureStudentUser = await User.create({
       name: 'Hermetic Student',
       email: 'test.email.student@testcollege.edu',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: fixtureCollege._id,
       isApproved: true,
@@ -392,7 +392,7 @@ async function runEmailTests() {
     const tpoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'test.email.tpo@testcollege.edu', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'test.email.tpo@testcollege.edu', password: 'Krypton#2026!Valid' }),
     });
     const tpoData = await tpoLoginRes.json();
     const tpoToken = tpoData.token;
@@ -401,7 +401,7 @@ async function runEmailTests() {
     const recLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'test.email.recruiter@emailtest.com', password: 'Password@123' }),
+      body: JSON.stringify({ email: 'test.email.recruiter@emailtest.com', password: 'Krypton#2026!Valid' }),
     });
     const recData = await recLoginRes.json();
     const recToken = recData.token;

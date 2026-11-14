@@ -14,9 +14,9 @@ router.post('/', protect, authorize('student'), applyToDrive);
 router.get('/my', protect, authorize('student'), getMyApplications);
 router.get('/:id/timeline', protect, getApplicationTimeline);
 
-// Admin drive applicants & status updates
-router.get('/drive/:driveId', protect, authorize('admin'), getDriveApplications);
-router.put('/:id/status', protect, authorize('admin'), updateApplicationStatus);
+// Admin & Recruiter drive applicants & status updates
+router.get('/drive/:driveId', protect, authorize('admin', 'tpo', 'superadmin', 'recruiter'), getDriveApplications);
+router.put('/:id/status', protect, authorize('admin', 'tpo', 'superadmin'), updateApplicationStatus);
 
 module.exports = router;
 

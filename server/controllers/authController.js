@@ -7,40 +7,82 @@ const emailService = require('../utils/emailService');
 const generateToken = generateTokenHelper.generateToken || generateTokenHelper;
 const generateRefreshToken = generateTokenHelper.generateRefreshToken;
 const hashToken = generateTokenHelper.hashToken;
+const { validatePasswordPolicy } = require('../utils/passwordPolicy');
+
+/**
+ * Dynamic cookie options supporting two deployment architectures:
+ * Mode 1 (Cross-Site): API on Render (api.onrender.com) + Client on Vercel (app.vercel.app)
+ *   -> SameSite='none', Secure=true, Domain unset (host-only)
+ * Mode 2 (Shared-Site): API on api.example.com + Client on app.example.com
+ *   -> COOKIE_DOMAIN='.example.com', SameSite='lax', Secure=true
+ */
+const getRefreshCookieOptions = (forClear = false) => {
+  const isProd = process.env.NODE_ENV === 'production';
+  const cookieDomain = process.env.COOKIE_DOMAIN ? process.env.COOKIE_DOMAIN.trim() : undefined;
+
+  let sameSite = (process.env.COOKIE_SAMESITE || '').toLowerCase().trim();
+  if (!['lax', 'strict', 'none'].includes(sameSite)) {
+    if (cookieDomain) {
+      sameSite = 'lax';
+    } else if (isProd) {
+      sameSite = 'none';
+    } else {
+      sameSite = 'strict';
+    }
+  }
+
+  let secure;
+  if (process.env.COOKIE_SECURE !== undefined) {
+    secure = process.env.COOKIE_SECURE === 'true';
+  } else {
+    secure = isProd || sameSite === 'none';
+  }
+
+  const options = {
+    httpOnly: true,
+    secure,
+    sameSite,
+    path: '/',
+  };
+
+  if (cookieDomain) {
+    options.domain = cookieDomain;
+  }
+
+  if (!forClear) {
+    options.maxAge = 7 * 24 * 60 * 60 * 1000;
+  }
+
+  return options;
+};
 
 const REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  get secure() {
-    return process.env.NODE_ENV === 'production';
-  },
-  get sameSite() {
-    return process.env.NODE_ENV === 'production' ? 'none' : 'strict';
-  },
-  path: '/',
-  maxAge: 7 * 24 * 60 * 60 * 1000,
+  get httpOnly() { return true; },
+  get secure() { return getRefreshCookieOptions(false).secure; },
+  get sameSite() { return getRefreshCookieOptions(false).sameSite; },
+  get domain() { return getRefreshCookieOptions(false).domain; },
+  get path() { return '/'; },
+  get maxAge() { return 7 * 24 * 60 * 60 * 1000; },
 };
 
 const CLEAR_COOKIE_OPTIONS = {
-  httpOnly: true,
-  get secure() {
-    return process.env.NODE_ENV === 'production';
-  },
-  get sameSite() {
-    return process.env.NODE_ENV === 'production' ? 'none' : 'strict';
-  },
-  path: '/',
+  get httpOnly() { return true; },
+  get secure() { return getRefreshCookieOptions(true).secure; },
+  get sameSite() { return getRefreshCookieOptions(true).sameSite; },
+  get domain() { return getRefreshCookieOptions(true).domain; },
+  get path() { return '/'; },
 };
 
 /**
  * Password validation rule:
- * Minimum 8 characters, at least one letter and one number
+ * Minimum 10 characters, not in common-passwords list, no email/name components
  */
-const isValidPassword = (password) => {
-  return typeof password === 'string' && /^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(password);
+const isValidPassword = (password, options = {}) => {
+  return validatePasswordPolicy(password, options).valid;
 };
 
 const PASSWORD_RULE_ERROR =
-  'Password must be at least 8 characters long and contain at least one letter and one number';
+  'Password must be at least 10 characters long, not easily guessed, and cannot contain parts of your name or email';
 
 /**
  * Demo OTP helper: Only returns devOtp when NODE_ENV is not production and DEMO_SHOW_OTP is true
@@ -236,11 +278,12 @@ const register = async (req, res, next) => {
       });
     }
 
-    // Password rule verification
-    if (!isValidPassword(password)) {
+    // Password policy verification
+    const pwdValidation = validatePasswordPolicy(password, { email, name });
+    if (!pwdValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: PASSWORD_RULE_ERROR,
+        message: pwdValidation.message,
       });
     }
 
@@ -463,10 +506,11 @@ const registerTPO = async (req, res, next) => {
       });
     }
 
-    if (!isValidPassword(password)) {
+    const pwdValidation = validatePasswordPolicy(password, { email, name });
+    if (!pwdValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: PASSWORD_RULE_ERROR,
+        message: pwdValidation.message,
       });
     }
 
@@ -638,10 +682,11 @@ const registerCollege = async (req, res, next) => {
       });
     }
 
-    if (!isValidPassword(finalTpoPassword)) {
+    const pwdValidation = validatePasswordPolicy(finalTpoPassword, { email: finalTpoEmail, name: finalTpoName });
+    if (!pwdValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: PASSWORD_RULE_ERROR,
+        message: pwdValidation.message,
       });
     }
 
@@ -823,10 +868,11 @@ const registerRecruiter = async (req, res, next) => {
       });
     }
 
-    if (!isValidPassword(password)) {
+    const pwdValidation = validatePasswordPolicy(password, { email, name });
+    if (!pwdValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: PASSWORD_RULE_ERROR,
+        message: pwdValidation.message,
       });
     }
 
@@ -1031,10 +1077,11 @@ const registerAnalyst = async (req, res, next) => {
       });
     }
 
-    if (!isValidPassword(password)) {
+    const pwdValidation = validatePasswordPolicy(password, { email, name });
+    if (!pwdValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: PASSWORD_RULE_ERROR,
+        message: pwdValidation.message,
       });
     }
 
@@ -1154,10 +1201,11 @@ const registerAspirant = async (req, res, next) => {
       });
     }
 
-    if (!isValidPassword(password)) {
+    const pwdValidation = validatePasswordPolicy(password, { email, name });
+    if (!pwdValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: PASSWORD_RULE_ERROR,
+        message: pwdValidation.message,
       });
     }
 
@@ -1292,10 +1340,17 @@ const verifyEmail = async (req, res, next) => {
   try {
     const { email, otp } = req.body;
 
-    if (!email || !otp) {
+    if (
+      !email ||
+      !otp ||
+      typeof email !== 'string' ||
+      typeof otp !== 'string' ||
+      !email.trim() ||
+      !otp.trim()
+    ) {
       return res.status(400).json({
         success: false,
-        message: 'Email address and 6-digit verification code are required',
+        message: 'Email address and 6-digit verification code must be valid strings',
       });
     }
 
@@ -1458,10 +1513,10 @@ const forgotPassword = async (req, res, next) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
+    if (!email || typeof email !== 'string' || !email.trim()) {
       return res.status(400).json({
         success: false,
-        message: 'Email address is required',
+        message: 'A valid email address is required',
       });
     }
 
@@ -1516,17 +1571,28 @@ const resetPassword = async (req, res, next) => {
   try {
     const { email, otp, newPassword } = req.body;
 
-    if (!email || !otp || !newPassword) {
+    if (
+      !email ||
+      !otp ||
+      !newPassword ||
+      typeof email !== 'string' ||
+      typeof otp !== 'string' ||
+      typeof newPassword !== 'string' ||
+      !email.trim() ||
+      !otp.trim() ||
+      !newPassword.trim()
+    ) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email, 6-digit code, and your new password',
+        message: 'Please provide valid email, 6-digit code, and new password',
       });
     }
 
-    if (!isValidPassword(newPassword)) {
+    const pwdCheck = validatePasswordPolicy(newPassword, { email });
+    if (!pwdCheck.valid) {
       return res.status(400).json({
         success: false,
-        message: PASSWORD_RULE_ERROR,
+        message: pwdCheck.message,
       });
     }
 
@@ -1535,6 +1601,14 @@ const resetPassword = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: 'Invalid password reset request',
+      });
+    }
+
+    const fullPwdCheck = validatePasswordPolicy(newPassword, { email, name: user.name });
+    if (!fullPwdCheck.valid) {
+      return res.status(400).json({
+        success: false,
+        message: fullPwdCheck.message,
       });
     }
 
@@ -1630,10 +1704,17 @@ const login = async (req, res, next) => {
     const { email, password } = req.body;
 
     // Validate inputs
-    if (!email || !password) {
+    if (
+      !email ||
+      !password ||
+      typeof email !== 'string' ||
+      typeof password !== 'string' ||
+      !email.trim() ||
+      !password.trim()
+    ) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide email and password',
+        message: 'Please provide a valid email and password',
       });
     }
 

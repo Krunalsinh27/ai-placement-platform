@@ -228,7 +228,7 @@ const seedData = async () => {
       admin = await User.create({
         name: 'NIT Delhi TPO Administrator',
         email: adminEmail,
-        password: 'Admin@123',
+        password: 'Falcon#2026!Secured',
         role: 'tpo',
         college: college1._id,
         isApproved: true,
@@ -238,6 +238,7 @@ const seedData = async () => {
     } else {
       admin.role = 'tpo';
       admin.college = college1._id;
+      admin.password = 'Falcon#2026!Secured';
       admin.isApproved = true;
       admin.isEmailVerified = true;
       await admin.save();
@@ -251,7 +252,7 @@ const seedData = async () => {
       tpoPune = await User.create({
         name: 'PICT Pune TPO Administrator',
         email: tpoPuneEmail,
-        password: 'Admin@123',
+        password: 'Falcon#2026!Secured',
         role: 'tpo',
         college: college2._id,
         isApproved: true,
@@ -261,6 +262,7 @@ const seedData = async () => {
     } else {
       tpoPune.role = 'tpo';
       tpoPune.college = college2._id;
+      tpoPune.password = 'Falcon#2026!Secured';
       tpoPune.isApproved = true;
       tpoPune.isEmailVerified = true;
       await tpoPune.save();
@@ -283,7 +285,7 @@ const seedData = async () => {
       recruiterUser = await User.create({
         name: 'Google Campus Talent Partner',
         email: recruiterEmail,
-        password: 'Recruiter@123',
+        password: 'Vanguard#2026!Access',
         role: 'recruiter',
         company: googleCompany._id,
         isApproved: true,
@@ -301,6 +303,7 @@ const seedData = async () => {
     } else {
       recruiterUser.role = 'recruiter';
       recruiterUser.company = googleCompany._id;
+      recruiterUser.password = 'Vanguard#2026!Access';
       recruiterUser.isApproved = true;
       recruiterUser.isEmailVerified = true;
       await recruiterUser.save();
@@ -313,7 +316,7 @@ const seedData = async () => {
       await User.create({
         name: 'System Superadmin',
         email: superadminEmail,
-        password: 'Super@12345',
+        password: 'Apex#2026!Shielded',
         role: 'superadmin',
         isApproved: true,
         isEmailVerified: true,
@@ -321,6 +324,7 @@ const seedData = async () => {
       console.log('Created default Superadmin: superadmin@portal.com');
     } else {
       superadmin.role = 'superadmin';
+      superadmin.password = 'Apex#2026!Shielded';
       superadmin.isApproved = true;
       superadmin.isEmailVerified = true;
       await superadmin.save();
@@ -334,7 +338,7 @@ const seedData = async () => {
       await User.create({
         name: 'Chief Higher Education Analyst',
         email: analystEmail,
-        password: 'Analyst@123',
+        password: 'Horizon#2026!Metric',
         role: 'analyst',
         organisation: 'Higher Education Analytics Board',
         organisationType: 'Accreditation body',
@@ -346,6 +350,7 @@ const seedData = async () => {
       console.log('Created default Analyst: analyst@portal.com');
     } else {
       analyst.role = 'analyst';
+      analyst.password = 'Horizon#2026!Metric';
       analyst.organisation = 'Higher Education Analytics Board';
       analyst.organisationType = 'Accreditation body';
       analyst.purpose = 'Institutional accreditation benchmarking & national recruitment trends analysis';
@@ -363,7 +368,7 @@ const seedData = async () => {
       aspirantUser = await User.create({
         name: 'Aarav Sharma (Prospective Student)',
         email: aspirantEmail,
-        password: 'Aspirant@123',
+        password: 'Gateway#2026!Pathway',
         role: 'aspirant',
         isApproved: true,
         isEmailVerified: true,
@@ -371,6 +376,7 @@ const seedData = async () => {
       console.log('Created default Aspirant: aspirant@portal.com');
     } else {
       aspirantUser.role = 'aspirant';
+      aspirantUser.password = 'Gateway#2026!Pathway';
       aspirantUser.isApproved = true;
       aspirantUser.isEmailVerified = true;
       await aspirantUser.save();
@@ -881,7 +887,7 @@ const seedData = async () => {
 
     // 4. Generate 100 Realistic Students (25 per college, satisfying >= 20 requirement)
     console.log('4. Generating 100 students across CSE, IT, ECE, ME, CE for batch years 2023 to 2026 (25 per college)...');
-    const hashedStudentPassword = await bcrypt.hash('Student@123', 10);
+    const hashedStudentPassword = await bcrypt.hash('Quantum#2026!Target', 10);
 
     const branches = ['CSE', 'IT', 'ECE', 'ME', 'CE'];
     const years = [2023, 2024, 2025, 2026];

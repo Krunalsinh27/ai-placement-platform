@@ -13,6 +13,7 @@ const { initCronJobs } = require('./utils/cronJobs');
 const { migrateAuthUsers } = require('./utils/migrateAuth');
 const { verifyTransporter } = require('./utils/emailService');
 const { publicApiLimiter } = require('./middleware/rateLimitMiddleware');
+const { validateCorsConfig, parseAllowedOrigins, isOriginAllowed } = require('./utils/corsConfig');
 
 // Load environment variables
 dotenv.config();
@@ -32,6 +33,14 @@ if (
   process.exit(1);
 }
 
+// Validate CORS configuration at startup (fails fast if wildcard '*' is used in production)
+try {
+  validateCorsConfig(process.env.CLIENT_URL, process.env.NODE_ENV);
+} catch (corsErr) {
+  console.error(corsErr.message);
+  process.exit(1);
+}
+
 // Connect to MongoDB
 connectDB();
 
@@ -48,26 +57,29 @@ app.use(
 );
 app.use(mongoSanitize());
 
+// Reject NoSQL injection attempts via objects in query parameters (e.g. ?branch[$ne]=val)
+app.use((req, res, next) => {
+  if (req.query && typeof req.query === 'object') {
+    for (const key of Object.keys(req.query)) {
+      if (typeof req.query[key] === 'object' && req.query[key] !== null) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid query parameter '${key}': objects and query selectors are not permitted`,
+        });
+      }
+    }
+  }
+  next();
+});
+
 // Restricted CORS with credentials (supports comma-separated list of origins for preview URLs)
-const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
-  .split(',')
-  .map((url) => url.trim().replace(/\/+$/, ''))
-  .filter(Boolean);
+const allowedOrigins = parseAllowedOrigins(process.env.CLIENT_URL);
+const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      const normalizedOrigin = origin.replace(/\/+$/, '');
-      const isAllowed = allowedOrigins.some((allowed) => {
-        if (allowed === '*' || allowed === normalizedOrigin) return true;
-        if (allowed.includes('*')) {
-          const regex = new RegExp('^' + allowed.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
-          return regex.test(normalizedOrigin);
-        }
-        return false;
-      });
-      if (isAllowed) {
+      if (isOriginAllowed(origin, allowedOrigins, isProduction)) {
         return callback(null, true);
       }
       return callback(new Error(`Not allowed by CORS: ${origin}`));
@@ -129,9 +141,11 @@ app.use(notFound);
 // Global Error Handler
 app.use(errorHandler);
 
+const { waitForPendingNotifications } = require('./utils/notificationService');
+
 // Server listener
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   if (process.env.NODE_ENV !== 'test') {
     initCronJobs();
@@ -149,6 +163,16 @@ app.listen(PORT, () => {
       });
   }
 });
+
+const handleShutdown = async (signal) => {
+  try {
+    await waitForPendingNotifications(5000);
+  } catch (err) {
+    console.error(`Error awaiting pending notifications on ${signal}:`, err.message);
+  }
+};
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));
 
 module.exports = app;
 

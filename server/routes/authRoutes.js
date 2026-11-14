@@ -17,9 +17,12 @@ const {
   getMe,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
+const csrfProtection = require('../middleware/csrfProtection');
 const {
   loginLimiter,
+  accountLoginLimiter,
   otpVerifyLimiter,
+  accountOtpLimiter,
   otpResendLimiter,
 } = require('../middleware/rateLimitMiddleware');
 
@@ -35,20 +38,20 @@ router.post('/register/analyst', registerAnalyst);
 router.post('/register-aspirant', registerAspirant);
 router.post('/register/aspirant', registerAspirant);
 
-// Email verification & OTP routes (rate-limited)
-router.post('/verify-email', otpVerifyLimiter, verifyEmail);
-router.post('/resend-otp', otpResendLimiter, resendOTP);
+// Email verification & OTP routes (rate-limited by IP and target account)
+router.post('/verify-email', otpVerifyLimiter, accountOtpLimiter, verifyEmail);
+router.post('/resend-otp', otpResendLimiter, accountOtpLimiter, resendOTP);
 
-// Password recovery routes (rate-limited)
-router.post('/forgot-password', otpResendLimiter, forgotPassword);
-router.post('/reset-password', otpVerifyLimiter, resetPassword);
+// Password recovery routes (rate-limited by IP and target account)
+router.post('/forgot-password', otpResendLimiter, accountOtpLimiter, forgotPassword);
+router.post('/reset-password', otpVerifyLimiter, accountOtpLimiter, resetPassword);
 
-// Authentication route (rate-limited & lockout enabled)
-router.post('/login', loginLimiter, login);
+// Authentication route (rate-limited by IP and target account & lockout enabled)
+router.post('/login', loginLimiter, accountLoginLimiter, login);
 
-// Token refresh & session termination
-router.post('/refresh', refreshToken);
-router.post('/logout', logout);
+// Token refresh & session termination (CSRF protected)
+router.post('/refresh', csrfProtection, refreshToken);
+router.post('/logout', csrfProtection, logout);
 
 // Protected routes
 router.get('/me', protect, getMe);

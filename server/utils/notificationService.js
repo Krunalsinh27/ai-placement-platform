@@ -17,6 +17,31 @@ const {
   FRONTEND_URL,
 } = require('./emailTemplates');
 
+// Track all in-flight notification tasks so callers, tests, and shutdown hooks can await them
+const pendingNotificationPromises = new Set();
+
+const trackNotificationPromise = (promise) => {
+  if (!promise || typeof promise.then !== 'function') return promise;
+  pendingNotificationPromises.add(promise);
+  promise.finally(() => {
+    pendingNotificationPromises.delete(promise);
+  });
+  return promise;
+};
+
+/**
+ * Await all pending background notification dispatches.
+ * Useful on process shutdown or in automated tests.
+ */
+const waitForPendingNotifications = async (timeoutMs = 10000) => {
+  if (pendingNotificationPromises.size === 0) return;
+  const timeoutPromise = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  await Promise.race([
+    Promise.allSettled(Array.from(pendingNotificationPromises)),
+    timeoutPromise,
+  ]);
+};
+
 /**
  * Universal User Notification & Email Dispatcher
  * Dispatches an in-app notification AND queues a responsive HTML email.
@@ -25,7 +50,7 @@ const {
  * @param {string} type - Notification type identifier
  * @param {Object} data - Context data for notification & email templates
  */
-const notifyUser = async (user, type, data = {}) => {
+const _notifyUserInternal = async (user, type, data = {}) => {
   try {
     if (!user) return null;
 
@@ -377,6 +402,11 @@ const notifyUser = async (user, type, data = {}) => {
   }
 };
 
+const notifyUser = (user, type, data = {}) => {
+  const p = _notifyUserInternal(user, type, data);
+  return trackNotificationPromise(p);
+};
+
 /**
  * 1. Create a single notification for a user (compatibility)
  */
@@ -460,7 +490,7 @@ const notifyDriveRequestResponse = async ({ companyId, collegeName, jobTitle, ac
 /**
  * 5. Notify eligible students when a new drive is published
  */
-const notifyDrivePublished = async (drive) => {
+const _notifyDrivePublishedInternal = async (drive) => {
   try {
     if (!drive || !drive.college) return;
 
@@ -485,9 +515,10 @@ const notifyDrivePublished = async (drive) => {
     const col = await College.findById(drive.college).select('name');
     const collegeName = col?.name || 'College Placement Cell';
 
+    const promises = [];
     for (const s of eligibleStudents) {
       if (s.user) {
-        notifyUser(s.user, 'drive_published', {
+        const p = notifyUser(s.user, 'drive_published', {
           collegeId: drive.college,
           collegeName,
           companyId: drive.company?._id || drive.company,
@@ -501,12 +532,22 @@ const notifyDrivePublished = async (drive) => {
           driveId: drive._id,
           message: `New campus drive published: ${companyName} is hiring for ${drive.role} (${drive.packageLpa} LPA)! Apply by ${formatISTDateOnly(drive.lastDateToApply)}.`,
           link: '/student/drives',
-        }).catch((err) => console.error('Failed to notify student of drive published:', err));
+        }).catch((err) => {
+          console.error('Failed to notify student of drive published:', err);
+          return null;
+        });
+        promises.push(p);
       }
     }
+    await Promise.allSettled(promises);
   } catch (error) {
     console.error('Error in notifyDrivePublished:', error.message);
   }
+};
+
+const notifyDrivePublished = (drive) => {
+  const p = _notifyDrivePublishedInternal(drive);
+  return trackNotificationPromise(p);
 };
 
 /**
@@ -572,4 +613,6 @@ module.exports = {
   notifyDrivePublished,
   notifyApplicationStatusChange,
   notifyNewApplicant,
+  waitForPendingNotifications,
+  trackNotificationPromise,
 };

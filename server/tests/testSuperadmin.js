@@ -72,7 +72,7 @@ async function runSuperadminTests() {
     const superadminUser = await User.create({
       name: 'Super Admin Test',
       email: 'sa@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'superadmin',
       isApproved: true,
       isEmailVerified: true,
@@ -82,7 +82,7 @@ async function runSuperadminTests() {
     const tpoUser = await User.create({
       name: 'TPO Test',
       email: 'tpo@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       isApproved: true,
       isEmailVerified: true,
@@ -92,7 +92,7 @@ async function runSuperadminTests() {
     const recruiterUser = await User.create({
       name: 'Recruiter Test',
       email: 'recruiter@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       isApproved: true,
       isEmailVerified: true,
@@ -102,7 +102,7 @@ async function runSuperadminTests() {
     const analystUser = await User.create({
       name: 'Analyst Test',
       email: 'analyst@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'analyst',
       isApproved: true,
       isEmailVerified: true,
@@ -160,7 +160,7 @@ async function runSuperadminTests() {
         state: 'Gujarat',
         tpoName: 'TPO New College',
         tpoEmail: 'tpo.new@superadmin-test.com',
-        tpoPassword: 'Password123!',
+        tpoPassword: 'Krypton#2026!Valid',
         tpoPhone: '9876543210',
       }),
     });
@@ -186,7 +186,7 @@ async function runSuperadminTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'tpo.new@superadmin-test.com',
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
       }),
     });
     const tpoLoginData = await tpoLoginRes.json();
@@ -235,7 +235,7 @@ async function runSuperadminTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'tpo.new@superadmin-test.com',
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
       }),
     });
     const approvedTpoLoginData = await approvedTpoLoginRes.json();
@@ -254,7 +254,7 @@ async function runSuperadminTests() {
     const pendingAnalyst = await User.create({
       name: 'Dr. Pending Analyst',
       email: 'pending.analyst@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'analyst',
       organisation: 'Policy Commission',
       designation: 'Research Fellow',
@@ -292,7 +292,7 @@ async function runSuperadminTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'pending.analyst@superadmin-test.com',
-        password: 'Password123!',
+        password: 'Krypton#2026!Valid',
       }),
     });
     if (analystLoginRes.status !== 200) {
@@ -428,7 +428,7 @@ async function runSuperadminTests() {
     const pendingTpoUser1 = await User.create({
       name: 'First Pending TPO',
       email: 'first_pending_tpo@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: zeroTpoCollege._id,
       isApproved: false,
@@ -440,7 +440,7 @@ async function runSuperadminTests() {
     const pendingTpoUser2 = await User.create({
       name: 'Second Pending TPO',
       email: 'second_pending_tpo@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: zeroTpoCollege._id,
       isApproved: false,
@@ -452,7 +452,7 @@ async function runSuperadminTests() {
     const pendingStudentUser = await User.create({
       name: 'Pending College Student',
       email: 'pending_student@superadmin-test.com',
-      password: 'Password123!',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: zeroTpoCollege._id,
       isApproved: false,
@@ -489,7 +489,7 @@ async function runSuperadminTests() {
     const tpoLoginAttempt = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: pendingTpoUser1.email, password: 'Password123!' }),
+      body: JSON.stringify({ email: pendingTpoUser1.email, password: 'Krypton#2026!Valid' }),
     });
     const pendingTpoLoginData = await tpoLoginAttempt.json();
     console.log('Pending TPO login status:', tpoLoginAttempt.status, 'message:', pendingTpoLoginData.message);
@@ -504,7 +504,7 @@ async function runSuperadminTests() {
     const studentLoginAttempt = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: pendingStudentUser.email, password: 'Password123!' }),
+      body: JSON.stringify({ email: pendingStudentUser.email, password: 'Krypton#2026!Valid' }),
     });
     const studentLoginData = await studentLoginAttempt.json();
     console.log('Pending Student login status:', studentLoginAttempt.status, 'message:', studentLoginData.message);
@@ -576,7 +576,7 @@ async function runSuperadminTests() {
     const approvedTpoLogin = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: pendingTpoUser1.email, password: 'Password123!' }),
+      body: JSON.stringify({ email: pendingTpoUser1.email, password: 'Krypton#2026!Valid' }),
     });
     const approvedTpoData = await approvedTpoLogin.json();
     console.log('Approved TPO login status:', approvedTpoLogin.status, 'token received:', !!approvedTpoData.token);
@@ -587,7 +587,7 @@ async function runSuperadminTests() {
     const approvedStudentLogin = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: pendingStudentUser.email, password: 'Password123!' }),
+      body: JSON.stringify({ email: pendingStudentUser.email, password: 'Krypton#2026!Valid' }),
     });
     const approvedStudentData = await approvedStudentLogin.json();
     console.log('Approved Student login status:', approvedStudentLogin.status, 'token received:', !!approvedStudentData.token);

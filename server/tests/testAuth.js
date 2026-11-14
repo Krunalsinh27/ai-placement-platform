@@ -74,19 +74,24 @@ async function runAuthTests() {
       tpoUser = await User.create({
         name: 'TPO Administrator',
         email: 'admin@college.com',
-        password: 'Admin@123',
+        password: 'Falcon#2026!Secured',
         role: 'tpo',
         college: defaultCollege._id,
         isApproved: true,
         isEmailVerified: true,
       });
+    } else {
+      tpoUser.password = 'Falcon#2026!Secured';
+      tpoUser.failedLoginAttempts = 0;
+      tpoUser.lockUntil = null;
+      await tpoUser.save();
     }
 
     // Authenticate existing TPO (admin@college.com) for TPO approval tests
     const tpoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@college.com', password: 'Admin@123' }),
+      body: JSON.stringify({ email: 'admin@college.com', password: 'Falcon#2026!Secured' }),
     });
     const tpoLoginData = await tpoLoginRes.json();
     console.log('TPO login response:', tpoLoginRes.status, tpoLoginData);
@@ -94,16 +99,16 @@ async function runAuthTests() {
     if (!tpoToken) throw new Error('Existing TPO login failed for test runner');
 
     // -------------------------------------------------------------------
-    // 1. Password Rule Validation on Registration
+    // 1. Password Policy Validation on Registration
     // -------------------------------------------------------------------
-    console.log('--- 1. Testing Password Rule Validation (min 8 chars, 1 letter, 1 number) ---');
+    console.log('--- 1. Testing Password Policy Validation (min 10 chars, not common, no name/email) ---');
     const weakPassRes = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: 'Weak Pass Student',
         email: 'weakpass@test.com',
-        password: 'short', // less than 8 chars
+        password: 'short', // less than 10 chars
         college: defaultCollege._id,
         enrollmentNo: 'TESTAUTH000',
         branch: 'CSE',
@@ -113,38 +118,59 @@ async function runAuthTests() {
       }),
     });
     const weakPassData = await weakPassRes.json();
-    if (weakPassRes.status !== 400 || !weakPassData.message?.includes('8 characters')) {
+    if (weakPassRes.status !== 400 || !weakPassData.message?.includes('10 characters')) {
       throw new Error(`Expected weak password rejection, got ${weakPassRes.status}: ${JSON.stringify(weakPassData)}`);
     }
-    console.log('✓ Rejected password under 8 characters');
+    console.log('✓ Rejected password under 10 characters');
 
-    const noNumPassRes = await fetch(`${BASE_URL}/auth/register`, {
+    const commonPassRes = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: 'Weak Pass Student',
-        email: 'weakpass@test.com',
-        password: 'onlylettershere', // 8+ chars but no number
+        name: 'Common Pass Student',
+        email: 'commonpass@test.com',
+        password: 'password123', // common password
         college: defaultCollege._id,
-        enrollmentNo: 'TESTAUTH000',
+        enrollmentNo: 'TESTAUTH000A',
         branch: 'CSE',
         batchYear: 2026,
         cgpa: 8.5,
         phone: '9876543210',
       }),
     });
-    const noNumPassData = await noNumPassRes.json();
-    if (noNumPassRes.status !== 400 || !noNumPassData.message?.includes('at least one letter and one number')) {
-      throw new Error(`Expected password without number rejection, got ${noNumPassRes.status}`);
+    const commonPassData = await commonPassRes.json();
+    if (commonPassRes.status !== 400 || !commonPassData.message?.includes('common')) {
+      throw new Error(`Expected common password rejection, got ${commonPassRes.status}: ${JSON.stringify(commonPassData)}`);
     }
-    console.log('✓ Rejected password without numeric digits');
+    console.log('✓ Rejected common password');
+
+    const namePassRes = await fetch(`${BASE_URL}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Rohan Sharma',
+        email: 'unique_candidate_email@test.com',
+        password: 'Secure#2026!RohanPass', // contains name token "rohan"
+        college: defaultCollege._id,
+        enrollmentNo: 'TESTAUTH000B',
+        branch: 'CSE',
+        batchYear: 2026,
+        cgpa: 8.5,
+        phone: '9876543210',
+      }),
+    });
+    const namePassData = await namePassRes.json();
+    if (namePassRes.status !== 400 || !namePassData.message?.includes('name')) {
+      throw new Error(`Expected name in password rejection, got ${namePassRes.status}: ${JSON.stringify(namePassData)}`);
+    }
+    console.log('✓ Rejected password containing user name');
 
     // -------------------------------------------------------------------
     // 2. Registration Returns No Token & Dispatches OTP
     // -------------------------------------------------------------------
     console.log('\n--- 2. Testing Registration Without Auto-Login (No JWT Returned) ---');
     const studentEmail = 'auth_test_student@testcollege.edu';
-    const studentPassword = 'SecureStudent@2026';
+    const studentPassword = 'Quantum#2026!Alpha';
 
     const regRes = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
@@ -433,7 +459,7 @@ async function runAuthTests() {
       }
     );
 
-    const newStudentPassword = 'BrandNewPassword@2026';
+    const newStudentPassword = 'BrandNew#2026!Beta';
     const resetRes = await fetch(`${BASE_URL}/auth/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -490,7 +516,7 @@ async function runAuthTests() {
     const collegeTpo = await User.create({
       name: 'Strict College TPO',
       email: 'strict_tpo@testcollege.edu',
-      password: 'AdminPassword@123',
+      password: 'Falcon#2026!Secured',
       role: 'tpo',
       college: approvalCollege._id,
       isApproved: true,
@@ -500,14 +526,14 @@ async function runAuthTests() {
     const strictTpoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'strict_tpo@testcollege.edu', password: 'AdminPassword@123' }),
+      body: JSON.stringify({ email: 'strict_tpo@testcollege.edu', password: 'Falcon#2026!Secured' }),
     });
     const strictTpoLoginData = await strictTpoLoginRes.json();
     const strictTpoToken = strictTpoLoginData.token;
 
     // Register student under this strict college
     const approvalStudentEmail = 'auth_test_approval_student@testcollege.edu';
-    const approvalStudentPassword = 'StudentPass@2026';
+    const approvalStudentPassword = 'Quantum#2026!Gamma';
     const approvalRegRes = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -607,7 +633,7 @@ async function runAuthTests() {
       body: JSON.stringify({
         name: 'Reject Candidate',
         email: rejectStudentEmail,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         college: approvalCollege._id,
         enrollmentNo: 'TESTAUTH003',
         branch: 'ME',

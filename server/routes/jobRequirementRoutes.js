@@ -8,22 +8,22 @@ const {
   publishJobRequirement,
   deleteJobRequirement,
 } = require('../controllers/jobRequirementController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
 router
   .route('/')
-  .post(protect, createJobRequirement)
-  .get(protect, getJobRequirements);
+  .post(protect, authorize('recruiter', 'superadmin'), createJobRequirement)
+  .get(protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), getJobRequirements);
 
 router
   .route('/:id')
-  .get(protect, getJobRequirementById)
-  .put(protect, updateJobRequirement)
-  .delete(protect, deleteJobRequirement);
+  .get(protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), getJobRequirementById)
+  .put(protect, authorize('recruiter', 'superadmin'), updateJobRequirement)
+  .delete(protect, authorize('recruiter', 'superadmin'), deleteJobRequirement);
 
 router
   .route('/:id/publish')
-  .patch(protect, publishJobRequirement);
+  .patch(protect, authorize('recruiter', 'superadmin'), publishJobRequirement);
 
 module.exports = router;
 

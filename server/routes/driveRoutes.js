@@ -28,7 +28,7 @@ const { aiLimiter } = require('../middleware/rateLimitMiddleware');
 router
   .route('/')
   .post(protect, authorize('admin', 'tpo', 'superadmin'), createDrive)
-  .get(protect, getDrives);
+  .get(protect, authorize('admin', 'tpo', 'superadmin', 'recruiter', 'student'), getDrives);
 
 // Student eligible drives (must come before /:id)
 router.get('/eligible', protect, authorize('student'), getEligibleDrives);
@@ -40,18 +40,18 @@ router.get('/clashes', protect, authorize('tpo', 'admin', 'superadmin'), getDail
 router.put('/:id/freeze', protect, authorize('tpo', 'admin', 'superadmin'), freezeDriveAndInitializePipeline);
 router.put('/:id/reopen', protect, authorize('tpo', 'admin', 'superadmin'), reopenDrive);
 router.put('/:id/remove-applicant/:studentId', protect, authorize('tpo', 'admin', 'superadmin'), removeApplicantBeforeFreeze);
-router.get('/:id/progress', protect, getDriveProgress);
+router.get('/:id/progress', protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), getDriveProgress);
 router.post('/:id/offers', protect, authorize('recruiter', 'superadmin'), extendBulkOffers);
 
 // AI Ranking & Explanation routes
-router.get('/:id/ranked-applicants', protect, aiLimiter, getRankedApplicants);
-router.get('/:id/applicants/:applicationId/explanation', protect, aiLimiter, getApplicantExplanationHandler);
-router.put('/:id/skills', protect, updateDriveSkills);
+router.get('/:id/ranked-applicants', protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), aiLimiter, getRankedApplicants);
+router.get('/:id/applicants/:applicationId/explanation', protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), aiLimiter, getApplicantExplanationHandler);
+router.put('/:id/skills', protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), updateDriveSkills);
 
 // Drive by ID routes
 router
   .route('/:id')
-  .get(protect, getDriveById)
+  .get(protect, authorize('admin', 'tpo', 'superadmin', 'recruiter', 'student'), getDriveById)
   .put(protect, authorize('admin', 'tpo', 'superadmin'), updateDrive)
   .delete(protect, authorize('admin', 'tpo', 'superadmin'), deleteDrive);
 

@@ -77,7 +77,7 @@ async function runPipelineTests() {
       tpoUser = await User.create({
         name: 'TPO Administrator',
         email: 'admin@college.com',
-        password: 'Admin@123',
+        password: 'Falcon#2026!Secured',
         role: 'tpo',
         college: college._id,
         isApproved: true,
@@ -90,7 +90,7 @@ async function runPipelineTests() {
       recUser = await User.create({
         name: 'Google Recruiter',
         email: 'recruiter@google.com',
-        password: 'Recruiter@123',
+        password: 'Vanguard#2026!Access',
         role: 'recruiter',
         company: company._id,
         isApproved: true,
@@ -104,7 +104,7 @@ async function runPipelineTests() {
       const u = await User.create({
         name: `Pipeline Student ${idx}`,
         email: `pipeline.student${idx}@nitd.edu`,
-        password: 'Student@123',
+        password: 'Quantum#2026!Target',
         role: 'student',
         college: college._id,
         isApproved: true,
@@ -128,7 +128,7 @@ async function runPipelineTests() {
     const tpoLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@college.com', password: 'Admin@123' }),
+      body: JSON.stringify({ email: 'admin@college.com', password: 'Falcon#2026!Secured' }),
     });
     const tpoData = await tpoLoginRes.json();
     const tpoToken = tpoData.token;
@@ -139,7 +139,7 @@ async function runPipelineTests() {
     const recLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'recruiter@google.com', password: 'Recruiter@123' }),
+      body: JSON.stringify({ email: 'recruiter@google.com', password: 'Vanguard#2026!Access' }),
     });
     const recData = await recLoginRes.json();
     const recToken = recData.token;
@@ -154,7 +154,7 @@ async function runPipelineTests() {
     const st1LoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: student1.user.email, password: 'Student@123' }),
+      body: JSON.stringify({ email: student1.user.email, password: 'Quantum#2026!Target' }),
     });
     const st1Data = await st1LoginRes.json();
     const st1Token = st1Data.token;
@@ -165,7 +165,7 @@ async function runPipelineTests() {
     const st2LoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: student2.user.email, password: 'Student@123' }),
+      body: JSON.stringify({ email: student2.user.email, password: 'Quantum#2026!Target' }),
     });
     const st2Data = await st2LoginRes.json();
     const st2Token = st2Data.token;
@@ -176,7 +176,7 @@ async function runPipelineTests() {
     const st3LoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: student3.user.email, password: 'Student@123' }),
+      body: JSON.stringify({ email: student3.user.email, password: 'Quantum#2026!Target' }),
     });
     const st3Data = await st3LoginRes.json();
     const st3Token = st3Data.token;

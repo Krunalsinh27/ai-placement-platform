@@ -14,8 +14,8 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 // Recruiter / Current Company Profile Route
 router
   .route('/me')
-  .get(protect, getMyCompanyProfile)
-  .put(protect, updateMyCompanyProfile);
+  .get(protect, authorize('recruiter', 'superadmin'), getMyCompanyProfile)
+  .put(protect, authorize('recruiter', 'superadmin'), updateMyCompanyProfile);
 
 // Collection Routes
 router
@@ -27,7 +27,7 @@ router
 router
   .route('/:id')
   .get(protect, getCompanyById)
-  .put(protect, authorize('admin', 'tpo', 'superadmin'), updateCompany)
-  .delete(protect, authorize('admin', 'tpo', 'superadmin'), deleteCompany);
+  .put(protect, authorize('superadmin'), updateCompany)
+  .delete(protect, authorize('superadmin'), deleteCompany);
 
 module.exports = router;

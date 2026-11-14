@@ -54,7 +54,7 @@ const getCompanies = async (req, res, next) => {
     const { search } = req.query;
     const query = {};
 
-    if (search && search.trim() !== '') {
+    if (search && typeof search === 'string' && search.trim() !== '') {
       const term = search.trim();
       query.$or = [
         { name: { $regex: term, $options: 'i' } },
@@ -62,7 +62,9 @@ const getCompanies = async (req, res, next) => {
       ];
     }
 
-    const companies = await Company.find(query).sort({ name: 1 });
+    const companies = await Company.find(query)
+      .select('_id name industry website description logoUrl verified')
+      .sort({ name: 1 });
 
     res.status(200).json({
       success: true,
@@ -81,7 +83,15 @@ const getCompanies = async (req, res, next) => {
  */
 const getCompanyById = async (req, res, next) => {
   try {
-    const company = await Company.findById(req.params.id);
+    const isSuperadmin = req.user?.role === 'superadmin';
+    const isOwningRecruiter =
+      req.user?.role === 'recruiter' &&
+      (req.user.company?._id || req.user.company)?.toString() === req.params.id;
+
+    // Only superadmin or the company's owning recruiter may view hrContact and owner
+    const projection = isSuperadmin || isOwningRecruiter ? '' : '-hrContact -owner';
+
+    const company = await Company.findById(req.params.id).select(projection);
 
     if (!company) {
       return res.status(404).json({
@@ -110,6 +120,13 @@ const getCompanyById = async (req, res, next) => {
  */
 const updateCompany = async (req, res, next) => {
   try {
+    if (req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized: Only superadmin can modify global company records directly. Recruiters should use /api/companies/me.',
+      });
+    }
+
     const { name, industry, website, description } = req.body;
 
     const company = await Company.findById(req.params.id);
@@ -158,6 +175,13 @@ const updateCompany = async (req, res, next) => {
  */
 const deleteCompany = async (req, res, next) => {
   try {
+    if (req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized: Only superadmin can delete global company records.',
+      });
+    }
+
     const company = await Company.findById(req.params.id);
 
     if (!company) {

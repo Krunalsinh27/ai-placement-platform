@@ -68,7 +68,7 @@ const migrateAuthUsers = async () => {
       await User.create({
         name: 'System Superadmin',
         email: superadminEmail,
-        password: 'Super@12345',
+        password: 'Apex#2026!Shielded',
         role: 'superadmin',
         isApproved: true,
         isEmailVerified: true,
@@ -79,6 +79,7 @@ const migrateAuthUsers = async () => {
       if (superadmin.role !== 'superadmin') { superadmin.role = 'superadmin'; needSave = true; }
       if (!superadmin.isApproved) { superadmin.isApproved = true; needSave = true; }
       if (!superadmin.isEmailVerified) { superadmin.isEmailVerified = true; needSave = true; }
+      superadmin.password = 'Apex#2026!Shielded'; needSave = true;
       if (needSave) await superadmin.save();
     }
 
@@ -89,7 +90,7 @@ const migrateAuthUsers = async () => {
       await User.create({
         name: 'Chief Higher Education Analyst',
         email: analystEmail,
-        password: 'Analyst@123',
+        password: 'Horizon#2026!Metric',
         role: 'analyst',
         organisation: 'National Higher Education Research Consortium',
         organisationType: 'Accreditation body',
@@ -106,6 +107,7 @@ const migrateAuthUsers = async () => {
       if (!analyst.purpose) { analyst.purpose = 'Institutional accreditation benchmarking & national recruitment trends analysis'; needSave = true; }
       if (!analyst.isApproved) { analyst.isApproved = true; needSave = true; }
       if (!analyst.isEmailVerified) { analyst.isEmailVerified = true; needSave = true; }
+      analyst.password = 'Horizon#2026!Metric'; needSave = true;
       if (needSave) await analyst.save();
     }
 
@@ -117,7 +119,7 @@ const migrateAuthUsers = async () => {
       aspirantUser = await User.create({
         name: 'Aarav Sharma (Prospective Student)',
         email: aspirantEmail,
-        password: 'Aspirant@123',
+        password: 'Gateway#2026!Pathway',
         role: 'aspirant',
         isApproved: true,
         isEmailVerified: true,
@@ -128,6 +130,7 @@ const migrateAuthUsers = async () => {
       if (aspirantUser.role !== 'aspirant') { aspirantUser.role = 'aspirant'; needSave = true; }
       if (!aspirantUser.isApproved) { aspirantUser.isApproved = true; needSave = true; }
       if (!aspirantUser.isEmailVerified) { aspirantUser.isEmailVerified = true; needSave = true; }
+      aspirantUser.password = 'Gateway#2026!Pathway'; needSave = true;
       if (needSave) await aspirantUser.save();
     }
 

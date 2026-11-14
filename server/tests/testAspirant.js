@@ -153,7 +153,7 @@ async function runAspirantTests() {
       body: JSON.stringify({
         name: 'Raj Verma',
         email: aspirantEmail,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         state: 'Delhi',
         interestedBranches: ['CSE', 'IT', 'AI & DS'],
         twelfthStream: 'Science (PCM)',
@@ -182,7 +182,7 @@ async function runAspirantTests() {
     const preVerifyLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: aspirantEmail, password: 'Password@123' }),
+      body: JSON.stringify({ email: aspirantEmail, password: 'Krypton#2026!Valid' }),
     });
     console.log('Pre-verification login status:', preVerifyLoginRes.status);
     if (preVerifyLoginRes.status !== 403) {
@@ -199,7 +199,7 @@ async function runAspirantTests() {
     const loginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: aspirantEmail, password: 'Password@123' }),
+      body: JSON.stringify({ email: aspirantEmail, password: 'Krypton#2026!Valid' }),
     });
     const loginData = await loginRes.json();
     console.log('Post-verification login status:', loginRes.status, 'token received:', !!loginData.token);
@@ -387,7 +387,7 @@ async function runAspirantTests() {
       const dbUser = await User.create({
         name: `${u.role} user`,
         email: u.email,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: u.role,
         isApproved: true,
         isEmailVerified: true,
@@ -427,7 +427,7 @@ async function runAspirantTests() {
     const saUser = await User.create({
       name: 'SA Filter Test',
       email: 'sa.filter@aspirant-test.com',
-      password: 'Super@12345',
+      password: 'Apex#2026!Shielded',
       role: 'superadmin',
       isApproved: true,
       isEmailVerified: true,
@@ -455,13 +455,13 @@ async function runAspirantTests() {
       seededUser = await User.create({
         name: 'Aspirant Demo User',
         email: seededAspirantEmail,
-        password: 'Aspirant@123',
+        password: 'Gateway#2026!Pathway',
         role: 'aspirant',
         isApproved: true,
         isEmailVerified: true,
       });
     } else {
-      seededUser.password = 'Aspirant@123';
+      seededUser.password = 'Gateway#2026!Pathway';
       seededUser.failedLoginAttempts = 0;
       seededUser.lockUntil = null;
       seededUser.isApproved = true;
@@ -499,7 +499,7 @@ async function runAspirantTests() {
     const seededLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: seededAspirantEmail, password: 'Aspirant@123' }),
+      body: JSON.stringify({ email: seededAspirantEmail, password: 'Gateway#2026!Pathway' }),
     });
     const seededLoginData = await seededLoginRes.json();
     console.log('Seeded aspirant login status:', seededLoginRes.status, 'token received:', !!seededLoginData.token);
@@ -644,7 +644,7 @@ async function runAspirantTests() {
       body: JSON.stringify({
         name: 'Initial Name',
         email: recoveryEmail,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         state: 'Delhi',
         interestedBranches: ['CSE'],
         twelfthStream: 'Science',
@@ -663,7 +663,7 @@ async function runAspirantTests() {
       body: JSON.stringify({
         name: 'Updated Name',
         email: recoveryEmail,
-        password: 'NewPassword@456',
+        password: 'Krypton#2026!NewPass',
         state: 'Maharashtra',
         interestedBranches: ['ECE', 'ME'],
         twelfthStream: 'Commerce',
@@ -697,7 +697,7 @@ async function runAspirantTests() {
       body: JSON.stringify({
         name: 'Should Fail Name',
         email: recoveryEmail,
-        password: 'Password@789',
+        password: 'Krypton#2026!Valid',
         state: 'Karnataka',
         interestedBranches: ['CSE'],
         twelfthStream: 'Science',
@@ -732,7 +732,7 @@ async function runAspirantTests() {
         body: JSON.stringify({
           name: 'Fail Send User',
           email: failedSendEmail,
-          password: 'Password@123',
+          password: 'Krypton#2026!Valid',
           state: 'Delhi',
           interestedBranches: ['CSE'],
           twelfthStream: 'Science',
@@ -797,7 +797,7 @@ async function runAspirantTests() {
       body: JSON.stringify({
         name: 'Patel Aarav',
         email: gujaratEmail,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         state: 'Gujarat',
         interestedBranches: ['CSE', 'ECE'],
         twelfthStream: 'Commerce with Mathematics',
@@ -819,7 +819,7 @@ async function runAspirantTests() {
     const gujLoginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: gujaratEmail, password: 'Password@123' }),
+      body: JSON.stringify({ email: gujaratEmail, password: 'Krypton#2026!Valid' }),
     });
     const gujLoginData = await gujLoginRes.json();
     const gujToken = gujLoginData.token;
@@ -1008,7 +1008,7 @@ async function runAspirantTests() {
       const u = await User.create({
         name: `ColA CSE Student ${i}`,
         email: `cola.cse${i}@aspirant-test.com`,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: recColA._id,
         isApproved: true,
@@ -1046,7 +1046,7 @@ async function runAspirantTests() {
       const u = await User.create({
         name: `ColA ECE Student ${i}`,
         email: `cola.ece${i}@aspirant-test.com`,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: recColA._id,
         isApproved: true,
@@ -1087,7 +1087,7 @@ async function runAspirantTests() {
       const u = await User.create({
         name: `ColB CSE Student ${i}`,
         email: `colb.cse${i}@aspirant-test.com`,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: recColB._id,
         isApproved: true,
@@ -1127,7 +1127,7 @@ async function runAspirantTests() {
       const u = await User.create({
         name: `ColC CSE Student ${i}`,
         email: `colc.cse${i}@aspirant-test.com`,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: recColC._id,
         isApproved: true,
@@ -1167,7 +1167,7 @@ async function runAspirantTests() {
       const u = await User.create({
         name: `ColD CSE Student ${i}`,
         email: `cold.cse${i}@aspirant-test.com`,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: recColD._id,
         isApproved: true,
@@ -1190,7 +1190,7 @@ async function runAspirantTests() {
       const u = await User.create({
         name: `ColE Civil Student ${i}`,
         email: `cole.civ${i}@aspirant-test.com`,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: recColE._id,
         isApproved: true,
@@ -1312,7 +1312,7 @@ async function runAspirantTests() {
     const emptyAspirantUser = await User.create({
       name: 'Empty Prefs Aspirant',
       email: 'empty.prefs@aspirant-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'aspirant',
       isApproved: true,
       isEmailVerified: true,
@@ -1333,7 +1333,7 @@ async function runAspirantTests() {
     const goaAspirantUser = await User.create({
       name: 'Goa Resident Aspirant',
       email: 'goa.aspirant@aspirant-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'aspirant',
       isApproved: true,
       isEmailVerified: true,

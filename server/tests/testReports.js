@@ -105,7 +105,7 @@ async function runReportTests() {
     tpoAUser = await User.create({
       name: 'TPO Alpha',
       email: 'tpo.alpha@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeA._id,
       isApproved: true,
@@ -117,7 +117,7 @@ async function runReportTests() {
     tpoBUser = await User.create({
       name: 'TPO Beta',
       email: 'tpo.beta@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeB._id,
       isApproved: true,
@@ -129,7 +129,7 @@ async function runReportTests() {
     superadminUser = await User.create({
       name: 'Root Superadmin',
       email: 'superadmin@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'superadmin',
       isApproved: true,
       isEmailVerified: true,
@@ -140,7 +140,7 @@ async function runReportTests() {
     studentUser = await User.create({
       name: 'Test Student',
       email: 'student.rbac@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeA._id,
       isApproved: true,
@@ -167,7 +167,7 @@ async function runReportTests() {
     recruiterUser = await User.create({
       name: 'Recruiter Acme',
       email: 'recruiter@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: company1._id,
       isApproved: true,
@@ -186,7 +186,7 @@ async function runReportTests() {
       const u = await User.create({
         name,
         email,
-        password: 'Password@123',
+        password: 'Krypton#2026!Valid',
         role: 'student',
         college: collegeA._id,
         isApproved: true,
@@ -257,7 +257,7 @@ async function runReportTests() {
     const stBUser = await User.create({
       name: 'Student Beta',
       email: 'student.beta@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeB._id,
       isApproved: true,
@@ -693,7 +693,7 @@ async function runReportTests() {
     const tpoSecUser = await User.create({
       name: 'TPO Security',
       email: 'tpo.security@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeSec._id,
       isApproved: true,
@@ -705,7 +705,7 @@ async function runReportTests() {
     const evilUser1 = await User.create({
       name: '=HYPERLINK("http://evil","x")',
       email: 'evil1@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeSec._id,
       isApproved: true,
@@ -728,7 +728,7 @@ async function runReportTests() {
     const evilUser2 = await User.create({
       name: '+1+1',
       email: 'evil2@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeSec._id,
       isApproved: true,
@@ -862,7 +862,7 @@ async function runReportTests() {
     const tpoHonestUser = await User.create({
       name: 'TPO Honest',
       email: 'tpo.honest@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeHonest._id,
       isApproved: true,
@@ -874,7 +874,7 @@ async function runReportTests() {
     const honestStudentUser = await User.create({
       name: 'Honest Solo Student',
       email: 'honest.solo@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeHonest._id,
       isApproved: true,
@@ -948,7 +948,7 @@ async function runReportTests() {
     const studentNullUser = await User.create({
       name: 'Null Pkg Student',
       email: 'nullpkg.student@report-test.com',
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeA._id,
       isApproved: true,

@@ -68,6 +68,23 @@ const protect = async (req, res, next) => {
         }
       }
 
+      // Analyst role boundary: Can only access /api/analytics/*, /api/auth/*, /api/colleges/public/*, and /api/colleges
+      if (req.user.role === 'analyst') {
+        const url = req.originalUrl || req.url;
+        const isAllowedAnalystPath =
+          url.startsWith('/api/analytics') ||
+          url.startsWith('/api/auth') ||
+          url.startsWith('/api/colleges/public') ||
+          url === '/api/colleges' ||
+          url.startsWith('/api/colleges?');
+        if (!isAllowedAnalystPath) {
+          return res.status(403).json({
+            success: false,
+            message: `User role 'analyst' is not authorized to access this resource`,
+          });
+        }
+      }
+
       // If user is a student, attach student profile if found
       if (req.user.role === 'student') {
         const studentProfile = await Student.findOne({ user: req.user._id }).populate('college');

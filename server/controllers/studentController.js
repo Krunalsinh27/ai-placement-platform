@@ -3,6 +3,7 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 const { Student, User, Application, Drive } = require('../models');
 const { isValidPdf, saveResumeFile, getResumeStream, deleteResumeFile, resolveResumeOriginalName } = require('../utils/storage');
+const { sanitizeFilename } = require('../middleware/uploadMiddleware');
 
 /**
  * Validate that the uploaded file has %PDF as first 4 bytes (backwards-compatibility helper)
@@ -110,7 +111,7 @@ const updateMyProfile = async (req, res, next) => {
         existingResumeUrl: student.resumeUrl,
       });
       student.resumeUrl = newResumeUrl;
-      student.resumeOriginalName = req.file.originalname;
+      student.resumeOriginalName = sanitizeFilename(req.file.originalname);
     }
     // Note: resumeUrl from req.body is intentionally ignored to prevent mass assignment
 
@@ -177,7 +178,7 @@ const uploadResume = async (req, res, next) => {
     });
 
     student.resumeUrl = newResumeUrl;
-    student.resumeOriginalName = req.file.originalname;
+    student.resumeOriginalName = sanitizeFilename(req.file.originalname);
     await student.save();
 
     res.status(200).json({
@@ -311,17 +312,17 @@ const getStudents = async (req, res, next) => {
     }
 
     // Branch filter
-    if (branch) {
+    if (typeof branch === 'string' && branch.trim() !== '') {
       query.branch = branch.trim().toUpperCase();
     }
 
     // Batch year filter
-    if (batchYear) {
+    if (batchYear && !isNaN(Number(batchYear))) {
       query.batchYear = Number(batchYear);
     }
 
     // Search by student name or enrollment number
-    if (search && search.trim() !== '') {
+    if (typeof search === 'string' && search.trim() !== '') {
       const searchTerm = search.trim();
       const userSearchQuery = {
         name: { $regex: searchTerm, $options: 'i' },

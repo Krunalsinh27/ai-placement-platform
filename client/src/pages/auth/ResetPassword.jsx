@@ -14,6 +14,7 @@ import {
   EyeOff,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { validatePasswordPolicy } from '../../utils/passwordPolicy';
 
 const ResetPassword = () => {
   const location = useLocation();
@@ -30,10 +31,9 @@ const ResetPassword = () => {
   const [errorMsg, setErrorMsg] = useState('');
 
   // Password rules validation
-  const hasMinLength = newPassword.length >= 8;
-  const hasLetter = /[A-Za-z]/.test(newPassword);
-  const hasNumber = /\d/.test(newPassword);
-  const isPasswordValid = hasMinLength && hasLetter && hasNumber;
+  const hasMinLength = newPassword.length >= 10;
+  const policyCheck = validatePasswordPolicy(newPassword, { email });
+  const isPasswordValid = policyCheck.valid;
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0;
 
   const handleSubmit = async (e) => {
@@ -50,7 +50,7 @@ const ResetPassword = () => {
     }
 
     if (!isPasswordValid) {
-      setErrorMsg('Password must be at least 8 characters long and contain at least one letter and one number');
+      setErrorMsg(policyCheck.message || 'Password must be at least 10 characters long');
       return;
     }
 
@@ -172,18 +172,14 @@ const ResetPassword = () => {
               {/* Password Rule Checklist */}
               <div className="mt-2.5 p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1">
                 <p className="text-[11px] font-bold text-slate-600">Password requirements:</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 text-[11px]">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px]">
                   <span className={`inline-flex items-center gap-1 ${hasMinLength ? 'text-emerald-700 font-semibold' : 'text-slate-500'}`}>
                     {hasMinLength ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <XCircle className="w-3 h-3 text-slate-400" />}
-                    8+ Characters
+                    10+ Characters
                   </span>
-                  <span className={`inline-flex items-center gap-1 ${hasLetter ? 'text-emerald-700 font-semibold' : 'text-slate-500'}`}>
-                    {hasLetter ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <XCircle className="w-3 h-3 text-slate-400" />}
-                    At least 1 letter
-                  </span>
-                  <span className={`inline-flex items-center gap-1 ${hasNumber ? 'text-emerald-700 font-semibold' : 'text-slate-500'}`}>
-                    {hasNumber ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <XCircle className="w-3 h-3 text-slate-400" />}
-                    At least 1 number
+                  <span className={`inline-flex items-center gap-1 ${isPasswordValid ? 'text-emerald-700 font-semibold' : 'text-slate-500'}`}>
+                    {isPasswordValid ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <XCircle className="w-3 h-3 text-slate-400" />}
+                    Unique & not easily guessed
                   </span>
                 </div>
               </div>

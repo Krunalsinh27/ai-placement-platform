@@ -29,6 +29,7 @@ const testSuites = [
   { name: 'test:reports', file: 'tests/testReports.js' },
   { name: 'test:ai', file: 'tests/testAiFeatures.js' },
   { name: 'test:assistant', file: 'tests/testAssistant.js' },
+  { name: 'test:security', file: 'tests/testSecurityHardening.js' },
 ];
 
 async function ensureSeedInTestDb() {
@@ -122,12 +123,15 @@ async function runAll() {
   }
 
   const results = [];
+  const keepGoing = process.env.TEST_KEEP_GOING === '1';
   for (const suite of testSuites) {
     const res = await runSingleTest(suite);
     results.push(res);
     if (!res.passed) {
       console.error(`\n❌ Suite ${suite.name} failed with exit code ${res.exitCode}`);
-      break;
+      if (!keepGoing) {
+        break;
+      }
     }
   }
 

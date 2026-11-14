@@ -45,7 +45,7 @@ function streamToBuffer(stream) {
 }
 
 function generateAuthToken(user) {
-  return jwt.sign({ id: user._id }, process.env.JWT_SECRET || 'testsecret_at_least_32_characters_long_for_test', {
+  return jwt.sign({ id: user._id }, process.env.JWT_SECRET || 'mock_dummy_jwt_secret_for_local_tests_only_32_chars', {
     expiresIn: '1h',
   });
 }
@@ -61,7 +61,7 @@ async function runStorageTests() {
 
   // Set JWT_SECRET if unset in test
   if (!process.env.JWT_SECRET) {
-    process.env.JWT_SECRET = 'testsecret_at_least_32_characters_long_for_test';
+    process.env.JWT_SECRET = 'mock_dummy_jwt_secret_for_local_tests_only_32_chars';
   }
 
   try {
@@ -137,7 +137,7 @@ async function runStorageTests() {
     const migUser = await User.create({
       name: 'Migration Student',
       email: `mig.student.${Date.now()}@example.com`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: migCollege._id,
       isApproved: true,
@@ -211,7 +211,7 @@ async function runStorageTests() {
     const userStudent1 = await User.create({
       name: 'Student One',
       email: `student1.${Date.now()}@alpha.edu`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeA._id,
       isApproved: true,
@@ -230,7 +230,7 @@ async function runStorageTests() {
     const userStudent2 = await User.create({
       name: 'Student Two',
       email: `student2.${Date.now()}@alpha.edu`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'student',
       college: collegeA._id,
       isApproved: true,
@@ -249,7 +249,7 @@ async function runStorageTests() {
     const userTpoA = await User.create({
       name: 'TPO Alpha',
       email: `tpo.alpha.${Date.now()}@alpha.edu`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeA._id,
       isApproved: true,
@@ -259,7 +259,7 @@ async function runStorageTests() {
     const userTpoB = await User.create({
       name: 'TPO Beta',
       email: `tpo.beta.${Date.now()}@beta.edu`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'tpo',
       college: collegeB._id,
       isApproved: true,
@@ -274,7 +274,7 @@ async function runStorageTests() {
     const userRecruiter1 = await User.create({
       name: 'Recruiter Alpha',
       email: `rec.alpha.${Date.now()}@corp.com`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: companyA._id,
       isApproved: true,
@@ -289,7 +289,7 @@ async function runStorageTests() {
     const userRecruiter2 = await User.create({
       name: 'Recruiter Beta',
       email: `rec.beta.${Date.now()}@corp.com`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'recruiter',
       company: companyB._id,
       isApproved: true,
@@ -299,7 +299,7 @@ async function runStorageTests() {
     const userSuperadmin = await User.create({
       name: 'Super Admin',
       email: `super.${Date.now()}@portal.com`,
-      password: 'Password@123',
+      password: 'Krypton#2026!Valid',
       role: 'superadmin',
       isApproved: true,
       isEmailVerified: true,

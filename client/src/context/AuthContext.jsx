@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import api from '../services/api';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import api, { setAccessToken } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -14,45 +14,139 @@ export const AuthProvider = ({ children }) => {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const [token, setToken] = useState(() => localStorage.getItem('token') || null);
+  // Access token is held in-memory ONLY - never in localStorage/sessionStorage
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [networkError, setNetworkError] = useState(false);
+  const [isWakingUp, setIsWakingUp] = useState(false);
 
-  // Synchronize auth state on mount
+  const handleLocalLogout = useCallback(() => {
+    setAccessToken(null);
+    setToken(null);
+    setUser(null);
+    setStudent(null);
+    setNetworkError(false);
+    setIsWakingUp(false);
+    localStorage.removeItem('user');
+    localStorage.removeItem('student');
+  }, []);
+
+  // Synchronize auth state on mount via httpOnly refresh cookie
   useEffect(() => {
-    const checkAuth = async () => {
-      const storedToken = localStorage.getItem('token');
-      if (storedToken) {
+    let isMounted = true;
+
+    // Cross-tab logout listener via BroadcastChannel
+    const channel =
+      typeof BroadcastChannel !== 'undefined'
+        ? new BroadcastChannel('placement_auth_channel')
+        : null;
+
+    if (channel) {
+      channel.onmessage = (event) => {
+        if (event.data?.type === 'LOGOUT') {
+          handleLocalLogout();
+        }
+      };
+    }
+
+    // Fallback cross-tab listener via storage event
+    const handleStorageEvent = (event) => {
+      if (event.key === 'auth_logout_timestamp') {
+        handleLocalLogout();
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
+    const initAuth = async () => {
+      const startTime = Date.now();
+      const MAX_INIT_WINDOW_MS = 75000; // Keep retrying for ~75 seconds on free-tier cold starts
+      let refreshSuccess = false;
+      let lastErr = null;
+      let attempt = 0;
+
+      while (Date.now() - startTime < MAX_INIT_WINDOW_MS) {
         try {
-          const res = await api.get('/auth/me');
-          if (res.data.success) {
-            setUser(res.data.user);
-            setStudent(res.data.student);
-            localStorage.setItem('user', JSON.stringify(res.data.user));
-            if (res.data.student) {
-              localStorage.setItem('student', JSON.stringify(res.data.student));
+          const res = await api.post('/auth/refresh');
+          if (res.data?.success && res.data?.token) {
+            const newToken = res.data.token;
+            setAccessToken(newToken);
+            if (isMounted) {
+              setToken(newToken);
+              setNetworkError(false);
+              setIsWakingUp(false);
             }
+
+            const meRes = await api.get('/auth/me');
+            if (isMounted && meRes.data?.success) {
+              setUser(meRes.data.user);
+              setStudent(meRes.data.student || null);
+              localStorage.setItem('user', JSON.stringify(meRes.data.user));
+              if (meRes.data.student) {
+                localStorage.setItem('student', JSON.stringify(meRes.data.student));
+              } else {
+                localStorage.removeItem('student');
+              }
+            }
+            refreshSuccess = true;
+            break;
           }
-        } catch (error) {
-          console.error('Session verification failed:', error);
-          logout();
+        } catch (err) {
+          lastErr = err;
+          // 401 or 403 means genuinely expired / unauthenticated -> do not retry
+          if (err.response?.status === 401 || err.response?.status === 403) {
+            break;
+          }
+          // Server cold start, network error, or 502/503/504: show waking up state and backoff
+          if (isMounted) {
+            setIsWakingUp(true);
+          }
+          const remainingTime = MAX_INIT_WINDOW_MS - (Date.now() - startTime);
+          if (remainingTime > 2000) {
+            const backoffMs = Math.min(5000, Math.min(remainingTime, 2000 + attempt * 1000));
+            await new Promise((r) => setTimeout(r, backoffMs));
+            attempt++;
+          } else {
+            break;
+          }
         }
       }
-      setLoading(false);
+
+      if (isMounted) {
+        setIsWakingUp(false);
+      }
+
+      if (!refreshSuccess) {
+        if (lastErr?.response?.status === 401 || lastErr?.response?.status === 403 || !lastErr) {
+          handleLocalLogout();
+        } else {
+          // Network or server timeout: retain existing user state so user is not logged out during cold start
+          if (isMounted) setNetworkError(true);
+        }
+      }
+
+      if (isMounted) setLoading(false);
     };
 
-    checkAuth();
-  }, []);
+    initAuth();
+
+    return () => {
+      isMounted = false;
+      if (channel) channel.close();
+      window.removeEventListener('storage', handleStorageEvent);
+    };
+  }, [handleLocalLogout]);
 
   // Login handler
   const login = async (email, password) => {
     const res = await api.post('/auth/login', { email, password });
     if (res.data.success) {
       const { token: newToken, user: newUser, student: newStudent } = res.data;
+      setAccessToken(newToken);
       setToken(newToken);
       setUser(newUser);
       setStudent(newStudent);
 
-      localStorage.setItem('token', newToken);
+      // Persist only non-sensitive user metadata - NO token in storage
       localStorage.setItem('user', JSON.stringify(newUser));
       if (newStudent) {
         localStorage.setItem('student', JSON.stringify(newStudent));
@@ -104,12 +198,17 @@ export const AuthProvider = ({ children }) => {
     try {
       await api.post('/auth/logout');
     } catch (_) {}
-    setToken(null);
-    setUser(null);
-    setStudent(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('student');
+    handleLocalLogout();
+
+    // Broadcast logout event across tabs
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const channel = new BroadcastChannel('placement_auth_channel');
+        channel.postMessage({ type: 'LOGOUT' });
+        channel.close();
+      }
+    } catch (_) {}
+    localStorage.setItem('auth_logout_timestamp', Date.now().toString());
   };
 
   // Update student profile locally
@@ -133,6 +232,8 @@ export const AuthProvider = ({ children }) => {
         student,
         token,
         loading,
+        networkError,
+        isWakingUp,
         login,
         register,
         registerTPO,

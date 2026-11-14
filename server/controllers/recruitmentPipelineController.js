@@ -445,16 +445,16 @@ const moveParticipantBatch = async (req, res, next) => {
  */
 const updateBulkAttendance = async (req, res, next) => {
   try {
-    const { attendanceList } = req.body;
-    if (!Array.isArray(attendanceList) || attendanceList.length === 0) {
-      return res.status(400).json({ success: false, message: 'attendanceList array is required' });
-    }
-
     const round = await Round.findById(req.params.id).populate('drive');
     if (!round) return res.status(404).json({ success: false, message: 'Round not found' });
 
     if (!verifyDriveAccess(round.drive, req.user)) {
       return res.status(403).json({ success: false, message: 'Not authorized for this drive' });
+    }
+
+    const { attendanceList } = req.body;
+    if (!Array.isArray(attendanceList) || attendanceList.length === 0) {
+      return res.status(400).json({ success: false, message: 'attendanceList array is required' });
     }
 
     let updatedCount = 0;
@@ -1448,6 +1448,50 @@ const getApplicationTimeline = async (req, res, next) => {
 
     if (!application) {
       return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    // Authorization & Ownership check (IDOR prevention)
+    if (req.user.role !== 'superadmin') {
+      if (req.user.role === 'student') {
+        const studentUserId = (application.student?.user?._id || application.student?.user)?.toString();
+        if (!studentUserId || studentUserId !== req.user._id.toString()) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view another student application timeline',
+          });
+        }
+      } else if (req.user.role === 'recruiter') {
+        const userCompanyId = (req.user.company?._id || req.user.company)?.toString();
+        const driveCompanyId = (application.drive?.company?._id || application.drive?.company)?.toString();
+        if (!userCompanyId || !driveCompanyId || userCompanyId !== driveCompanyId) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view applications for another company',
+          });
+        }
+      } else if (req.user.role === 'tpo' || req.user.role === 'admin') {
+        const userCollegeId = (req.user.college?._id || req.user.college)?.toString();
+        const driveCollegeIds = [];
+        if (application.drive?.college) driveCollegeIds.push((application.drive.college._id || application.drive.college).toString());
+        if (Array.isArray(application.drive?.colleges)) {
+          application.drive.colleges.forEach((c) => {
+            const cid = (c?._id || c)?.toString();
+            if (cid && !driveCollegeIds.includes(cid)) driveCollegeIds.push(cid);
+          });
+        }
+        const studentCollegeId = (application.student?.college?._id || application.student?.college)?.toString();
+        if (!userCollegeId || (!driveCollegeIds.includes(userCollegeId) && studentCollegeId !== userCollegeId)) {
+          return res.status(403).json({
+            success: false,
+            message: 'Not authorized to view applications for another college',
+          });
+        }
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to access application timeline',
+        });
+      }
     }
 
     const driveId = application.drive._id;
