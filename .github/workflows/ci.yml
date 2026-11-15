@@ -58,6 +58,7 @@ jobs:
           MONGO_URI_TEST: mongodb://127.0.0.1:27017/placement_management_test
           REDIS_URL: redis://127.0.0.1:6379
           CLIENT_URL: http://localhost:5173
+          TEST_KEEP_GOING: 1
         run: npm run test:fresh
 
       - name: Install client dependencies

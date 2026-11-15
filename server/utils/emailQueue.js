@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const EmailLog = require('../models/EmailLog');
 const { sendRawEmail } = require('./emailService');
-const { isRedisConfigured, getRedisClient, getRedisStatus } = require('../config/redis');
+const { isRedisConfigured, getRedisClient, getRedisStatus, getBullPrefix } = require('../config/redis');
 
 /**
  * Detect whether an SMTP error is a permanent rejection (e.g. 5xx, invalid address/mailbox)
@@ -55,10 +55,20 @@ class EmailQueue {
       const { Queue } = require('bullmq');
       this._bullQueue = new Queue('emails', {
         connection: getRedisClient(),
+        prefix: getBullPrefix(),
       });
       this._bullQueue.on('error', () => {});
     }
     return this._bullQueue;
+  }
+
+  async closeBullQueue() {
+    if (this._bullQueue) {
+      try {
+        await this._bullQueue.close();
+      } catch (_) {}
+      this._bullQueue = null;
+    }
   }
 
   setSenderFunction(fn) {
@@ -196,14 +206,12 @@ class EmailQueue {
       try {
         const bullQueue = this.getBullQueue();
         if (bullQueue) {
-          const jobId = `email-${log._id.toString()}`;
+          const originalJobId = `email-${log._id.toString()}`;
           try {
-            const oldJob = await bullQueue.getJob(jobId);
-            if (oldJob) {
-              await oldJob.remove();
-            }
+            await bullQueue.remove(originalJobId);
           } catch (_) {}
 
+          const jobId = `email-${log._id.toString()}-resend-${Date.now()}`;
           await bullQueue.add(
             'send-email',
             {

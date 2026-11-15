@@ -100,4 +100,5 @@ console.log(`✓ formatIST output verified: "${formatted}"`);
 console.log('\n======================================================');
 console.log('      ALL DATE-TIME UNIT TESTS PASSED (100%)          ');
 console.log('======================================================\n');
+process.exit(0);
 

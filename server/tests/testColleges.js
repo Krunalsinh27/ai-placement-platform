@@ -518,6 +518,7 @@ async function runTests() {
     server.close();
     await mongoose.connection.close();
     console.log('Test connections closed and test database records cleaned.');
+    process.exit(process.exitCode || 0);
   }
 }
 

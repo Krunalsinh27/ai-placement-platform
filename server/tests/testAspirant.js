@@ -1384,8 +1384,10 @@ async function runAspirantTests() {
   }
 }
 
-runAspirantTests().catch((err) => {
-  console.error('\n❌ ASPIRANT TEST SUITE FAILED:', err);
-  process.exit(1);
-});
+runAspirantTests()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('\n❌ ASPIRANT TEST SUITE FAILED:', err);
+    process.exit(1);
+  });
 

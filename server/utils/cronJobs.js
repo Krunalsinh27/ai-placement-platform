@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { isRedisConfigured, getRedisClient } = require('../config/redis');
+const { isRedisConfigured, getRedisClient, getBullPrefix } = require('../config/redis');
 const {
   User,
   Student,
@@ -328,10 +328,20 @@ const getCronQueue = () => {
     const { Queue } = require('bullmq');
     cronQueue = new Queue('scheduled-jobs', {
       connection: getRedisClient(),
+      prefix: getBullPrefix(),
     });
     cronQueue.on('error', () => {});
   }
   return cronQueue;
+};
+
+const closeCronQueue = async () => {
+  if (cronQueue) {
+    try {
+      await cronQueue.close();
+    } catch (_) {}
+    cronQueue = null;
+  }
 };
 
 /**
@@ -433,4 +443,5 @@ module.exports = {
   sendUpcomingReminders,
   autoSubmitExpiredTestAttempts,
   handleWindowEndAbsentees,
+  closeCronQueue,
 };

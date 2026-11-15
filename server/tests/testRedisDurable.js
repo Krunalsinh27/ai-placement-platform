@@ -8,7 +8,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Redis = require('ioredis');
 const rateLimit = require('express-rate-limit');
-const { getTestDbUri } = require('./testHelper');
+const { getTestDbUri, cleanTestRedisKeys } = require('./testHelper');
 process.env.MONGO_URI = getTestDbUri();
 const {
   isRedisConfigured,
@@ -276,6 +276,7 @@ async function runRedisDurableTests() {
     // (b) Emails created while Redis is down stay queued and are sent after Redis returns, with no duplicates
     // --------------------------------------------------------
     console.log('\n3. Testing (b): Emails created while Redis is down stay queued and sent after return...');
+    await EmailLog.deleteMany({ status: 'queued' });
     const testUserId = new mongoose.Types.ObjectId();
 
     // 1. Verify enqueueEmail with down/unreachable Redis does not throw into caller and leaves EmailLog as queued
@@ -307,6 +308,7 @@ async function runRedisDurableTests() {
     assert.strictEqual(offlineLog.status, 'queued');
 
     if (isRedisReachable) {
+      await cleanTestRedisKeys();
       // Set mock sender function
       let emailSentCount = 0;
       emailQueue.setSenderFunction(async () => {
@@ -323,7 +325,7 @@ async function runRedisDurableTests() {
       assert.strictEqual(duplicateCheck, 0, 'Second recovery must not create duplicate jobs');
 
       // Start worker to process the recovered email
-      const { createRedisClient } = require('../config/redis');
+      const { createRedisClient, getBullPrefix } = require('../config/redis');
       let processedJob = false;
 
       const recoveryWorker = new Worker(
@@ -337,10 +339,12 @@ async function runRedisDurableTests() {
             sentAt: new Date(),
             attempts: 1,
           });
-          processedJob = true;
+          if (String(item.logId) === String(offlineLog._id)) {
+            processedJob = true;
+          }
           return { success: true };
         },
-        { connection: createRedisClient() }
+        { connection: createRedisClient(), prefix: getBullPrefix() }
       );
 
       const startWait = Date.now();

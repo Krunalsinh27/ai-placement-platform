@@ -17,6 +17,11 @@ const {
 } = require('../utils/emailService');
 const emailQueue = require('../utils/emailQueue');
 const EmailLog = require('../models/EmailLog');
+const {
+  startTestWorkers,
+  stopTestWorkers,
+  waitForEmailLog,
+} = require('./testHelper');
 
 async function runEmailGuardTests() {
   console.log('======================================================');
@@ -27,6 +32,7 @@ async function runEmailGuardTests() {
   const testDbUri = process.env.MONGO_URI_TEST || 'mongodb://127.0.0.1:27017/placement_management_test';
   await mongoose.connect(testDbUri);
   console.log('Connected to MongoDB test database successfully.\n');
+  await startTestWorkers();
 
   try {
     // -----------------------------------------------------------------
@@ -106,6 +112,10 @@ async function runEmailGuardTests() {
     assert.strictEqual(result.mode, 'skipped');
     console.log('✓ sendRawEmail safely intercepts fake domain and returns mode="skipped" without touching SMTP.');
 
+    // Restore test environment before queue testing
+    process.env.NODE_ENV = 'test';
+    process.env.EMAIL_MODE = 'console';
+
     // -----------------------------------------------------------------
     // TEST 4: Permanent Failure Classification & Non-retry in EmailQueue
     // -----------------------------------------------------------------
@@ -145,9 +155,7 @@ async function runEmailGuardTests() {
     });
 
     // Wait for queue processing to finish
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    const updatedLog = await EmailLog.findById(log._id);
+    const updatedLog = await waitForEmailLog({ _id: log._id }, 'failed', 10000);
     assert.strictEqual(updatedLog.status, 'failed');
     assert.strictEqual(updatedLog.attempts, 1);
     assert.strictEqual(sendCalls, 1);
@@ -221,6 +229,8 @@ async function runEmailGuardTests() {
     console.log('      ALL EMAIL GUARD TESTS PASSED SUCCESSFULLY!       ');
     console.log('======================================================\n');
   } finally {
+    emailQueue.resetSenderFunction();
+    await stopTestWorkers();
     await mongoose.disconnect();
   }
 }

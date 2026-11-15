@@ -7,7 +7,12 @@ const jwt = require('jsonwebtoken');
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
-const { getTestDbUri } = require('./testHelper');
+const {
+  getTestDbUri,
+  startTestWorkers,
+  stopTestWorkers,
+  waitForEmailLog,
+} = require('./testHelper');
 
 const {
   User,
@@ -38,6 +43,7 @@ async function runDeliveryTests() {
   console.log('Connecting to MongoDB...');
   await mongoose.connect(getTestDbUri());
   console.log('Connected to MongoDB successfully:', mongoose.connection.name);
+  await startTestWorkers();
 
   // Setup express test server
   const app = express();
@@ -481,7 +487,7 @@ async function runDeliveryTests() {
     }
 
     // Allow background async notification/email queuing to finish
-    await new Promise((r) => setTimeout(r, 400));
+    await waitForEmailLog({ type: 'schedule_updated' }, null, 10000);
 
     const emailLogs = await EmailLog.find({ type: 'schedule_updated' });
     if (emailLogs.length === 0) {
@@ -674,6 +680,7 @@ async function runDeliveryTests() {
     console.error('\n❌ Test failure:', error);
     process.exitCode = 1;
   } finally {
+    await stopTestWorkers();
     await new Promise((resolve) => server.close(resolve));
     await mongoose.disconnect();
     console.log('Test server closed & MongoDB disconnected.');

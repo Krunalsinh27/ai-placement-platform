@@ -152,9 +152,14 @@ const migrateAuthUsers = async () => {
 };
 
 if (require.main === module) {
+  const { assertSafeSeedEnvironment } = require('./seedGuard');
   (async () => {
     try {
-      const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/placement_management';
+      const uri =
+        process.env.MONGO_URI_TEST ||
+        process.env.MONGO_URI ||
+        'mongodb://127.0.0.1:27017/placement_management';
+      assertSafeSeedEnvironment(uri);
       await mongoose.connect(uri);
       console.log('Connected to MongoDB for auth migration...');
       await migrateAuthUsers();
@@ -162,7 +167,7 @@ if (require.main === module) {
       console.log('Auth migration complete.');
       process.exit(0);
     } catch (err) {
-      console.error(err);
+      console.error(err.message || err);
       process.exit(1);
     }
   })();

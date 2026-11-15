@@ -7,7 +7,7 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
 
-const { getTestDbUri } = require('./testHelper');
+const { getTestDbUri, cleanTestRedisKeys } = require('./testHelper');
 
 const testSuites = [
   { name: 'test:datetime', file: 'tests/testDateTime.js' },
@@ -30,6 +30,7 @@ const testSuites = [
   { name: 'test:ai', file: 'tests/testAiFeatures.js' },
   { name: 'test:assistant', file: 'tests/testAssistant.js' },
   { name: 'test:security', file: 'tests/testSecurityHardening.js' },
+  { name: 'test:seedguard', file: 'tests/testSeedGuard.js' },
   { name: 'test:redis', file: 'tests/testRedisDurable.js' },
 ];
 
@@ -149,6 +150,7 @@ async function runAll() {
 
   try {
     await ensureSeedInTestDb();
+    await cleanTestRedisKeys();
   } catch (err) {
     console.error('Failed to ensure test DB seed:', err);
     process.exit(1);

@@ -1,6 +1,6 @@
 const { Notification, User, Student, Company, College } = require('../models');
 const emailQueue = require('./emailQueue');
-const { isRedisConfigured, getRedisClient, getRedisStatus } = require('../config/redis');
+const { isRedisConfigured, getRedisClient, getRedisStatus, getBullPrefix } = require('../config/redis');
 const {
   renderDrivePublishedTemplate,
   renderRoundScheduledTemplate,
@@ -564,10 +564,20 @@ const getNotificationQueue = () => {
     const { Queue } = require('bullmq');
     notificationQueue = new Queue('notifications', {
       connection: getRedisClient(),
+      prefix: getBullPrefix(),
     });
     notificationQueue.on('error', () => {});
   }
   return notificationQueue;
+};
+
+const closeNotificationQueue = async () => {
+  if (notificationQueue) {
+    try {
+      await notificationQueue.close();
+    } catch (_) {}
+    notificationQueue = null;
+  }
 };
 
 const notifyDrivePublished = (drive) => {
@@ -694,4 +704,5 @@ module.exports = {
   notifyNewApplicant,
   waitForPendingNotifications,
   trackNotificationPromise,
+  closeNotificationQueue,
 };

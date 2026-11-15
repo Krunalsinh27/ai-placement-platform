@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const { Worker, UnrecoverableError } = require('bullmq');
 const EmailLog = require('../models/EmailLog');
-const { isRedisConfigured, createRedisClient } = require('../config/redis');
+const { isRedisConfigured, createRedisClient, getBullPrefix } = require('../config/redis');
 const emailQueue = require('./emailQueue');
 const { processDrivePublishedBatch } = require('./notificationService');
 const { executeCronJob } = require('./cronJobs');
@@ -90,13 +90,15 @@ const startQueueWorkers = () => {
       },
       {
         connection: createRedisClient(),
+        prefix: getBullPrefix(),
         settings: {
-          backoffStrategies: {
-            emailBackoff(attemptsMade) {
+          backoffStrategy(attemptsMade, type) {
+            if (type === 'emailBackoff') {
               const delays =
                 process.env.NODE_ENV === 'test' ? [50, 100, 200] : [1000, 5000, 30000];
               return delays[attemptsMade - 1] || 30000;
-            },
+            }
+            return 1000;
           },
         },
       }
@@ -122,6 +124,7 @@ const startQueueWorkers = () => {
       },
       {
         connection: createRedisClient(),
+        prefix: getBullPrefix(),
       }
     );
 
@@ -141,6 +144,7 @@ const startQueueWorkers = () => {
       },
       {
         connection: createRedisClient(),
+        prefix: getBullPrefix(),
       }
     );
 

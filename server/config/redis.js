@@ -2,6 +2,7 @@ const Redis = require('ioredis');
 
 let sharedClient = null;
 let lastErrorLogTs = 0;
+const activeClients = new Set();
 
 /**
  * Check whether REDIS_URL environment variable is set
@@ -91,6 +92,11 @@ const createRedisClient = (extraOptions = {}) => {
     checkMaxMemoryPolicy(client);
   });
 
+  activeClients.add(client);
+  client.on('end', () => {
+    activeClients.delete(client);
+  });
+
   return client;
 };
 
@@ -137,14 +143,34 @@ const validateRedisConfig = (env = process.env) => {
  * Close active shared Redis connections gracefully
  */
 const closeRedisConnections = async () => {
-  if (sharedClient) {
-    try {
-      await sharedClient.quit();
-    } catch (_) {
-      sharedClient.disconnect();
-    }
-    sharedClient = null;
+  const clients = Array.from(activeClients);
+  activeClients.clear();
+  sharedClient = null;
+  await Promise.allSettled(
+    clients.map(async (client) => {
+      try {
+        await client.quit();
+      } catch (_) {
+        try {
+          client.disconnect();
+        } catch (_) {}
+      }
+    })
+  );
+};
+
+/**
+ * Return BullMQ key prefix.
+ * In test environment, uses 'bull-test' to isolate test queues from production/development.
+ */
+const getBullPrefix = () => {
+  if (process.env.BULLMQ_PREFIX && process.env.BULLMQ_PREFIX.trim()) {
+    return process.env.BULLMQ_PREFIX.trim();
   }
+  if (process.env.NODE_ENV === 'test') {
+    return 'bull-test';
+  }
+  return 'bull';
 };
 
 module.exports = {
@@ -152,6 +178,7 @@ module.exports = {
   createRedisClient,
   getRedisClient,
   getRedisStatus,
+  getBullPrefix,
   checkMaxMemoryPolicy,
   validateRedisConfig,
   closeRedisConnections,

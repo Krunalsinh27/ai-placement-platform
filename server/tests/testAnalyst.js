@@ -866,7 +866,9 @@ async function runAnalystTests() {
   }
 }
 
-runAnalystTests().catch((err) => {
-  console.error('\n❌ TEST RUN FAILED:', err);
-  process.exit(1);
-});
+runAnalystTests()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('\n❌ TEST RUN FAILED:', err);
+    process.exit(1);
+  });

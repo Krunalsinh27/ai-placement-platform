@@ -126,6 +126,7 @@ Under the **Environment** tab, configure the following keys:
 | `BREVO_SENDER_EMAIL` | `noreply@yourdomain.com` | Verified sender address in Brevo |
 | `BREVO_SENDER_NAME` | `Placement Portal` | Display name on outbound emails |
 | `ALLOW_PRODUCTION_SEED` | `false` | Safeguard against accidental demo database wipes in production |
+| `ALLOW_REMOTE_SEED` | `yes-i-am-sure` | Explicit safeguard required to run seed or migration scripts against remote MongoDB hosts whose database name does not end in `_test` or `_dev` |
 | `AI_PROVIDER` | `groq` | AI provider (`groq`, `gemini`, `mock`, or `none`). Mock is blocked in production |
 | `AI_API_KEY` | *API Key from Groq/Gemini* | API Key for LLM provider (not needed if provider is none; missing key falls back to rules) |
 | `AI_MODEL` | `llama-3.3-70b-versatile` | Model name for chat completion (`llama-3.3-70b-versatile`, `gemini-1.5-flash`) |

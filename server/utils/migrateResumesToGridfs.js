@@ -7,6 +7,7 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const { Student } = require('../models');
 const { getGridFSBucket, uploadDir } = require('./storage');
+const { assertSafeSeedEnvironment } = require('./seedGuard');
 
 /**
  * One-time migration script to transfer existing local resume files to MongoDB GridFS.
@@ -14,9 +15,10 @@ const { getGridFSBucket, uploadDir } = require('./storage');
  */
 async function migrateResumesToGridfs() {
   const uri =
-    process.env.MONGO_URI ||
     process.env.MONGO_URI_TEST ||
+    process.env.MONGO_URI ||
     'mongodb://127.0.0.1:27017/placement_management';
+  assertSafeSeedEnvironment(uri);
 
   if (mongoose.connection.readyState === 0) {
     await mongoose.connect(uri);

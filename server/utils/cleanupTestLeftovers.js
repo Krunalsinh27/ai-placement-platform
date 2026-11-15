@@ -20,9 +20,14 @@ const {
   RoundParticipant,
   Aspirant,
 } = require('../models');
+const { assertSafeSeedEnvironment } = require('./seedGuard');
 
 async function cleanupLeftovers() {
-  const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/placement_management';
+  const mongoUri =
+    process.env.MONGO_URI_TEST ||
+    process.env.MONGO_URI ||
+    'mongodb://127.0.0.1:27017/placement_management';
+  assertSafeSeedEnvironment(mongoUri);
   console.log('Connecting to dev database:', mongoUri);
   await mongoose.connect(mongoUri);
 
