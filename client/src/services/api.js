@@ -168,6 +168,11 @@ api.interceptors.response.use(
             originalRequest.headers = originalRequest.headers || {};
             originalRequest.headers.Authorization = `Bearer ${newToken}`;
             return api(originalRequest);
+          } else {
+            // 2xx response without token: treat as failure, stop retrying, and treat as normal logged-out state
+            lastRefreshErr = new Error('Token refresh response did not contain an access token');
+            lastRefreshErr.response = { status: 401, data: res.data };
+            break;
           }
         } catch (refreshError) {
           lastRefreshErr = refreshError;

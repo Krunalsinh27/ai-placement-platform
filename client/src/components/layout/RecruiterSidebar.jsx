@@ -1,6 +1,7 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { isRecruiterPipelineActive } from '../../utils/navigationHelper';
 import {
   LayoutDashboard,
   Building2,
@@ -19,7 +20,15 @@ import toast from 'react-hot-toast';
 
 const RecruiterSidebar = ({ isOpen, onClose }) => {
   const { user, logout } = useAuth();
+  const location = useLocation();
   const company = user?.company;
+
+  const isLinkActive = (path, defaultActive) => {
+    if (path === '/recruiter/pipeline') {
+      return isRecruiterPipelineActive(location.pathname);
+    }
+    return defaultActive;
+  };
 
   const links = [
     { name: 'Dashboard', path: '/recruiter/dashboard', icon: LayoutDashboard },
@@ -103,7 +112,7 @@ const RecruiterSidebar = ({ isOpen, onClose }) => {
                 onClick={() => onClose && onClose()}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                    isActive
+                    isLinkActive(link.path, isActive)
                       ? 'bg-sky-600 text-white shadow-sm shadow-sky-600/30'
                       : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
                   }`

@@ -175,7 +175,7 @@ const initializeDriveRoundsAndRound1 = async (driveId) => {
             venueOrLink: round1.venueOrLink,
             instructions: round1.instructions,
             message: `Applications are closed for ${drive.role} (${drive.company?.name || 'Company'}). ${round1.name} has been scheduled.`,
-            link: '/student/applications',
+            link: round1.deliveryMode === 'platform_test' ? `/student/test/${round1._id}` : '/student/applications',
           }).catch((err) => console.error('Failed to notify candidate of round 1:', err));
         }
       }

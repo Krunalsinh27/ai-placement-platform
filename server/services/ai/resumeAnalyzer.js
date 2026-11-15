@@ -657,7 +657,6 @@ ${redactedJd}
 </JOB_DESCRIPTION>`;
 
   let aiResult = null;
-  let source = 'rules';
 
   try {
     aiResult = await callAiWithQuotaAndRetry({
@@ -665,7 +664,20 @@ ${redactedJd}
       userPrompt,
       mode: 'analyze',
       userId: student.user._id || student.user,
-      validateFn: (data) => ResumeAnalysisZodSchema.safeParse(data).success,
+      validateFn: (data) => {
+        if (data && typeof data === 'object') {
+          if (Array.isArray(data.suggestions) && data.suggestions.length > 8) {
+            data.suggestions = data.suggestions.slice(0, 8);
+          }
+          if (Array.isArray(data.rewrites) && data.rewrites.length > 5) {
+            data.rewrites = data.rewrites.slice(0, 5);
+          }
+          if (Array.isArray(data.learningOrder) && data.learningOrder.length > 8) {
+            data.learningOrder = data.learningOrder.slice(0, 8);
+          }
+        }
+        return ResumeAnalysisZodSchema.parse(data);
+      },
     });
   } catch (err) {
     console.warn('[ResumeAnalyzer] AI invocation error, degrading to rules:', err.message);
@@ -674,9 +686,9 @@ ${redactedJd}
   let finalSuggestions = [];
   let finalRewrites = [];
   let finalLearningOrder = [];
+  let hasAiContent = false;
 
   if (aiResult?.success && aiResult?.data) {
-    source = 'ai';
     const parsed = aiResult.data;
 
     // Validate LLM rewrites strictly
@@ -692,17 +704,21 @@ ${redactedJd}
       }
     }
 
-    if (Array.isArray(parsed.suggestions)) {
+    if (Array.isArray(parsed.suggestions) && parsed.suggestions.length > 0) {
       finalSuggestions = parsed.suggestions.slice(0, 8);
     }
 
-    if (Array.isArray(parsed.learningOrder)) {
+    if (Array.isArray(parsed.learningOrder) && parsed.learningOrder.length > 0) {
       finalLearningOrder = parsed.learningOrder.slice(0, 8);
+    }
+
+    if (finalSuggestions.length > 0 || finalRewrites.length > 0 || finalLearningOrder.length > 0) {
+      hasAiContent = true;
     }
   }
 
-  // Fallback if AI produced no valid rewrites or suggestions
-  if (finalSuggestions.length === 0 || source === 'rules') {
+  // Fallback if AI produced no valid rewrites or suggestions, or if any section is empty
+  if (finalSuggestions.length === 0 || finalRewrites.length === 0 || finalLearningOrder.length === 0 || !hasAiContent) {
     const fallback = generateRuleBasedAnalysis({
       breakdown: scoreResult.breakdown,
       missingRequired: scoreResult.missingRequired,
@@ -716,6 +732,8 @@ ${redactedJd}
     if (finalRewrites.length === 0) finalRewrites = fallback.rewrites;
     if (finalLearningOrder.length === 0) finalLearningOrder = fallback.learningOrder;
   }
+
+  const source = hasAiContent ? 'ai' : 'rules';
 
   const responsePayload = {
     atsScore: scoreResult.atsScore,

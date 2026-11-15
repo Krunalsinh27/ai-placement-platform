@@ -20,7 +20,8 @@ const {
 } = require('../models');
 const { validateCorsConfig } = require('../utils/corsConfig');
 const { sanitizeFilename, validatePdfMagicBytes } = require('../middleware/uploadMiddleware');
-const { normalizeAccountKey } = require('../middleware/rateLimitMiddleware');
+const { normalizeAccountKey, normalizeUserKey, userApiLimiter } = require('../middleware/rateLimitMiddleware');
+const rateLimit = require('express-rate-limit');
 const { computeMatchScore } = require('../services/ai/matchingEngine');
 
 function generateAuthToken(user) {
@@ -157,6 +158,82 @@ async function runSecurityHardeningTests() {
     'Non-string email must fall back to client IP'
   );
   console.log('✓ Account rate limiter email normalization and IP fallback verified\n');
+
+  // User-Keyed Rate Limiter Normalization Tests
+  console.log('3B. Testing authenticated user-keyed rate limiter key generation...');
+  assert.strictEqual(
+    normalizeUserKey('user_api', { user: { _id: '507f1f77bcf86cd799439011' }, ip: '192.168.1.10' }),
+    'user_api:user:507f1f77bcf86cd799439011',
+    'User ID from req.user._id must be used as rate limit key'
+  );
+  assert.strictEqual(
+    normalizeUserKey('user_api', { user: { id: 'user_123' }, ip: '192.168.1.10' }),
+    'user_api:user:user_123',
+    'User ID from req.user.id must be used as fallback user key'
+  );
+  assert.strictEqual(
+    normalizeUserKey('user_api', { user: null, ip: '192.168.1.50' }),
+    'user_api:ip:192.168.1.50',
+    'Unauthenticated requests must fall back to client IP'
+  );
+  assert.strictEqual(
+    normalizeUserKey('user_api', { ip: null }),
+    'user_api:ip:unknown',
+    'Missing user and IP must fall back to unknown'
+  );
+
+  // Unit test of rate limiter key function: two different users on the same IP get separate buckets
+  console.log('3C. Testing separate rate limit buckets for different users on the same IP...');
+  const testLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 3,
+    skip: () => false, // enabled explicitly for this unit test
+    validate: { keyGeneratorIpFallback: false },
+    keyGenerator: (req) => normalizeUserKey('test_bucket', req),
+    handler: (req, res) => {
+      res.status(429).json({ success: false, message: 'Too many requests' });
+    },
+  });
+
+  const runLimiterReq = (req) =>
+    new Promise((resolve) => {
+      const res = {
+        statusCode: 200,
+        status(code) {
+          this.statusCode = code;
+          return this;
+        },
+        json(payload) {
+          resolve({ status: this.statusCode, payload });
+        },
+        setHeader() {},
+        getHeader() {},
+      };
+      testLimiter(req, res, () => {
+        resolve({ status: 200, payload: { success: true } });
+      });
+    });
+
+  const sharedCampusIp = '203.0.113.195';
+  const campusUser1 = { _id: '507f1f77bcf86cd799439001' };
+  const campusUser2 = { _id: '507f1f77bcf86cd799439002' };
+
+  // User 1 on shared IP makes 3 requests -> all 3 succeed
+  for (let i = 0; i < 3; i++) {
+    const res = await runLimiterReq({ user: campusUser1, ip: sharedCampusIp });
+    assert.strictEqual(res.status, 200, `User 1 request ${i + 1} on shared IP must succeed`);
+  }
+
+  // User 2 on the SAME shared IP makes 3 requests -> all 3 succeed (distinct bucket)
+  for (let i = 0; i < 3; i++) {
+    const res = await runLimiterReq({ user: campusUser2, ip: sharedCampusIp });
+    assert.strictEqual(res.status, 200, `User 2 request ${i + 1} on same shared IP must succeed in separate bucket`);
+  }
+
+  // User 1 on shared IP makes 4th request -> limited with 429 after exceeding cap
+  const user1Blocked = await runLimiterReq({ user: campusUser1, ip: sharedCampusIp });
+  assert.strictEqual(user1Blocked.status, 429, 'User 1 exceeding cap must receive 429 Too Many Requests');
+  console.log('✓ Authenticated user rate limiter buckets and IP coexistence verified\n');
 
   // ==========================================
   // SECTION 4: Explainable Match Demographic Neutrality Fairness Tests

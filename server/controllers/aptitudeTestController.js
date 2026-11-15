@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { z } = require('zod');
 const {
   Round,
   Question,
@@ -752,11 +753,19 @@ const getStudentAttempt = async (req, res, next) => {
         success: true,
         status: attempt.status,
         submittedAt: attempt.submittedAt,
-        showScore: round.showScoreToStudents,
+        showScore: Boolean(round.showScoreToStudents),
         score: round.showScoreToStudents ? attempt.score : undefined,
         percentage: round.showScoreToStudents ? attempt.percentage : undefined,
         totalMarks: round.showScoreToStudents ? round.totalMarks : undefined,
-        tabSwitchCount: attempt.tabSwitchCount,
+        tabSwitchCount: attempt.tabSwitchCount || 0,
+        round: {
+          _id: round._id,
+          name: round.name,
+          deliveryMode: round.deliveryMode,
+          totalMarks: round.totalMarks,
+          companyName: round.drive?.company?.name,
+          role: round.drive?.role,
+        },
         message: round.showScoreToStudents
           ? `Test submitted. Score: ${attempt.score}/${round.totalMarks} (${attempt.percentage}%)`
           : 'Your test has been submitted. Results will be declared by the recruiter.',
@@ -1125,6 +1134,139 @@ const allowStudentRetest = async (req, res, next) => {
   }
 };
 
+const myTestsQuerySchema = z
+  .object({
+    status: z
+      .enum(['not_started', 'in_progress', 'submitted', 'auto_submitted', 'window_closed', 'all'])
+      .optional(),
+  })
+  .passthrough();
+
+/**
+ * Logged-in student gets all their enrolled platform aptitude tests
+ * @route GET /api/students/my-tests
+ * @access Private (Student only)
+ */
+const getStudentMyTests = async (req, res, next) => {
+  try {
+    const parseResult = myTestsQuerySchema.safeParse(req.query);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid query parameters',
+        errors: parseResult.error.errors,
+      });
+    }
+
+    const student = await Student.findOne({ user: req.user._id });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student profile not found' });
+    }
+
+    // Exclude rejected and absent participants
+    const participants = await RoundParticipant.find({
+      student: student._id,
+      result: { $ne: 'rejected' },
+      attendance: { $ne: 'absent' },
+    })
+      .populate({
+        path: 'round',
+        populate: {
+          path: 'drive',
+          populate: { path: 'company', select: 'name logoUrl industry' },
+        },
+      })
+      .sort({ createdAt: -1 });
+
+    const now = new Date();
+
+    // Only platform_test rounds
+    const validParticipants = participants.filter(
+      (p) => p.round && p.round.deliveryMode === 'platform_test'
+    );
+
+    const tests = await Promise.all(
+      validParticipants.map(async (p) => {
+        const round = p.round;
+        const drive = round.drive || {};
+        const company = drive.company || {};
+
+        let attempt = await TestAttempt.findOne({ round: round._id, student: student._id });
+
+        let status = 'not_started';
+        if (attempt) {
+          if (attempt.status === 'in_progress' && now >= new Date(attempt.deadlineAt)) {
+            attempt.status = 'auto_submitted';
+            attempt.submittedAt = new Date(attempt.deadlineAt);
+            await evaluateAttempt(attempt, round);
+            await attempt.save();
+          }
+          status = attempt.status;
+        } else {
+          if (round.testWindowEnd && now > new Date(round.testWindowEnd)) {
+            status = 'window_closed';
+          } else {
+            status = 'not_started';
+          }
+        }
+
+        const showScore = Boolean(round.showScoreToStudents);
+        const isSubmitted = ['submitted', 'auto_submitted'].includes(status);
+        const scoreVal =
+          showScore && isSubmitted
+            ? (attempt?.score !== undefined ? attempt.score : (p.score !== null ? p.score : null))
+            : undefined;
+
+        return {
+          roundId: round._id,
+          roundName: round.name,
+          name: round.name,
+          companyName: company.name || 'Recruiter',
+          company: company.name || 'Recruiter',
+          companyLogo: company.logoUrl || '',
+          driveTitle: drive.title || drive.role || '',
+          role: drive.role || '',
+          driveId: drive._id,
+          testWindowStart: round.testWindowStart,
+          testWindowEnd: round.testWindowEnd,
+          durationMinutes: round.durationMinutes || 60,
+          instructions: round.instructions || '',
+          cutoffScore: round.cutoffScore ?? null,
+          totalMarks: round.totalMarks || 0,
+          attemptStatus: status,
+          status,
+          showScore,
+          serverNow: now.toISOString(),
+          ...(scoreVal !== undefined ? { score: scoreVal } : {}),
+          attempt: attempt
+            ? {
+                status: attempt.status,
+                startedAt: attempt.startedAt,
+                deadlineAt: attempt.deadlineAt,
+                submittedAt: attempt.submittedAt,
+              }
+            : null,
+        };
+      })
+    );
+
+    // Apply optional status filter if requested
+    const filteredTests =
+      req.query.status && req.query.status !== 'all'
+        ? tests.filter((t) => t.status === req.query.status)
+        : tests;
+
+    res.status(200).json({
+      success: true,
+      serverNow: now.toISOString(),
+      count: filteredTests.length,
+      tests: filteredTests,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getRoundQuestions,
   createQuestion,
@@ -1140,5 +1282,6 @@ module.exports = {
   allowStudentRetest,
   evaluateAttempt,
   updateRoundQuestionStats,
+  getStudentMyTests,
 };
 

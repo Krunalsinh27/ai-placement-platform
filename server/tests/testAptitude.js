@@ -655,6 +655,307 @@ async function runAptitudeTests() {
     }
     console.log(`✓ Test 12: Recruiter results table verified: ${resultsData.results.length} candidate rows, summary available`);
 
+    // ------------------------------------------------------------------------
+    // TEST 13: Student Platform Tests Entry Point (GET /api/students/my-tests)
+    // ------------------------------------------------------------------------
+    console.log('\n--- Test 13: GET /api/students/my-tests Entry Point ---');
+
+    // (a) Enrolled student (Student 1) sees only their own enrolled test
+    p1.result = 'pending';
+    p1.attendance = 'pending';
+    await p1.save();
+
+    const st1MyTestsRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    if (st1MyTestsRes.status !== 200) {
+      throw new Error(`Expected 200 for Student 1 my-tests, got: ${st1MyTestsRes.status}`);
+    }
+    const st1MyTestsData = await st1MyTestsRes.json();
+    if (!st1MyTestsData.success || !Array.isArray(st1MyTestsData.tests)) {
+      throw new Error(`Expected success and tests array, got: ${JSON.stringify(st1MyTestsData)}`);
+    }
+    const myTest = st1MyTestsData.tests.find((t) => t.roundId.toString() === round._id.toString());
+    if (!myTest) {
+      throw new Error('Student 1 must see their enrolled platform test');
+    }
+    if (myTest.companyName !== 'Google' || myTest.roundName !== round.name) {
+      throw new Error(`Incorrect company or round name: ${JSON.stringify(myTest)}`);
+    }
+    console.log('✓ 13A: Enrolled student sees only their own enrolled test');
+
+    // (b) Another student (Student 3, not enrolled) gets empty tests list
+    const st3MyTestsRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${st3Token}` },
+    });
+    const st3MyTestsData = await st3MyTestsRes.json();
+    if (st3MyTestsRes.status !== 200 || st3MyTestsData.tests.some((t) => t.roundId.toString() === round._id.toString())) {
+      throw new Error(`Unenrolled student must not see test: ${JSON.stringify(st3MyTestsData)}`);
+    }
+
+    // Non-student roles (TPO, Recruiter) are blocked with 403 Forbidden
+    const tpoMyTestsRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${tpoAToken}` },
+    });
+    if (tpoMyTestsRes.status !== 403) {
+      throw new Error(`Expected 403 for TPO accessing /students/my-tests, got: ${tpoMyTestsRes.status}`);
+    }
+    const recMyTestsRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${recAToken}` },
+    });
+    if (recMyTestsRes.status !== 403) {
+      throw new Error(`Expected 403 for Recruiter accessing /students/my-tests, got: ${recMyTestsRes.status}`);
+    }
+    console.log('✓ 13B: Unenrolled student sees empty list; TPO and Recruiter blocked with 403');
+
+    // (c) Rejected or absent participants do not see the test
+    p1.result = 'rejected';
+    await p1.save();
+    const st1RejectedRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const st1RejectedData = await st1RejectedRes.json();
+    if (st1RejectedData.tests.some((t) => t.roundId.toString() === round._id.toString())) {
+      throw new Error('Rejected participant must NOT see the test');
+    }
+
+    p1.result = 'pending';
+    p1.attendance = 'absent';
+    await p1.save();
+    const st1AbsentRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const st1AbsentData = await st1AbsentRes.json();
+    if (st1AbsentData.tests.some((t) => t.roundId.toString() === round._id.toString())) {
+      throw new Error('Absent participant must NOT see the test');
+    }
+
+    // Restore participant 1
+    p1.attendance = 'pending';
+    p1.result = 'pending';
+    await p1.save();
+    console.log('✓ 13C: Rejected and absent participants are strictly excluded from my-tests');
+
+    // (d) The response never contains questions, options, or answers
+    const testKeys = Object.keys(myTest);
+    if (testKeys.includes('questions') || testKeys.includes('answers') || testKeys.includes('options') || testKeys.includes('correctIndex')) {
+      throw new Error(`Response must never leak questions or answers: ${JSON.stringify(testKeys)}`);
+    }
+    console.log('✓ 13D: Response contains test metadata only and never leaks questions, options, or answers');
+
+    // (e) Window states reported correctly: before, during, after window, and in_progress/submitted
+    // E1: Future window (before)
+    const futureRound = await Round.create({
+      drive: testDrive._id,
+      name: 'Future Round: Platform Test',
+      order: 2,
+      type: 'aptitude',
+      deliveryMode: 'platform_test',
+      mode: 'online',
+      testWindowStart: new Date(Date.now() + 2 * 60 * 60 * 1000), // starts in 2 hours
+      testWindowEnd: new Date(Date.now() + 4 * 60 * 60 * 1000),   // ends in 4 hours
+      durationMinutes: 45,
+      status: 'scheduled',
+    });
+    const pFuture = await RoundParticipant.create({
+      round: futureRound._id,
+      drive: testDrive._id,
+      student: student1._id,
+      application: app1._id,
+      attendance: 'pending',
+      result: 'pending',
+    });
+
+    const futureRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const futureData = await futureRes.json();
+    const futureItem = futureData.tests.find((t) => t.roundId.toString() === futureRound._id.toString());
+    if (!futureItem || futureItem.status !== 'not_started') {
+      throw new Error(`Future round must have status 'not_started', got: ${futureItem?.status}`);
+    }
+    console.log('✓ 13E.1: Future window reported as not_started');
+
+    // E2: Past window (closed)
+    const pastRound = await Round.create({
+      drive: testDrive._id,
+      name: 'Past Round: Platform Test',
+      order: 3,
+      type: 'aptitude',
+      deliveryMode: 'platform_test',
+      mode: 'online',
+      testWindowStart: new Date(Date.now() - 4 * 60 * 60 * 1000), // opened 4 hours ago
+      testWindowEnd: new Date(Date.now() - 2 * 60 * 60 * 1000),   // closed 2 hours ago
+      durationMinutes: 45,
+      status: 'scheduled',
+    });
+    const pPast = await RoundParticipant.create({
+      round: pastRound._id,
+      drive: testDrive._id,
+      student: student1._id,
+      application: app1._id,
+      attendance: 'pending',
+      result: 'pending',
+    });
+
+    const pastRes = await fetch(`${BASE_URL}/students/my-tests`, {
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const pastData = await pastRes.json();
+    const pastItem = pastData.tests.find((t) => t.roundId.toString() === pastRound._id.toString());
+    if (!pastItem || pastItem.status !== 'window_closed') {
+      throw new Error(`Past round without attempt must have status 'window_closed', got: ${pastItem?.status}`);
+    }
+    console.log('✓ 13E.2: Past closed window reported as window_closed');
+
+    if (!futureData.serverNow || isNaN(new Date(futureData.serverNow).getTime())) {
+      throw new Error(`my-tests response must include a valid ISO serverNow, got: ${futureData?.serverNow}`);
+    }
+    console.log('✓ 13E.3: serverNow ISO string verified in my-tests response');
+
+    // Clean up temporary rounds
+    await RoundParticipant.deleteMany({ round: { $in: [futureRound._id, pastRound._id] } });
+    await Round.deleteMany({ _id: { $in: [futureRound._id, pastRound._id] } });
+
+    // --- Test 14: Submitted / Result View for Already-Submitted Student ---
+    console.log('\n--- Test 14: View Result & Post-Submission Integrity ---');
+
+    // Create an open platform_test round with showScoreToStudents = true
+    const submittedRound = await Round.create({
+      drive: testDrive._id,
+      name: 'Submitted Assessment Round',
+      order: 4,
+      type: 'aptitude',
+      deliveryMode: 'platform_test',
+      mode: 'online',
+      testWindowStart: new Date(Date.now() - 30 * 60 * 1000), // opened 30 min ago
+      testWindowEnd: new Date(Date.now() + 90 * 60 * 1000),   // closes in 90 min
+      durationMinutes: 45,
+      showScoreToStudents: true,
+      status: 'scheduled',
+    });
+
+    // Create 2 questions for this round
+    const test14Q1 = await Question.create({
+      round: submittedRound._id,
+      text: 'What is 5 + 7?',
+      options: ['10', '11', '12', '13'],
+      correctIndex: 2,
+      marks: 5,
+    });
+    const test14Q2 = await Question.create({
+      round: submittedRound._id,
+      text: 'What is 3 * 4?',
+      options: ['12', '14', '16', '18'],
+      correctIndex: 0,
+      marks: 5,
+    });
+    await Round.findByIdAndUpdate(submittedRound._id, { questionCount: 2, totalMarks: 10 });
+
+    const pSubmitted = await RoundParticipant.create({
+      round: submittedRound._id,
+      drive: testDrive._id,
+      student: student1._id,
+      application: app1._id,
+      attendance: 'pending',
+      result: 'pending',
+    });
+
+    // 14A: Student starts test
+    const t14StartRes = await fetch(`${BASE_URL}/tests/${submittedRound._id}/start`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const t14StartData = await t14StartRes.json();
+    if (!t14StartData.success) throw new Error(`Failed to start test: ${t14StartData.message}`);
+
+    // 14B: Student saves an answer
+    const t14AnsRes = await fetch(`${BASE_URL}/tests/${submittedRound._id}/answer`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${st1Token}`,
+      },
+      body: JSON.stringify({
+        questionId: test14Q1._id,
+        selectedIndex: 2, // correct
+      }),
+    });
+    const t14AnsData = await t14AnsRes.json();
+    if (!t14AnsData.success) throw new Error(`Failed to save answer: ${t14AnsData.message}`);
+
+    // 14C: Student submits test
+    const t14SubRes = await fetch(`${BASE_URL}/tests/${submittedRound._id}/submit`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const t14SubData = await t14SubRes.json();
+    if (!t14SubData.success) throw new Error(`Failed to submit test: ${t14SubData.message}`);
+    console.log('✓ 14A: Test started, answered, and submitted successfully');
+
+    // 14D: Fetching attempt after submission (/student/test/:roundId data endpoint)
+    const t14ViewRes = await fetch(`${BASE_URL}/tests/${submittedRound._id}/attempt`, {
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const t14ViewData = await t14ViewRes.json();
+    if (!t14ViewData.success || t14ViewData.status !== 'submitted') {
+      throw new Error(`Attempt endpoint must return status 'submitted', got: ${t14ViewData?.status}`);
+    }
+    if (t14ViewData.showScore !== true || t14ViewData.score !== 5 || t14ViewData.totalMarks !== 10) {
+      throw new Error(`When showScoreToStudents is true, score must be revealed. Got: ${JSON.stringify(t14ViewData)}`);
+    }
+    if (!t14ViewData.round || t14ViewData.round.name !== 'Submitted Assessment Round') {
+      throw new Error(`Attempt endpoint must include round summary metadata`);
+    }
+    console.log('✓ 14B: GET /api/tests/:roundId/attempt returns status "submitted" with score visible when permitted');
+
+    // 14E: Verify showScoreToStudents = false hides score completely
+    await Round.findByIdAndUpdate(submittedRound._id, { showScoreToStudents: false });
+    const t14ViewResHidden = await fetch(`${BASE_URL}/tests/${submittedRound._id}/attempt`, {
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    const t14ViewDataHidden = await t14ViewResHidden.json();
+    if (t14ViewDataHidden.showScore !== false || t14ViewDataHidden.score !== undefined || t14ViewDataHidden.percentage !== undefined) {
+      throw new Error(`When showScoreToStudents is false, score must be undefined. Got: ${JSON.stringify(t14ViewDataHidden)}`);
+    }
+    console.log('✓ 14C: GET /api/tests/:roundId/attempt hides score when showScoreToStudents is false');
+
+    // 14F: Verify student cannot restart, answer, or re-submit
+    const t14RestartRes = await fetch(`${BASE_URL}/tests/${submittedRound._id}/start`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    if (t14RestartRes.status !== 400) {
+      throw new Error(`Starting an already-submitted test must be rejected with 400, got: ${t14RestartRes.status}`);
+    }
+
+    const t14ReAnswerRes = await fetch(`${BASE_URL}/tests/${submittedRound._id}/answer`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${st1Token}`,
+      },
+      body: JSON.stringify({ questionId: test14Q2._id, selectedIndex: 0 }),
+    });
+    if (t14ReAnswerRes.status !== 400) {
+      throw new Error(`Answering an already-submitted test must be rejected with 400, got: ${t14ReAnswerRes.status}`);
+    }
+
+    const t14ReSubmitRes = await fetch(`${BASE_URL}/tests/${submittedRound._id}/submit`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${st1Token}` },
+    });
+    if (t14ReSubmitRes.status !== 400) {
+      throw new Error(`Re-submitting an already-submitted test must be rejected with 400, got: ${t14ReSubmitRes.status}`);
+    }
+    console.log('✓ 14D: Submitting again, restarting, or answering is cleanly rejected with 400 (never restarts test)');
+
+    // Clean up temporary submitted round
+    await Question.deleteMany({ round: submittedRound._id });
+    await TestAttempt.deleteMany({ round: submittedRound._id });
+    await RoundParticipant.deleteMany({ round: submittedRound._id });
+    await Round.deleteMany({ _id: submittedRound._id });
+
     // Cleanup
     await Question.deleteMany({ round: round._id });
     await TestAttempt.deleteMany({ round: round._id });

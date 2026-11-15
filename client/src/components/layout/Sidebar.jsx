@@ -1,6 +1,9 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { isAdminDrivesActive, isStudentApplicationsActive } from '../../utils/navigationHelper';
+import api from '../../services/api';
+import { countOpenNowTests } from '../../utils/testWindowHelper';
 import {
   LayoutDashboard,
   Building2,
@@ -16,10 +19,72 @@ import {
   Mail,
   FileSpreadsheet,
   Sparkles,
+  FileText,
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose }) => {
   const { user, isAdmin } = useAuth();
+  const location = useLocation();
+  const [openTestsCount, setOpenTestsCount] = useState(0);
+
+  // Poll for open platform tests count every 60s while tab is visible
+  useEffect(() => {
+    if (isAdmin || user?.role !== 'student') return;
+
+    let isMounted = true;
+
+    const fetchOpenTests = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      try {
+        const fetchTime = Date.now();
+        const res = await api.get('/students/my-tests');
+        if (isMounted && res.data?.success && Array.isArray(res.data.tests)) {
+          const count = countOpenNowTests(res.data.tests, {
+            serverNow: res.data.serverNow,
+            receivedAt: fetchTime,
+          });
+          setOpenTestsCount(count);
+        }
+      } catch {
+        // Silently catch polling errors
+      }
+    };
+
+    fetchOpenTests();
+
+    const intervalId = setInterval(fetchOpenTests, 60000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        fetchOpenTests();
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [isAdmin, user]);
+
+  const isLinkActive = (path, defaultActive) => {
+    if (path === '/admin/drives') {
+      return isAdminDrivesActive(location.pathname);
+    }
+    if (path === '/student/applications') {
+      return isStudentApplicationsActive(location.pathname);
+    }
+    if (path === '/student/tests') {
+      return location.pathname.startsWith('/student/tests');
+    }
+    return defaultActive;
+  };
 
   const adminLinks = [
     { name: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
@@ -39,6 +104,7 @@ const Sidebar = ({ isOpen, onClose }) => {
     { name: 'Dashboard', path: '/student/dashboard', icon: LayoutDashboard },
     { name: 'Eligible Drives', path: '/student/drives', icon: Briefcase },
     { name: 'My Applications', path: '/student/applications', icon: FileCheck2 },
+    { name: 'My Tests', path: '/student/tests', icon: FileText, badge: openTestsCount },
     { name: 'Ask AI', path: '/student/assistant', icon: Sparkles },
     { name: 'Resume AI', path: '/student/resume-ai', icon: Sparkles },
     { name: 'My Placements', path: '/student/placements', icon: Award },
@@ -96,15 +162,25 @@ const Sidebar = ({ isOpen, onClose }) => {
                 to={link.path}
                 onClick={onClose}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                    isActive
+                  `flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    isLinkActive(link.path, isActive)
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
                       : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                   }`
                 }
               >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span>{link.name}</span>
+                <div className="flex items-center gap-3 min-w-0">
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{link.name}</span>
+                </div>
+                {link.badge > 0 && (
+                  <span
+                    data-testid="sidebar-open-tests-badge"
+                    className="px-2 py-0.5 text-[10px] font-black rounded-full bg-emerald-500 text-white shadow-xs shrink-0"
+                  >
+                    {link.badge}
+                  </span>
+                )}
               </NavLink>
             );
           })}

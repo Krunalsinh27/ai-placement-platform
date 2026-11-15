@@ -19,6 +19,9 @@ import {
 } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
+import { getTestButtonState } from '../../utils/testWindowHelper';
+
+const BACK_TARGET = '/student/tests';
 
 export default function StudentAptitudeTest() {
   const { roundId } = useParams();
@@ -81,6 +84,9 @@ export default function StudentAptitudeTest() {
           setAnswers(initialAns);
         } else if (['submitted', 'auto_submitted', 'expired'].includes(res.data.status)) {
           setSubmissionResult(res.data);
+          if (res.data.tabSwitchCount !== undefined) {
+            setTabSwitchCount(res.data.tabSwitchCount);
+          }
         }
       }
     } catch (err) {
@@ -170,8 +176,69 @@ export default function StudentAptitudeTest() {
     };
   }, [attemptStatus, roundId]);
 
+  // Leave protection: beforeunload (browser refresh / tab close)
+  useEffect(() => {
+    if (attemptStatus !== 'in_progress' || submitting) return;
+
+    const handleBeforeUnload = (e) => {
+      const message =
+        'Your test timer is still running and your answers are saved. Are you sure you want to leave?';
+      e.preventDefault();
+      e.returnValue = message;
+      return message;
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [attemptStatus, submitting]);
+
+  // Leave protection: in-app back navigation (popstate)
+  useEffect(() => {
+    if (attemptStatus !== 'in_progress' || submitting) return;
+
+    window.history.pushState({ testSessionActive: true }, '');
+
+    const handlePopState = () => {
+      if (attemptStatus !== 'in_progress' || submitting) return;
+      const stay = !window.confirm(
+        'Your test timer is still running and your answers are saved. Are you sure you want to leave?'
+      );
+      if (stay) {
+        window.history.pushState({ testSessionActive: true }, '');
+      } else {
+        navigate(-1);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [attemptStatus, submitting, navigate]);
+
+  // Pre-start window state computation
+  const btnState = getTestButtonState({
+    testWindowStart: roundInfo?.testWindowStart,
+    testWindowEnd: roundInfo?.testWindowEnd,
+    durationMinutes: roundInfo?.durationMinutes,
+    attemptStatus,
+  });
+
   // 4. Start Test Handler
   const handleStartTest = async () => {
+    if (btnState.disabled) {
+      toast.error(
+        btnState.action === 'not_scheduled'
+          ? 'Your recruiter has not scheduled the test window yet'
+          : btnState.action === 'closed'
+          ? 'Test window closed'
+          : btnState.label
+      );
+      setStartConfirmOpen(false);
+      return;
+    }
     try {
       setLoading(true);
       const res = await api.post(`/tests/${roundId}/start`);
@@ -308,11 +375,11 @@ export default function StudentAptitudeTest() {
           </div>
           <div className="pt-2">
             <Link
-              to="/student/applications"
+              to={BACK_TARGET}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Back to My Applications</span>
+              <span>Back to My Tests</span>
             </Link>
           </div>
         </div>
@@ -328,70 +395,100 @@ export default function StudentAptitudeTest() {
     const showScore = submissionResult?.showScore;
 
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="max-w-xl w-full bg-white rounded-3xl border border-slate-200/80 p-8 shadow-sm text-center space-y-6">
-          <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
-            <CheckCircle2 className="w-9 h-9" />
-          </div>
-
-          <div className="space-y-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              {isAuto ? 'Auto-Submitted at Deadline' : 'Submitted Successfully'}
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        {/* Minimal header with Back to Dashboard and My Applications */}
+        <header className="sticky top-0 z-40 bg-white border-b border-slate-200 px-4 md:px-8 py-3 shadow-2xs shrink-0">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              Assessment Completed
             </span>
-            <h2 className="text-2xl font-black text-slate-900">Assessment Completed</h2>
-            <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Your answers have been securely recorded on the placement portal server.
-            </p>
-          </div>
-
-          {/* If recruiter permitted candidate score visibility */}
-          {showScore ? (
-            <div className="p-6 rounded-2xl bg-indigo-50/60 border border-indigo-100 text-center space-y-3">
-              <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">Your Test Performance</span>
-              <div className="flex items-center justify-center gap-6">
-                <div>
-                  <span className="text-3xl font-black text-indigo-900">
-                    {submissionResult.score ?? 0}
-                  </span>
-                  <span className="text-xs text-indigo-600 block font-medium">
-                    Marks (out of {submissionResult.totalMarks || 100})
-                  </span>
-                </div>
-                <div className="h-10 w-px bg-indigo-200" />
-                <div>
-                  <span className="text-3xl font-black text-indigo-900">
-                    {submissionResult.percentage ?? 0}%
-                  </span>
-                  <span className="text-xs text-indigo-600 block font-medium">Percentage</span>
-                </div>
-              </div>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/student/dashboard"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <span>Back to Dashboard</span>
+              </Link>
+              <Link
+                to="/student/tests"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors shadow-xs"
+              >
+                <span>My Tests</span>
+              </Link>
             </div>
-          ) : (
-            <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
-              <span className="font-bold text-slate-800 block">Score Visibility Notice:</span>
-              <p>
-                Scores for this assessment are kept confidential until the hiring team completes evaluation and publishes shortlisting results.
+          </div>
+        </header>
+
+        <main className="flex-1 flex items-center justify-center p-4">
+          <div className="max-w-xl w-full bg-white rounded-3xl border border-slate-200/80 p-8 shadow-sm text-center space-y-6">
+            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-9 h-9" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                {isAuto ? 'Auto-Submitted at Deadline' : 'Submitted Successfully'}
+              </span>
+              <h2 className="text-2xl font-black text-slate-900">Assessment Completed</h2>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Your answers have been securely recorded on the placement portal server.
               </p>
             </div>
-          )}
 
-          {tabSwitchCount > 0 && (
-            <div className="flex items-center justify-center gap-2 text-xs text-amber-700 bg-amber-50 py-2 px-3 rounded-xl border border-amber-200">
-              <ShieldAlert className="w-4 h-4 text-amber-600" />
-              <span>{tabSwitchCount} tab switch event(s) recorded during this test session</span>
+            {/* If recruiter permitted candidate score visibility */}
+            {showScore ? (
+              <div className="p-6 rounded-2xl bg-indigo-50/60 border border-indigo-100 text-center space-y-3">
+                <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">Your Test Performance</span>
+                <div className="flex items-center justify-center gap-6">
+                  <div>
+                    <span className="text-3xl font-black text-indigo-900">
+                      {submissionResult.score ?? 0}
+                    </span>
+                    <span className="text-xs text-indigo-600 block font-medium">
+                      Marks (out of {submissionResult.totalMarks || 100})
+                    </span>
+                  </div>
+                  <div className="h-10 w-px bg-indigo-200" />
+                  <div>
+                    <span className="text-3xl font-black text-indigo-900">
+                      {submissionResult.percentage ?? 0}%
+                    </span>
+                    <span className="text-xs text-indigo-600 block font-medium">Percentage</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
+                <span className="font-bold text-slate-800 block">Score Visibility Notice:</span>
+                <p>
+                  Scores for this assessment are kept confidential until the hiring team completes evaluation and publishes shortlisting results.
+                </p>
+              </div>
+            )}
+
+            {tabSwitchCount > 0 && (
+              <div className="flex items-center justify-center gap-2 text-xs text-amber-700 bg-amber-50 py-2 px-3 rounded-xl border border-amber-200">
+                <ShieldAlert className="w-4 h-4 text-amber-600" />
+                <span>{tabSwitchCount} tab switch event(s) recorded during this test session</span>
+              </div>
+            )}
+
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Link
+                to="/student/dashboard"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 transition-all shadow-xs"
+              >
+                <span>Back to Dashboard</span>
+              </Link>
+              <Link
+                to="/student/tests"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-2xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all shadow-xs"
+              >
+                <span>My Tests</span>
+              </Link>
             </div>
-          )}
-
-          <div className="pt-2">
-            <Link
-              to="/student/applications"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all shadow-xs"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Return to My Applications</span>
-            </Link>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -401,87 +498,143 @@ export default function StudentAptitudeTest() {
   // ---------------------------------------------------------------------------
   if (attemptStatus === 'not_started') {
     return (
-      <div className="min-h-screen bg-slate-50 p-4 md:p-8 flex items-center justify-center">
-        <div className="max-w-2xl w-full bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 shadow-xs space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200">
-                Online Assessment
-              </span>
-              <h1 className="text-2xl font-black text-slate-900">
-                {roundInfo?.name || 'Aptitude Test'}
-              </h1>
-              <p className="text-xs text-slate-500">
-                {roundInfo?.companyName} • {roundInfo?.role}
-              </p>
-            </div>
-            <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-              <FileText className="w-6 h-6" />
-            </div>
-          </div>
-
-          {/* Quick Metrics Bar */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Duration</span>
-              <span className="text-base font-black text-slate-900">{roundInfo?.durationMinutes || 60} min</span>
-            </div>
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Questions</span>
-              <span className="text-base font-black text-slate-900">{roundInfo?.questionCount || 0}</span>
-            </div>
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Marks</span>
-              <span className="text-base font-black text-slate-900">{roundInfo?.totalMarks || 0}</span>
-            </div>
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Negative Marking</span>
-              <span className={`text-xs font-bold block mt-1 ${roundInfo?.negativeMarking ? 'text-amber-600' : 'text-emerald-600'}`}>
-                {roundInfo?.negativeMarking ? 'Enabled' : 'None'}
-              </span>
-            </div>
-          </div>
-
-          {/* Test Guidelines */}
-          <div className="space-y-3 bg-slate-50/80 rounded-2xl p-5 border border-slate-200 text-xs text-slate-700 leading-relaxed">
-            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-              <HelpCircle className="w-4 h-4 text-indigo-600" />
-              <span>Assessment Instructions & Guidelines:</span>
-            </h4>
-            <ul className="list-disc pl-5 space-y-1.5 text-slate-600">
-              <li>
-                <strong>Timer begins immediately</strong> once you click &quot;Start Test&quot;. You cannot pause the timer.
-              </li>
-              <li>
-                <strong>Automatic response saving:</strong> Every answer you select is autosaved to the server in real time.
-              </li>
-              <li>
-                <strong>Tab-Switch Monitoring:</strong> Leaving or minimizing this browser window will be logged as a security alert and flagged to the recruiters.
-              </li>
-              <li>
-                <strong>Server-side deadline:</strong> The test will automatically conclude when your duration expires or the test window closes.
-              </li>
-              <li>
-                You can freely navigate between questions and update your selections before final submission.
-              </li>
-            </ul>
-          </div>
-
-          <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        {/* Minimal top header with Back link */}
+        <header className="sticky top-0 z-40 bg-white border-b border-slate-200 px-4 md:px-8 py-3 shadow-2xs shrink-0">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
             <Link
-              to="/student/applications"
-              className="text-xs font-bold text-slate-500 hover:text-slate-700 transition-colors"
+              to={BACK_TARGET}
+              className="inline-flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors"
             >
-              Cancel and Return
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
             </Link>
-            <button
-              onClick={() => setStartConfirmOpen(true)}
-              className="w-full sm:w-auto px-8 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md transition-all cursor-pointer"
-            >
-              Begin Assessment
-            </button>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              Aptitude Assessment
+            </span>
           </div>
-        </div>
+        </header>
+
+        <main className="flex-1 p-4 md:p-8 flex items-center justify-center">
+          <div className="max-w-2xl w-full bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 shadow-xs space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200">
+                  Online Assessment
+                </span>
+                <h1 className="text-2xl font-black text-slate-900">
+                  {roundInfo?.name || 'Aptitude Test'}
+                </h1>
+                <p className="text-xs text-slate-500">
+                  {roundInfo?.companyName} • {roundInfo?.role}
+                </p>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                <FileText className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* Quick Metrics Bar */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Duration</span>
+                <span className="text-base font-black text-slate-900">{roundInfo?.durationMinutes || 60} min</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Questions</span>
+                <span className="text-base font-black text-slate-900">{roundInfo?.questionCount || 0}</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Marks</span>
+                <span className="text-base font-black text-slate-900">{roundInfo?.totalMarks || 0}</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Negative Marking</span>
+                <span className={`text-xs font-bold block mt-1 ${roundInfo?.negativeMarking ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {roundInfo?.negativeMarking ? 'Enabled' : 'None'}
+                </span>
+              </div>
+            </div>
+
+            {/* Pre-start Window State Warning if disabled */}
+            {btnState.disabled && (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold flex items-center gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  {btnState.action === 'not_scheduled'
+                    ? 'Your recruiter has not scheduled the test window yet'
+                    : btnState.action === 'closed'
+                    ? 'Test window closed'
+                    : btnState.label}
+                </span>
+              </div>
+            )}
+
+            {/* Test Guidelines */}
+            <div className="space-y-3 bg-slate-50/80 rounded-2xl p-5 border border-slate-200 text-xs text-slate-700 leading-relaxed">
+              <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-indigo-600" />
+                <span>Assessment Instructions & Guidelines:</span>
+              </h4>
+              <ul className="list-disc pl-5 space-y-1.5 text-slate-600">
+                <li>
+                  <strong>Timer begins immediately</strong> once you click &quot;Begin Assessment&quot;. You cannot pause the timer.
+                </li>
+                <li>
+                  <strong>Automatic response saving:</strong> Every answer you select is autosaved to the server in real time.
+                </li>
+                <li>
+                  <strong>Tab-Switch Monitoring:</strong> Leaving or minimizing this browser window will be logged as a security alert and flagged to the recruiters.
+                </li>
+                <li>
+                  <strong>Server-side deadline:</strong> The test will automatically conclude when your duration expires or the test window closes.
+                </li>
+                <li>
+                  You can freely navigate between questions and update your selections before final submission.
+                </li>
+              </ul>
+            </div>
+
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <Link
+                to={BACK_TARGET}
+                className="text-xs font-bold text-slate-500 hover:text-slate-700 transition-colors"
+              >
+                Cancel and Return
+              </Link>
+              {btnState.disabled ? (
+                <div className="flex flex-col items-center sm:items-end gap-1 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full sm:w-auto px-8 py-3 rounded-2xl bg-slate-200 text-slate-500 font-bold text-sm shadow-none cursor-not-allowed border border-slate-300"
+                  >
+                    {btnState.action === 'before_window'
+                      ? btnState.label
+                      : btnState.action === 'closed'
+                      ? 'Test window closed'
+                      : 'Begin Assessment'}
+                  </button>
+                  <span className="text-[11px] text-amber-700 font-medium text-center sm:text-right">
+                    {btnState.action === 'not_scheduled'
+                      ? 'Your recruiter has not scheduled the test window yet'
+                      : btnState.action === 'closed'
+                      ? 'Test window closed'
+                      : btnState.label}
+                  </span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setStartConfirmOpen(true)}
+                  className="w-full sm:w-auto px-8 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md transition-all cursor-pointer"
+                >
+                  Begin Assessment
+                </button>
+              )}
+            </div>
+          </div>
+        </main>
 
         {/* Start Confirmation Dialog */}
         {startConfirmOpen && (
@@ -534,7 +687,7 @@ export default function StudentAptitudeTest() {
           <div className="flex items-center gap-3">
             <div>
               <h2 className="text-sm font-black text-slate-900 leading-tight">
-                {roundInfo?.name || 'Aptitude Assessment'}
+                {roundInfo?.companyName ? `${roundInfo.companyName} — ` : ''}{roundInfo?.name || 'Aptitude Assessment'}
               </h2>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-[11px] text-slate-500 font-medium">
