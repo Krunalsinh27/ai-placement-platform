@@ -34,6 +34,7 @@ const initWorker = async () => {
 
   // Recover any pending emails stored in database
   await emailQueue.recoverPendingEmails();
+  emailQueue.startPeriodicRecovery(5, 2);
 
   // Start BullMQ workers
   startQueueWorkers();
@@ -55,6 +56,7 @@ const handleShutdown = async (signal) => {
 
   try {
     // 1. Stop workers from accepting new jobs and wait for in-flight jobs to complete
+    emailQueue.stopPeriodicRecovery();
     await closeQueueWorkers();
     console.log('[Worker] Queue workers stopped successfully.');
 

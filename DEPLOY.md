@@ -119,6 +119,7 @@ Under the **Environment** tab, configure the following keys:
 | `MONGO_URI` | `mongodb+srv://...` | MongoDB Atlas connection string from Step 1 |
 | `REDIS_URL` | `rediss://...` or `redis://...` | **Required in production**. Redis connection URL (supports TLS `rediss://`). Powers BullMQ queues, durable rate limits, and distributed cron job schedulers |
 | `RUN_WORKER_IN_API` | `true` | Runs queue workers & cron scheduler inside the web process (recommended for free single-instance plans; set `false` if using a dedicated worker) |
+| `HEALTH_DETAIL_KEY` | *Optional secret string* | When set, `GET /api/health` exposes detailed BullMQ queue depths only if request header `x-health-key` matches. If unset, queue details are omitted |
 | `JWT_SECRET` | *32+ character random string* | Secret key for signing short-lived access tokens (min 32 chars in production) |
 | `JWT_REFRESH_SECRET` | *32+ character random string* | Secret key for signing 7-day refresh tokens |
 | `BREVO_API_KEY` | `xkeysib-...` | API key from your Brevo account (Settings $\rightarrow$ SMTP & API) |
@@ -139,6 +140,10 @@ Under the **Environment** tab, configure the following keys:
 > Render free instances spin down after 15 minutes without incoming HTTP traffic. When asleep, all in-process execution halts: background queues (BullMQ/emails/notifications) and scheduled cron jobs pause until an incoming request wakes the instance.
 > To keep the instance awake and ensure scheduled reminders and queues process on time on the free tier:
 > Configure an uptime ping service like [UptimeRobot](https://uptimerobot.com) or [Cron-Job.org](https://cron-job.org) to send an HTTP GET request to `https://<your-service>.onrender.com/api/health` every **10 minutes**.
+
+> [!IMPORTANT]
+> **Redis Memory Eviction Policy (`maxmemory-policy noeviction`)**:
+> BullMQ requires Redis to run with `maxmemory-policy noeviction`. Under memory pressure, LRU/LFU eviction policies will drop BullMQ queue locks and stream events, leading to stalled or lost jobs. The server inspects `CONFIG GET maxmemory-policy` on startup and logs a warning if a non-noeviction policy is detected.
 
 ### Running Local Redis for Testing & Development
 

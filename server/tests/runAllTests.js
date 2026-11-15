@@ -68,12 +68,20 @@ async function ensureSeedInTestDb() {
   }
 }
 
+const DEFAULT_SUITE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const suiteTimeoutMs = process.env.SUITE_TIMEOUT_MS
+  ? parseInt(process.env.SUITE_TIMEOUT_MS, 10)
+  : DEFAULT_SUITE_TIMEOUT_MS;
+
 async function runSingleTest(suite) {
   const startTime = Date.now();
   return new Promise((resolve) => {
     console.log(`\n======================================================`);
     console.log(`  STARTING SUITE: ${suite.name} (${suite.file})`);
     console.log(`======================================================`);
+
+    let timedOut = false;
+    let timer = null;
 
     const child = spawn(process.execPath, [path.join(__dirname, '..', suite.file)], {
       env: {
@@ -85,8 +93,30 @@ async function runSingleTest(suite) {
       stdio: 'inherit',
     });
 
+    if (suiteTimeoutMs > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        console.error(`\n❌ TIMEOUT: Suite ${suite.name} exceeded ${suiteTimeoutMs}ms timeout. Killing process...`);
+        try {
+          child.kill('SIGKILL');
+        } catch (_) {}
+      }, suiteTimeoutMs);
+    }
+
     child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      if (timedOut) {
+        resolve({
+          name: suite.name,
+          file: suite.file,
+          passed: false,
+          timedOut: true,
+          exitCode: code !== null ? code : 'TIMEOUT',
+          duration: `${duration}s (timeout)`,
+        });
+        return;
+      }
       resolve({
         name: suite.name,
         file: suite.file,
@@ -97,6 +127,7 @@ async function runSingleTest(suite) {
     });
 
     child.on('error', (err) => {
+      if (timer) clearTimeout(timer);
       resolve({
         name: suite.name,
         file: suite.file,
@@ -142,7 +173,7 @@ async function runAll() {
   console.table(
     results.map((r) => ({
       Suite: r.name,
-      Status: r.passed ? 'PASSED ✓' : 'FAILED ✗',
+      Status: r.passed ? 'PASSED ✓' : (r.timedOut ? 'FAILED (timeout)' : 'FAILED ✗'),
       Duration: r.duration,
       ExitCode: r.exitCode !== undefined ? r.exitCode : 'ERR',
     }))

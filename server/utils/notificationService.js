@@ -1,6 +1,6 @@
 const { Notification, User, Student, Company, College } = require('../models');
 const emailQueue = require('./emailQueue');
-const { isRedisConfigured, getRedisClient } = require('../config/redis');
+const { isRedisConfigured, getRedisClient, getRedisStatus } = require('../config/redis');
 const {
   renderDrivePublishedTemplate,
   renderRoundScheduledTemplate,
@@ -565,6 +565,7 @@ const getNotificationQueue = () => {
     notificationQueue = new Queue('notifications', {
       connection: getRedisClient(),
     });
+    notificationQueue.on('error', () => {});
   }
   return notificationQueue;
 };
@@ -573,20 +574,28 @@ const notifyDrivePublished = (drive) => {
   if (isRedisConfigured()) {
     const driveId = drive?._id ? drive._id.toString() : String(drive);
     const p = (async () => {
-      const queue = getNotificationQueue();
-      if (queue) {
-        await queue.add(
-          'drive-published',
-          { driveId },
-          {
-            jobId: `drive-pub-${driveId}-${Date.now()}`,
-            attempts: 3,
-            removeOnComplete: true,
-          }
-        );
+      try {
+        const queue = getNotificationQueue();
+        if (queue) {
+          await queue.add(
+            'drive-published',
+            { driveId },
+            {
+              jobId: `drive-pub-${driveId}-${Date.now()}`,
+              attempts: 3,
+              removeOnComplete: true,
+            }
+          );
+          return;
+        }
+      } catch (err) {
+        console.error('[NotificationService] Redis queue failed, falling back to in-process execution:', err.message);
       }
+
+      // Fallback: execute in-process when BullMQ enqueue fails
+      await processDrivePublishedBatch(drive);
     })().catch((err) => {
-      console.error('[NotificationService] Failed to enqueue drive-published job:', err.message);
+      console.error('[NotificationService] Failed in fallback notifyDrivePublished:', err.message);
     });
     return trackNotificationPromise(p);
   }
@@ -597,7 +606,7 @@ const notifyDrivePublished = (drive) => {
 };
 
 const getNotificationJobCounts = async () => {
-  if (isRedisConfigured()) {
+  if (isRedisConfigured() && getRedisStatus() === 'connected') {
     const queue = getNotificationQueue();
     if (queue) {
       try {

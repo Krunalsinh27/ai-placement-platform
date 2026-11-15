@@ -329,6 +329,7 @@ const getCronQueue = () => {
     cronQueue = new Queue('scheduled-jobs', {
       connection: getRedisClient(),
     });
+    cronQueue.on('error', () => {});
   }
   return cronQueue;
 };
@@ -340,8 +341,12 @@ const executeCronJob = async (jobName) => {
   switch (jobName) {
     case 'cleanup-unverified-accounts':
       return await deleteExpiredUnverifiedAccounts();
-    case 'send-upcoming-reminders':
-      return await sendUpcomingReminders();
+    case 'send-upcoming-reminders': {
+      const dispatched = await sendUpcomingReminders();
+      const emailQueue = require('./emailQueue');
+      await emailQueue.recoverPendingEmails(2);
+      return dispatched;
+    }
     case 'aptitude-test-monitor': {
       const submitted = await autoSubmitExpiredTestAttempts();
       const absentees = await handleWindowEndAbsentees();
@@ -402,9 +407,11 @@ const initCronJobs = async () => {
       await deleteExpiredUnverifiedAccounts();
     });
 
-    // 2. Run every 5 minutes: send 24h/1h reminders and 48h offer expiry alerts
+    // 2. Run every 5 minutes: send 24h/1h reminders, 48h offer alerts, and recover stale queued emails
     cron.schedule('*/5 * * * *', async () => {
       await sendUpcomingReminders();
+      const emailQueue = require('./emailQueue');
+      await emailQueue.recoverPendingEmails(2);
     });
 
     // 3. Run every minute: auto-submit expired aptitude test attempts & mark window-end absentees

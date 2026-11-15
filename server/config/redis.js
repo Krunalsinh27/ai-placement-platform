@@ -1,12 +1,39 @@
 const Redis = require('ioredis');
 
 let sharedClient = null;
+let lastErrorLogTs = 0;
 
 /**
  * Check whether REDIS_URL environment variable is set
  */
 const isRedisConfigured = () => {
   return Boolean(process.env.REDIS_URL && process.env.REDIS_URL.trim());
+};
+
+/**
+ * Check maxmemory-policy on connection.
+ * Warns if policy is not 'noeviction' (BullMQ jobs could be lost on memory eviction).
+ * Ignores silently if CONFIG command is disabled by cloud provider.
+ */
+const checkMaxMemoryPolicy = async (client) => {
+  if (!client) return;
+  try {
+    const res = await client.call('CONFIG', 'GET', 'maxmemory-policy');
+    let policy = '';
+    if (Array.isArray(res)) {
+      policy = res.length >= 2 ? String(res[1]).toLowerCase() : String(res[0]).toLowerCase();
+    } else if (res && typeof res === 'object') {
+      policy = String(res['maxmemory-policy'] || '').toLowerCase();
+    } else if (typeof res === 'string') {
+      policy = res.toLowerCase();
+    }
+
+    if (policy && policy !== 'noeviction') {
+      console.warn(`[Redis] Warning: Redis maxmemory-policy is '${policy}'. BullMQ needs noeviction, jobs can be lost.`);
+    }
+  } catch (_) {
+    // If command is disabled by provider (e.g. AWS ElastiCache, Upstash, Render, Heroku), ignore silently
+  }
 };
 
 /**
@@ -18,6 +45,7 @@ const getRedisOptions = (rawUrl) => {
   const options = {
     maxRetriesPerRequest: null, // Required by BullMQ
     enableReadyCheck: false,
+    connectTimeout: 5000,
     retryStrategy(times) {
       if (process.env.NODE_ENV === 'test') {
         // In test mode, fail fast if Redis is unreachable
@@ -52,9 +80,15 @@ const createRedisClient = (extraOptions = {}) => {
 
   client.on('error', (err) => {
     // SECURITY: NEVER log REDIS_URL
-    if (process.env.NODE_ENV !== 'test') {
+    const now = Date.now();
+    if (process.env.NODE_ENV !== 'test' && now - lastErrorLogTs >= 60000) {
+      lastErrorLogTs = now;
       console.error('[Redis] Connection error:', err.message);
     }
+  });
+
+  client.once('ready', () => {
+    checkMaxMemoryPolicy(client);
   });
 
   return client;
@@ -118,7 +152,7 @@ module.exports = {
   createRedisClient,
   getRedisClient,
   getRedisStatus,
+  checkMaxMemoryPolicy,
   validateRedisConfig,
   closeRedisConnections,
 };
-

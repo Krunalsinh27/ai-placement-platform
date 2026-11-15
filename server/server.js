@@ -117,28 +117,36 @@ if (process.env.NODE_ENV !== 'test') {
 // Health check route
 app.get('/api/health', async (req, res) => {
   const isDbConnected = mongoose.connection.readyState === 1;
-  const redisStatus = getRedisStatus();
+  const isRedisConnected = getRedisStatus() === 'connected';
 
-  let emailCounts = { waiting: 0, active: 0, failed: 0 };
-  let notifCounts = { waiting: 0, active: 0, failed: 0 };
-
-  try {
-    emailCounts = await emailQueue.getJobCounts();
-  } catch (_) {}
-
-  try {
-    notifCounts = await getNotificationJobCounts();
-  } catch (_) {}
-
-  res.status(200).json({
+  const responseBody = {
     status: 'ok',
     db: isDbConnected ? 'connected' : 'disconnected',
-    redis: redisStatus,
-    queues: {
+    redis: isRedisConnected,
+  };
+
+  const healthDetailKey = process.env.HEALTH_DETAIL_KEY && process.env.HEALTH_DETAIL_KEY.trim();
+  const providedKey = req.headers['x-health-key'];
+
+  if (healthDetailKey && providedKey && providedKey === healthDetailKey) {
+    let emailCounts = { waiting: 0, active: 0, failed: 0 };
+    let notifCounts = { waiting: 0, active: 0, failed: 0 };
+
+    try {
+      emailCounts = await emailQueue.getJobCounts();
+    } catch (_) {}
+
+    try {
+      notifCounts = await getNotificationJobCounts();
+    } catch (_) {}
+
+    responseBody.queues = {
       email: emailCounts,
       notification: notifCounts,
-    },
-  });
+    };
+  }
+
+  res.status(200).json(responseBody);
 });
 
 // API Routes
@@ -182,6 +190,7 @@ const server = app.listen(PORT, async () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   if (process.env.NODE_ENV !== 'test') {
     await emailQueue.recoverPendingEmails();
+    emailQueue.startPeriodicRecovery(5, 2);
     if (runWorkerInApi) {
       await initCronJobs();
       if (isRedisConfigured()) {
@@ -214,6 +223,7 @@ const handleShutdown = async (signal) => {
     if (runWorkerInApi) {
       await closeQueueWorkers();
     }
+    emailQueue.stopPeriodicRecovery();
     await waitForPendingNotifications(5000);
     await closeRedisConnections();
     if (mongoose.connection.readyState === 1) {

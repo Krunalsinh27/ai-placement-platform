@@ -260,6 +260,7 @@ cp client/.env.example client/.env
 | `MONGO_URI_TEST` | Optional | `mongodb://127.0.0.1:27017/placement_management_test` | Isolated database used for automated tests |
 | `REDIS_URL` | **Required in Prod** | `redis://127.0.0.1:6379` | Redis connection URL (supports TLS `rediss://`). Powers BullMQ queues, rate limits, and cron schedulers. In dev/test, falls back to in-process memory queue when unset |
 | `RUN_WORKER_IN_API` | Optional | `true` | When true (default), runs BullMQ queue workers & cron scheduler in the API process. Set to false if running workers in `node worker.js` |
+| `HEALTH_DETAIL_KEY` | Optional | `secret_health_token` | Optional secret key. When provided via request header `x-health-key`, `GET /api/health` exposes detailed BullMQ queue depths |
 | `JWT_SECRET` | **Required** | `your_secure_random_key_min_32_characters_long` | Secret for signing JWT access tokens (must be >= 32 chars) |
 | `JWT_REFRESH_SECRET` | **Required** | `your_secure_refresh_key_min_32_characters_long` | Secret for signing refresh tokens |
 | `COOKIE_SAME_SITE` | Optional | `lax` | SameSite cookie policy (`lax`, `strict`, `none`) |
