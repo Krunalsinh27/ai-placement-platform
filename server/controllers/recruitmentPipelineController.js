@@ -14,6 +14,7 @@ const {
   User,
   InterviewPanel,
   InterviewSlot,
+  TestAttempt,
 } = require('../models');
 const {
   getEndOfDayIST,
@@ -742,7 +743,7 @@ const updateRoundSettings = async (req, res, next) => {
             newVenueOrLink: round.venueOrLink || round.reportByTime || 'TBD',
             instructions: round.instructions,
             message: `Schedule updated for ${round.name} (${round.drive?.role || 'Drive'}). Please review the new details.`,
-            link: '/student/applications',
+            link: round.deliveryMode === 'platform_test' ? `/student/test/${round._id}` : '/student/applications',
           }).catch((err) => console.error('Schedule update notification error:', err));
           notifiedCount++;
         }
@@ -1501,6 +1502,7 @@ const getApplicationTimeline = async (req, res, next) => {
     const rounds = await Round.find({ drive: driveId }).sort({ order: 1 });
 
     // Fetch participant records for this student in each round
+    const now = new Date();
     const roundTimeline = await Promise.all(
       rounds.map(async (round) => {
         const participant = await RoundParticipant.findOne({
@@ -1508,11 +1510,37 @@ const getApplicationTimeline = async (req, res, next) => {
           student: studentId,
         }).populate('batch');
 
+        let testAttempt = null;
+        let attemptStatus = 'not_started';
+        if (round.deliveryMode === 'platform_test') {
+          testAttempt = await TestAttempt.findOne({ round: round._id, student: studentId });
+          if (testAttempt) {
+            if (testAttempt.status === 'in_progress' && now >= new Date(testAttempt.deadlineAt)) {
+              testAttempt.status = 'auto_submitted';
+              testAttempt.submittedAt = new Date(testAttempt.deadlineAt);
+              await testAttempt.save();
+            }
+            attemptStatus = testAttempt.status;
+          } else {
+            if (round.testWindowEnd && now > new Date(round.testWindowEnd)) {
+              attemptStatus = 'window_closed';
+            } else {
+              attemptStatus = 'not_started';
+            }
+          }
+        }
+
         return {
           roundId: round._id,
           order: round.order,
           name: round.name,
           type: round.type,
+          deliveryMode: round.deliveryMode,
+          testWindowStart: round.testWindowStart,
+          testWindowEnd: round.testWindowEnd,
+          durationMinutes: round.durationMinutes,
+          cutoffScore: round.cutoffScore,
+          showScoreToStudents: round.showScoreToStudents,
           date: round.date,
           mode: round.mode,
           instructions: round.instructions,
@@ -1521,8 +1549,19 @@ const getApplicationTimeline = async (req, res, next) => {
           batch: participant?.batch || null,
           attendance: participant?.attendance || 'pending',
           result: participant?.result || 'pending',
-          score: participant?.score ?? null,
+          score: participant?.score ?? (round.showScoreToStudents ? testAttempt?.score : null),
           feedback: participant?.feedback || '',
+          attemptStatus,
+          serverNow: now.toISOString(),
+          testAttempt: testAttempt
+            ? {
+                status: testAttempt.status,
+                startedAt: testAttempt.startedAt,
+                deadlineAt: testAttempt.deadlineAt,
+                submittedAt: testAttempt.submittedAt,
+                score: round.showScoreToStudents ? testAttempt.score : undefined,
+              }
+            : null,
         };
       })
     );
@@ -1532,6 +1571,7 @@ const getApplicationTimeline = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      serverNow: now.toISOString(),
       application,
       rounds: roundTimeline,
       offer: offer || null,
@@ -1763,7 +1803,7 @@ const sendRoundAnnouncement = async (req, res, next) => {
           roundName: round.name,
           subject: subject.trim(),
           message: message.trim(),
-          link: '/student/applications',
+          link: round.deliveryMode === 'platform_test' ? `/student/test/${round._id}` : '/student/applications',
         });
         queuedCount++;
       }

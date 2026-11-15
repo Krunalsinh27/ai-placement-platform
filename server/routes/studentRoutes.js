@@ -11,6 +11,7 @@ const {
 } = require('../controllers/studentController');
 const { getStudentUpcomingRounds } = require('../controllers/recruitmentPipelineController');
 const { getStudentMyInterviewSlots } = require('../controllers/interviewController');
+const { getStudentMyTests } = require('../controllers/aptitudeTestController');
 const {
   parseResume,
   getResumeProfile,
@@ -21,7 +22,7 @@ const {
 } = require('../controllers/aiResumeController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const uploadResume = require('../middleware/uploadMiddleware');
-const { aiLimiter } = require('../middleware/rateLimitMiddleware');
+const { aiLimiter, userApiLimiter } = require('../middleware/rateLimitMiddleware');
 
 // Student profile routes
 router
@@ -49,6 +50,9 @@ router.get('/upcoming-rounds', protect, authorize('student'), getStudentUpcoming
 
 // Student upcoming interview slots (must come before /:id)
 router.get('/my-interview-slots', protect, authorize('student'), getStudentMyInterviewSlots);
+
+// Student enrolled platform tests (must come before /:id)
+router.get('/my-tests', protect, authorize('student'), userApiLimiter, getStudentMyTests);
 
 // Resume streaming route (must come before /:id)
 router.get('/:studentId/resume', protect, streamResume);

@@ -1909,6 +1909,11 @@ async function runAiFeatureTests() {
     assert(Array.isArray(analyzeData.rewrites), 'rewrites must be an array');
     assert(Array.isArray(analyzeData.learningOrder), 'learningOrder must be an array');
     assert.strictEqual(analyzeData.cached, false);
+    assert.strictEqual(analyzeData.source, 'ai', 'Valid LLM output must have source: ai');
+    assert(
+      analyzeData.suggestions.some((s) => s.reason && s.reason.includes('Quantify technical contributions')),
+      'Must contain real LLM suggestion from provider'
+    );
 
     // Verify stored on student record in MongoDB
     const analyzedStudent1 = await Student.findById(student1._id).lean();
@@ -1958,6 +1963,81 @@ async function runAiFeatureTests() {
     const fallbackData = await fallbackRes.json();
     assert.strictEqual(fallbackData.source, 'rules', 'Must degrade seamlessly to rules when AI provider fails');
     assert(fallbackData.suggestions.length > 0, 'Rule-based suggestions must be provided');
+    mockProvider.forceInvalidJsonCount = 0;
+
+    // 8b. Over-long output is safely truncated to schema limits without crashing
+    mockProvider.mockAnalyzerResponse = {
+      suggestions: Array.from({ length: 12 }, (_, i) => ({
+        category: 'Impact',
+        priority: 'high',
+        reason: `Over-long suggestion number ${i + 1} with [add your real number]% improvement.`,
+      })),
+      rewrites: Array.from({ length: 8 }, (_, i) => ({
+        original: 'Worked on backend apis and web features',
+        suggested: `Architected backend system ${i + 1} delivering [add your real number]% faster latency`,
+        why: 'Action verb enhancement',
+      })),
+      learningOrder: Array.from({ length: 10 }, (_, i) => ({
+        skill: `skill-${i + 1}`,
+        reason: 'Essential skill',
+        resourceType: 'Docs',
+      })),
+    };
+
+    const overlongRes = await fetch(`${BASE_URL}/students/me/resume/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenS1}`,
+      },
+      body: JSON.stringify({ jdText: 'Role: Python Developer\nRequirements: Python, Django, SQL', force: true }),
+    });
+    assert.strictEqual(overlongRes.status, 200);
+    const overlongData = await overlongRes.json();
+    assert.strictEqual(overlongData.success, true);
+    assert.strictEqual(overlongData.source, 'ai', 'Over-long output must be trimmed to schema and succeed with source ai');
+    assert(overlongData.suggestions.length <= 8, 'Suggestions must be truncated to max 8');
+    assert(overlongData.rewrites.length <= 5, 'Rewrites must be truncated to max 5');
+    assert(overlongData.learningOrder.length <= 8, 'Learning order must be truncated to max 8');
+
+    // 8c. Invalid LLM schema output falls back to 'rules' without crashing
+    mockProvider.mockAnalyzerResponse = {
+      suggestions: 'not-an-array-invalid-schema',
+      rewrites: 12345,
+    };
+    const invalidSchemaRes = await fetch(`${BASE_URL}/students/me/resume/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenS1}`,
+      },
+      body: JSON.stringify({ jdText: 'Role: Python Developer\nRequirements: Python, Django, SQL', force: true }),
+    });
+    assert.strictEqual(invalidSchemaRes.status, 200);
+    const invalidSchemaData = await invalidSchemaRes.json();
+    assert.strictEqual(invalidSchemaData.success, true);
+    assert.strictEqual(invalidSchemaData.source, 'rules', 'Invalid schema must fall back to rules without crashing');
+    assert(invalidSchemaData.suggestions.length > 0, 'Rule suggestions must be provided');
+
+    // 8d. Provider failure (rate limit / exception) falls back to 'rules' without crashing
+    mockProvider.mockAnalyzerResponse = null;
+    mockProvider.forceRateLimit = true;
+    const providerFailRes = await fetch(`${BASE_URL}/students/me/resume/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenS1}`,
+      },
+      body: JSON.stringify({ jdText: 'Role: Python Developer\nRequirements: Python, Django, SQL', force: true }),
+    });
+    assert.strictEqual(providerFailRes.status, 200);
+    const providerFailData = await providerFailRes.json();
+    assert.strictEqual(providerFailData.success, true);
+    assert.strictEqual(providerFailData.source, 'rules', 'Provider failure must fall back to rules without crashing');
+    assert(providerFailData.suggestions.length > 0, 'Rule suggestions must be provided');
+    mockProvider.forceRateLimit = false;
+    mockProvider.mockAnalyzerResponse = null;
+    mockProvider.forceInvalidJsonCount = 0;
 
     // 9. Analysis against an eligible driveId
     const driveAnalyzeRes = await fetch(`${BASE_URL}/students/me/resume/analyze`, {

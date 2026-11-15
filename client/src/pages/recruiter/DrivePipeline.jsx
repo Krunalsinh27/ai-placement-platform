@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
+import { validateTestWindow, isMissingTestWindow } from '../../utils/recruiterPipelineValidation';
 import RankedApplicantsView from '../../components/recruitment/RankedApplicantsView';
 
 const DrivePipeline = () => {
@@ -89,6 +90,10 @@ const DrivePipeline = () => {
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [notifyConfirmOpen, setNotifyConfirmOpen] = useState(false);
   const [pendingSettingsPayload, setPendingSettingsPayload] = useState(null);
+  const [missingWindowConfirm, setMissingWindowConfirm] = useState({
+    open: false,
+    targetAction: null, // 'announcement' | 'publish'
+  });
 
   // Question Bank & Platform Test State (Task 32B)
   const [questionBankModalOpen, setQuestionBankModalOpen] = useState(false);
@@ -924,6 +929,18 @@ const DrivePipeline = () => {
         toast.error('Platform test is only available for aptitude and coding rounds. Interviews and group discussions cannot use platform test.');
         return;
       }
+      const windowVal = validateTestWindow({
+        testWindowStart: settingsForm.testWindowStart,
+        testWindowEnd: settingsForm.testWindowEnd,
+        durationMinutes: settingsForm.durationMinutes,
+      });
+      if (!windowVal.isValid) {
+        toast.error(windowVal.error);
+        return;
+      }
+      if (windowVal.warning) {
+        toast(windowVal.warning, { icon: '⚠️' });
+      }
     } else if (settingsForm.deliveryMode === 'online_external') {
       if (settingsForm.venueOrLink && !/^https?:\/\//i.test(settingsForm.venueOrLink.trim())) {
         toast.error('Online meeting link must be a valid URL starting with http:// or https://');
@@ -964,6 +981,7 @@ const DrivePipeline = () => {
     const participantCount = currentRound.participants?.length || 0;
     if (participantCount > 0) {
       setPendingSettingsPayload(payload);
+      setRoundSettingsModalOpen(false);
       setNotifyConfirmOpen(true);
     } else {
       await executeSaveRoundSettings(payload, false);
@@ -1041,6 +1059,24 @@ const DrivePipeline = () => {
       toast.error(err.response?.data?.message || 'Failed to apply cutoff shortlist');
     } finally {
       setIsApplyingShortlist(false);
+    }
+  };
+
+  // Check missing window before opening announcement modal
+  const handleAnnouncementClick = () => {
+    if (isMissingTestWindow(currentRound)) {
+      setMissingWindowConfirm({ open: true, targetAction: 'announcement' });
+    } else {
+      handleOpenAnnouncementModal();
+    }
+  };
+
+  // Check missing window before opening publish results modal
+  const handlePublishClick = () => {
+    if (isMissingTestWindow(currentRound)) {
+      setMissingWindowConfirm({ open: true, targetAction: 'publish' });
+    } else {
+      setPublishModalOpen(true);
     }
   };
 
@@ -1333,12 +1369,16 @@ const DrivePipeline = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-              <Link to="/recruiter/dashboard" className="hover:text-sky-600 flex items-center gap-1">
+              <Link to="/recruiter/pipeline" className="hover:text-sky-600 font-bold flex items-center gap-1">
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Dashboard</span>
+                <span>All drives</span>
               </Link>
               <span>/</span>
-              <span className="text-slate-700">Recruitment Pipeline</span>
+              <span className="text-slate-700 font-medium">Drive Pipeline</span>
+              <span>/</span>
+              <span className="text-slate-900 font-bold">
+                {drive.company?.name || 'Company'} - {drive.title || drive.role}
+              </span>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-black text-slate-900 tracking-tight">{drive.role}</h1>
@@ -1509,6 +1549,53 @@ const DrivePipeline = () => {
           {/* TAB CONTENT: ROUND DETAILS */}
           {activeTab !== 'offers' && currentRound && (
             <div className="space-y-4">
+              {/* PROMINENT MISSING TEST WINDOW WARNING BANNER */}
+              {isMissingTestWindow(currentRound) && (
+                <div className="p-4 rounded-3xl bg-amber-50 border border-amber-200/90 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-xl bg-amber-100 text-amber-700 shrink-0 mt-0.5">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-sm text-amber-900">
+                        Students cannot start this test: set the test window in Round Settings
+                      </h4>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        This platform test has {currentRound.participants?.length || currentRound.metrics?.totalEnrolled || 0} enrolled student(s), but start and end window dates have not been scheduled.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsForm({
+                        name: currentRound.name || '',
+                        type: currentRound.type || 'aptitude',
+                        deliveryMode: currentRound.deliveryMode || 'platform_test',
+                        mode: currentRound.mode || 'online',
+                        date: toISTInputValue(currentRound.date, { dateOnly: true }),
+                        testWindowStart: toISTInputValue(currentRound.testWindowStart),
+                        testWindowEnd: toISTInputValue(currentRound.testWindowEnd),
+                        reportByTime: currentRound.reportByTime || '',
+                        durationMinutes: currentRound.durationMinutes ?? '',
+                        venueOrLink: currentRound.venueOrLink || '',
+                        instructions: currentRound.instructions || '',
+                        cutoffScore: currentRound.cutoffScore ?? '',
+                        shuffleQuestions: currentRound.shuffleQuestions ?? true,
+                        shuffleOptions: currentRound.shuffleOptions ?? false,
+                        negativeMarking: currentRound.negativeMarking ?? false,
+                        showScoreToStudents: currentRound.showScoreToStudents ?? false,
+                      });
+                      setRoundSettingsModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0 cursor-pointer transition-colors shadow-xs"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Open Round Settings</span>
+                  </button>
+                </div>
+              )}
+
               {/* Round Summary Card & Action Bar */}
               <div className="bg-white rounded-3xl border border-slate-200/80 p-5 shadow-xs space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1620,7 +1707,7 @@ const DrivePipeline = () => {
                     </button>
 
                     <button
-                      onClick={handleOpenAnnouncementModal}
+                      onClick={handleAnnouncementClick}
                       className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold transition-colors cursor-pointer border border-purple-200/60"
                       title="Send announcement to participants in this round"
                     >
@@ -1629,7 +1716,7 @@ const DrivePipeline = () => {
                     </button>
 
                     <button
-                      onClick={() => setPublishModalOpen(true)}
+                      onClick={handlePublishClick}
                       className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white transition-all shadow-sm cursor-pointer ${currentRound.resultsPublished
                           ? 'bg-slate-500 hover:bg-slate-600'
                           : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20'
@@ -3471,6 +3558,32 @@ const DrivePipeline = () => {
                     </div>
                   </div>
 
+                  {/* Test Window Duration & End-Time Validation Feedback */}
+                  {(() => {
+                    const validation = validateTestWindow({
+                      testWindowStart: settingsForm.testWindowStart,
+                      testWindowEnd: settingsForm.testWindowEnd,
+                      durationMinutes: settingsForm.durationMinutes,
+                    });
+                    if (!validation.isValid) {
+                      return (
+                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>{validation.error}</span>
+                        </div>
+                      );
+                    }
+                    if (validation.warning) {
+                      return (
+                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>{validation.warning}</span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
                   {/* Question Bank Manager Card */}
                   <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-200/80 flex items-center justify-between shadow-2xs">
                     <div className="flex items-center gap-2.5">
@@ -3719,7 +3832,7 @@ const DrivePipeline = () => {
 
       {/* CONFIRMATION DIALOG FOR SCHEDULE NOTIFICATIONS */}
       {notifyConfirmOpen && currentRound && (
-        <div className="fixed inset-0 z-60 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-5 h-5 text-indigo-600" />
@@ -3734,7 +3847,10 @@ const DrivePipeline = () => {
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setNotifyConfirmOpen(false)}
+                onClick={() => {
+                  setNotifyConfirmOpen(false);
+                  setRoundSettingsModalOpen(true);
+                }}
                 className="w-full sm:w-auto px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs cursor-pointer"
               >
                 Cancel
@@ -3754,6 +3870,50 @@ const DrivePipeline = () => {
                 className="w-full sm:w-auto px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs cursor-pointer"
               >
                 {isSavingSettings ? 'Saving...' : `Notify ${currentRound.participants?.length || 0} Students & Save`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION DIALOG FOR MISSING TEST WINDOW */}
+      {missingWindowConfirm.open && currentRound && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600" />
+              <h3 className="font-black text-slate-900 text-base">Test Window Not Scheduled</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              The test window (start and end time) for <strong>{currentRound.name}</strong> has not been set yet, meaning enrolled students cannot access or start this online platform test.
+            </p>
+            <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-[11px] text-amber-800">
+              {missingWindowConfirm.targetAction === 'announcement'
+                ? 'Are you sure you want to send an announcement to students without a scheduled test window?'
+                : 'Are you sure you want to publish results and advance candidates when the test window was never set?'}
+            </div>
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setMissingWindowConfirm({ open: false, targetAction: null })}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = missingWindowConfirm.targetAction;
+                  setMissingWindowConfirm({ open: false, targetAction: null });
+                  if (action === 'announcement') {
+                    handleOpenAnnouncementModal();
+                  } else if (action === 'publish') {
+                    setPublishModalOpen(true);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs cursor-pointer shadow-xs"
+              >
+                Continue Anyway
               </button>
             </div>
           </div>

@@ -4,10 +4,10 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 const { reportLimiter } = require('../middleware/rateLimitMiddleware');
 const { getPlacementReport, exportPlacementReport } = require('../controllers/reportController');
 
-// Rate limiting & Authorization: Accessible to TPO (own college) and Superadmin
-router.use(reportLimiter);
+// Authorization & Rate limiting: Accessible to TPO (own college) and Superadmin
 router.use(protect);
 router.use(authorize('tpo', 'superadmin'));
+router.use(reportLimiter);
 
 // Placement Report routes
 router.get('/placement', getPlacementReport);

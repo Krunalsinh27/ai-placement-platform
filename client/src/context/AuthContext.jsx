@@ -89,6 +89,9 @@ export const AuthProvider = ({ children }) => {
             }
             refreshSuccess = true;
             break;
+          } else {
+            // 2xx response without token: treat as failure and stop retrying
+            break;
           }
         } catch (err) {
           lastErr = err;

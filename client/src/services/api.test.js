@@ -299,4 +299,47 @@ describe('Real Axios Interceptor Retry & Idempotency Tests', () => {
     expect(postCallCount).toBe(2);
     expect(refreshCount).toBe(1);
   });
+
+  // (g) the refresh call returns 200 without a token, stops retrying immediately (no hot loop) and treats as logged out
+  it('(g) the refresh call returns 200 without a token, stops retrying immediately (no hot loop) and treats as logged out', async () => {
+    let apiCallCount = 0;
+    let refreshAttemptCount = 0;
+
+    api.defaults.adapter = async (config) => {
+      apiCallCount++;
+      const err = new Error('Token expired');
+      err.response = { status: 401, data: { message: 'Token expired' } };
+      err.config = config;
+      throw err;
+    };
+
+    axios.post = vi.fn().mockImplementation(async (url) => {
+      if (url.includes('/auth/refresh')) {
+        refreshAttemptCount++;
+        // 200 response without token
+        return {
+          status: 200,
+          data: { success: true }, // Missing token!
+        };
+      }
+      return originalAxiosPost(url);
+    });
+
+    let caughtErr = null;
+    try {
+      await api.get('/me');
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeDefined();
+    // Refresh attempted exactly once, no hot spin loop
+    expect(refreshAttemptCount).toBe(1);
+    // API request never retried since refresh failed
+    expect(apiCallCount).toBe(1);
+    // Token is cleared
+    expect(getAccessToken()).toBeNull();
+    // User redirected to login
+    expect(window.location.href).toBe('/login');
+  });
 });

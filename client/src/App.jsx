@@ -40,6 +40,7 @@ import StudentDashboard from './pages/student/StudentDashboard';
 import {
   EligibleDrives,
   MyApplications,
+  MyTests,
   ResumeAi,
   MyPlacements,
   StudentProfile,
@@ -249,12 +250,12 @@ function App() {
             <Route path="dashboard" element={<StudentDashboard />} />
             <Route path="drives" element={<EligibleDrives />} />
             <Route path="applications" element={<MyApplications />} />
+            <Route path="tests" element={<MyTests />} />
             <Route path="assistant" element={<TpoAssistant />} />
             <Route path="resume-ai" element={<ResumeAi />} />
             <Route path="placements" element={<MyPlacements />} />
             <Route path="profile" element={<StudentProfile />} />
             <Route path="interview/:slotId" element={<StudentInterviewRoom />} />
-            <Route path="test/:roundId" element={<StudentAptitudeTest />} />
           </Route>
 
           {/* Fullscreen distraction-free Student Test Route */}

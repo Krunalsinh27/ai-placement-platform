@@ -21,8 +21,11 @@ import {
   AlertCircle,
   Video,
   Star,
+  Play,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { getTestButtonState } from '../../utils/testWindowHelper';
+import RoundTimelineDetails from './RoundTimelineDetails';
 
 const STATUS_BADGES = {
   applied: {
@@ -127,7 +130,7 @@ const MyApplications = () => {
     try {
       const res = await api.get(`/applications/${app._id}/timeline`);
       if (res.data.success) {
-        setTimelineData(res.data);
+        setTimelineData({ ...res.data, receivedAt: Date.now() });
       }
     } catch (err) {
       console.error('Failed to load application timeline:', err);
@@ -154,7 +157,7 @@ const MyApplications = () => {
         toast.success(res.data.message);
         // Refresh timeline & applications list
         const refreshed = await api.get(`/applications/${selectedApp._id}/timeline`);
-        if (refreshed.data.success) setTimelineData(refreshed.data);
+        if (refreshed.data.success) setTimelineData({ ...refreshed.data, receivedAt: Date.now() });
         fetchApplications();
       }
     } catch (err) {
@@ -587,120 +590,57 @@ const MyApplications = () => {
                             {/* Batch & Venue Info */}
                             {r.isEnrolled ? (
                               <div className="pt-2 space-y-1.5 text-xs text-slate-600">
+                                <RoundTimelineDetails
+                                  round={r}
+                                  interviewSlots={interviewSlots}
+                                  timelineData={timelineData}
+                                />
+
                                 {(() => {
                                   const matchingSlot = interviewSlots.find((s) => s.round?._id === r.roundId);
+                                  if (!matchingSlot) return null;
                                   return (
-                                    <>
-                                      {r.batch ? (
-                                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                                          <div className="flex items-center gap-1.5 text-slate-700 font-semibold">
-                                            <Clock className="w-3.5 h-3.5 text-sky-600" />
-                                            <span>
-                                              {r.batch.batchName}:{' '}
-                                              {new Date(r.batch.startTime).toLocaleTimeString([], {
-                                                hour: '2-digit',
-                                                minute: '2-digit',
-                                              })}{' '}
-                                              -{' '}
-                                              {new Date(r.batch.endTime).toLocaleTimeString([], {
-                                                hour: '2-digit',
-                                                minute: '2-digit',
-                                              })}
-                                            </span>
-                                          </div>
+                                    <div className="mt-2.5 p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 text-xs space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="font-bold text-indigo-900 flex items-center gap-1.5">
+                                          <Video className="w-3.5 h-3.5 text-indigo-600" />
+                                          <span>Interview Slot • Queue #{matchingSlot.queueNumber}</span>
+                                        </span>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-100 text-indigo-800">
+                                          {matchingSlot.status.replace('_', ' ')}
+                                        </span>
+                                      </div>
 
-                                          <div className="flex items-center gap-1.5">
-                                            <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                                            {r.batch.venueOrLink?.startsWith('http') ? (
-                                              <a
-                                                href={r.batch.venueOrLink}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="text-indigo-600 hover:underline font-semibold inline-flex items-center gap-1"
-                                              >
-                                                <span>Join Meeting</span>
-                                                <ExternalLink className="w-3 h-3" />
-                                              </a>
-                                            ) : (
-                                              <span>{r.batch.venueOrLink || 'To be announced'}</span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      ) : matchingSlot ? null : (
-                                        <div className="text-amber-700 italic text-[11px]">
-                                          Batch scheduling is currently being assigned by the recruiter.
-                                        </div>
-                                      )}
+                                      <div className="text-[11px] text-indigo-700 font-medium">
+                                        Panel: {matchingSlot.panel?.name} • Time: {formatISTDateTime(matchingSlot.startTime)} - {formatISTTime(matchingSlot.endTime)} IST
+                                      </div>
 
-                                      {r.instructions && (
-                                        <p className="text-[11px] text-slate-500 italic pt-1">
-                                          Instructions: "{r.instructions}"
-                                        </p>
-                                      )}
+                                      <div>
+                                        <Link
+                                          to={`/student/interview/${matchingSlot._id}`}
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"
+                                        >
+                                          <Video className="w-3.5 h-3.5" />
+                                          <span>Enter Interview Room</span>
+                                          <ExternalLink className="w-3 h-3" />
+                                        </Link>
+                                      </div>
 
-                                      {/* Score & Feedback */}
-                                      {(r.score !== null || r.feedback) && (
-                                        <div className="mt-2 p-2.5 rounded-xl bg-slate-100/70 text-slate-700 text-xs space-y-0.5">
-                                          {r.score !== null && (
-                                            <div>
-                                              <span className="font-semibold text-slate-500">Score:</span>{' '}
-                                              <span className="font-bold">{r.score}</span>
-                                            </div>
-                                          )}
-                                          {r.feedback && (
-                                            <div>
-                                              <span className="font-semibold text-slate-500">Feedback:</span>{' '}
-                                              <span>{r.feedback}</span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {/* Interview Slot (Task 29B & Task 31A) */}
-                                      {matchingSlot && (
-                                        <div className="mt-2.5 p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 text-xs space-y-2">
+                                      {matchingSlot.evaluation && (
+                                        <div className="pt-2 border-t border-indigo-200/60 text-[11px] text-slate-700 space-y-1">
                                           <div className="flex items-center justify-between">
-                                            <span className="font-bold text-indigo-900 flex items-center gap-1.5">
-                                              <Video className="w-3.5 h-3.5 text-indigo-600" />
-                                              <span>Interview Slot • Queue #{matchingSlot.queueNumber}</span>
-                                            </span>
-                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-100 text-indigo-800">
-                                              {matchingSlot.status.replace('_', ' ')}
+                                            <span className="font-bold text-indigo-900">
+                                              Evaluation: {matchingSlot.evaluation.score}% • {matchingSlot.evaluation.recommendation?.replace('_', ' ')}
                                             </span>
                                           </div>
-
-                                          <div className="text-[11px] text-indigo-700 font-medium">
-                                            Panel: {matchingSlot.panel?.name} • Time: {formatISTDateTime(matchingSlot.startTime)} - {formatISTTime(matchingSlot.endTime)} IST
-                                          </div>
-
-                                          <div>
-                                            <Link
-                                              to={`/student/interview/${matchingSlot._id}`}
-                                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"
-                                            >
-                                              <Video className="w-3.5 h-3.5" />
-                                              <span>Enter Interview Room</span>
-                                              <ExternalLink className="w-3 h-3" />
-                                            </Link>
-                                          </div>
-
-                                          {matchingSlot.evaluation && (
-                                            <div className="pt-2 border-t border-indigo-200/60 text-[11px] text-slate-700 space-y-1">
-                                              <div className="flex items-center justify-between">
-                                                <span className="font-bold text-indigo-900">
-                                                  Evaluation: {matchingSlot.evaluation.score}% • {matchingSlot.evaluation.recommendation?.replace('_', ' ')}
-                                                </span>
-                                              </div>
-                                              {matchingSlot.evaluation.comments && (
-                                                <p className="text-[11px] text-slate-600 italic">
-                                                  "{matchingSlot.evaluation.comments}"
-                                                </p>
-                                              )}
-                                            </div>
+                                          {matchingSlot.evaluation.comments && (
+                                            <p className="text-[11px] text-slate-600 italic">
+                                              "{matchingSlot.evaluation.comments}"
+                                            </p>
                                           )}
                                         </div>
                                       )}
-                                    </>
+                                    </div>
                                   );
                                 })()}
                               </div>

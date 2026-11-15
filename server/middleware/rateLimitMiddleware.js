@@ -29,6 +29,33 @@ const normalizeAccountKey = (prefix, rawEmail, fallbackIp) => {
   return fallbackIp || 'unknown';
 };
 
+/**
+ * Helper to generate per-user rate limiting key for authenticated routes.
+ * Uses req.user._id if authenticated; gracefully falls back to IP if user is missing.
+ */
+const normalizeUserKey = (prefix, req) => {
+  const userId = req.user?._id?.toString() || req.user?.id?.toString();
+  if (userId) {
+    return `${prefix}:user:${userId}`;
+  }
+  return `${prefix}:ip:${req.ip || 'unknown'}`;
+};
+
+// Authenticated user API rate limiter: 120 requests per minute per user (falls back to IP if unauthenticated)
+const userApiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 120,
+  skip: isTestEnv,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => normalizeUserKey('user_api', req),
+  message: {
+    success: false,
+    message: 'Too many requests from this account. Please try again after a minute.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Account-keyed login rate limiter: 10 attempts per 15 minutes per target account email
 const accountLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -98,27 +125,31 @@ const publicApiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Reports rate limiter: 60 requests per 15 minutes per IP
+// Reports rate limiter: 60 requests per 15 minutes per user (falls back to IP if unauthenticated)
 const reportLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 60,
   skip: isTestEnv,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => normalizeUserKey('report', req),
   message: {
     success: false,
-    message: 'Too many report requests from this IP address. Please try again after 15 minutes.',
+    message: 'Too many report requests. Please try again after 15 minutes.',
   },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// AI endpoints rate limiter: 40 requests per 15 minutes per IP
+// AI endpoints rate limiter: 40 requests per 15 minutes per user (falls back to IP if unauthenticated)
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 40,
   skip: isTestEnv,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => normalizeUserKey('ai', req),
   message: {
     success: false,
-    message: 'Too many AI requests from this IP address. Please try again after 15 minutes.',
+    message: 'Too many AI requests. Please try again after 15 minutes.',
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -126,6 +157,8 @@ const aiLimiter = rateLimit({
 
 module.exports = {
   normalizeAccountKey,
+  normalizeUserKey,
+  userApiLimiter,
   loginLimiter,
   accountLoginLimiter,
   otpVerifyLimiter,
