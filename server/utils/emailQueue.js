@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const EmailLog = require('../models/EmailLog');
 const { sendRawEmail } = require('./emailService');
+const { isRedisConfigured, getRedisClient, getRedisStatus, getBullPrefix } = require('../config/redis');
 
 /**
  * Detect whether an SMTP error is a permanent rejection (e.g. 5xx, invalid address/mailbox)
@@ -36,11 +37,38 @@ const isPermanentSmtpError = (err) => {
 
 class EmailQueue {
   constructor() {
-    this.queue = [];
+    this.queue = []; // In-process queue
     this.isProcessing = false;
-    this.delayMs = 50; // Small delay between emails
+    this.delayMs = 50; // Small delay between emails in in-process mode
     this.maxRetries = 3;
     this.senderFn = sendRawEmail;
+    this._bullQueue = null;
+  }
+
+  isRedisMode() {
+    return isRedisConfigured();
+  }
+
+  getBullQueue() {
+    if (!this.isRedisMode()) return null;
+    if (!this._bullQueue) {
+      const { Queue } = require('bullmq');
+      this._bullQueue = new Queue('emails', {
+        connection: getRedisClient(),
+        prefix: getBullPrefix(),
+      });
+      this._bullQueue.on('error', () => {});
+    }
+    return this._bullQueue;
+  }
+
+  async closeBullQueue() {
+    if (this._bullQueue) {
+      try {
+        await this._bullQueue.close();
+      } catch (_) {}
+      this._bullQueue = null;
+    }
   }
 
   setSenderFunction(fn) {
@@ -49,6 +77,10 @@ class EmailQueue {
 
   resetSenderFunction() {
     this.senderFn = sendRawEmail;
+  }
+
+  getSenderFunction() {
+    return this.senderFn || sendRawEmail;
   }
 
   /**
@@ -88,30 +120,68 @@ class EmailQueue {
         replyTo,
         college,
         company,
-        metadata,
+        metadata: {
+          ...metadata,
+          attachments,
+        },
       });
 
-      // 2. Add to in-memory queue
-      this.queue.push({
-        logId: log._id,
-        user,
-        recipientEmail,
-        recipientName,
-        type,
-        subject,
-        htmlBody,
-        textBody,
-        attachments,
-        replyTo,
-        attempts: 0,
-      });
+      // 2. Dispatch to BullMQ or in-process queue
+      if (this.isRedisMode()) {
+        try {
+          const bullQueue = this.getBullQueue();
+          if (bullQueue) {
+            const jobId = `email-${log._id.toString()}`;
+            await bullQueue.add(
+              'send-email',
+              {
+                logId: log._id.toString(),
+                user: user.toString(),
+                recipientEmail,
+                recipientName,
+                type,
+                subject,
+                htmlBody,
+                textBody,
+                attachments,
+                replyTo,
+              },
+              {
+                jobId,
+                attempts: this.maxRetries,
+                backoff: {
+                  type: 'emailBackoff',
+                },
+                removeOnComplete: true,
+              }
+            );
+          }
+        } catch (queueErr) {
+          // SECURITY: Never log REDIS_URL. Leave EmailLog as 'queued' in MongoDB.
+          console.error('[EmailQueue] Error enqueuing email to BullMQ, left as queued:', queueErr.message);
+        }
+      } else {
+        // In-memory queue
+        this.queue.push({
+          logId: log._id,
+          user,
+          recipientEmail,
+          recipientName,
+          type,
+          subject,
+          htmlBody,
+          textBody,
+          attachments,
+          replyTo,
+          attempts: 0,
+        });
 
-      // 3. Trigger processing asynchronously without blocking caller request
-      setImmediate(() => {
-        this.processQueue().catch((err) =>
-          console.error('[EmailQueue] Error in worker processing loop:', err)
-        );
-      });
+        setImmediate(() => {
+          this.processQueue().catch((err) =>
+            console.error('[EmailQueue] Error in worker processing loop:', err)
+          );
+        });
+      }
 
       return log;
     } catch (error) {
@@ -129,33 +199,215 @@ class EmailQueue {
 
     log.status = 'queued';
     log.error = null;
+    log.attempts = 0;
     await log.save();
 
-    this.queue.push({
-      logId: log._id,
-      user: log.user,
-      recipientEmail: log.recipientEmail,
-      recipientName: log.recipientName,
-      type: log.type,
-      subject: log.subject,
-      htmlBody: log.htmlBody,
-      textBody: log.textBody,
-      attachments: log.metadata?.attachments || [],
-      replyTo: log.replyTo,
-      attempts: 0,
-    });
+    if (this.isRedisMode()) {
+      try {
+        const bullQueue = this.getBullQueue();
+        if (bullQueue) {
+          const originalJobId = `email-${log._id.toString()}`;
+          try {
+            await bullQueue.remove(originalJobId);
+          } catch (_) {}
 
-    setImmediate(() => {
-      this.processQueue().catch((err) =>
-        console.error('[EmailQueue] Error in resend processing loop:', err)
-      );
-    });
+          const jobId = `email-${log._id.toString()}-resend-${Date.now()}`;
+          await bullQueue.add(
+            'send-email',
+            {
+              logId: log._id.toString(),
+              user: log.user?.toString(),
+              recipientEmail: log.recipientEmail,
+              recipientName: log.recipientName,
+              type: log.type,
+              subject: log.subject,
+              htmlBody: log.htmlBody,
+              textBody: log.textBody,
+              attachments: log.metadata?.attachments || [],
+              replyTo: log.replyTo,
+            },
+            {
+              jobId,
+              attempts: this.maxRetries,
+              backoff: {
+                type: 'emailBackoff',
+              },
+              removeOnComplete: true,
+            }
+          );
+        }
+      } catch (queueErr) {
+        console.error('[EmailQueue] Error re-enqueuing email to BullMQ, left as queued:', queueErr.message);
+      }
+    } else {
+      this.queue.push({
+        logId: log._id,
+        user: log.user,
+        recipientEmail: log.recipientEmail,
+        recipientName: log.recipientName,
+        type: log.type,
+        subject: log.subject,
+        htmlBody: log.htmlBody,
+        textBody: log.textBody,
+        attachments: log.metadata?.attachments || [],
+        replyTo: log.replyTo,
+        attempts: 0,
+      });
+
+      setImmediate(() => {
+        this.processQueue().catch((err) =>
+          console.error('[EmailQueue] Error in resend processing loop:', err)
+        );
+      });
+    }
 
     return log;
   }
 
   /**
-   * Background Queue Worker Loop
+   * Recover pending EmailLog rows after a restart or periodically.
+   * Avoids duplicate jobs by using stable jobId in BullMQ or checking in-process queue.
+   * @param {number} olderThanMinutes - Only recover queued rows older than this threshold (default 0 = all)
+   */
+  async recoverPendingEmails(olderThanMinutes = 0) {
+    if (mongoose.connection.readyState !== 1) return 0;
+
+    try {
+      const query = { status: 'queued' };
+      if (olderThanMinutes > 0) {
+        const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
+        query.createdAt = { $lte: cutoff };
+      }
+
+      const pendingLogs = await EmailLog.find(query).sort({ createdAt: 1 });
+      let recoveredCount = 0;
+
+      for (const log of pendingLogs) {
+        if (this.isRedisMode()) {
+          try {
+            const bullQueue = this.getBullQueue();
+            if (bullQueue) {
+              const jobId = `email-${log._id.toString()}`;
+              const existingJob = await bullQueue.getJob(jobId);
+              if (!existingJob) {
+                await bullQueue.add(
+                  'send-email',
+                  {
+                    logId: log._id.toString(),
+                    user: log.user?.toString(),
+                    recipientEmail: log.recipientEmail,
+                    recipientName: log.recipientName,
+                    type: log.type,
+                    subject: log.subject,
+                    htmlBody: log.htmlBody,
+                    textBody: log.textBody,
+                    attachments: log.metadata?.attachments || [],
+                    replyTo: log.replyTo,
+                  },
+                  {
+                    jobId,
+                    attempts: this.maxRetries,
+                    backoff: {
+                      type: 'emailBackoff',
+                    },
+                    removeOnComplete: true,
+                  }
+                );
+                recoveredCount++;
+              }
+            }
+          } catch (bullErr) {
+            console.error('[EmailQueue] Failed to recover job to BullMQ:', bullErr.message);
+          }
+        } else {
+          const alreadyQueued = this.queue.some(
+            (item) => item.logId?.toString() === log._id.toString()
+          );
+          if (!alreadyQueued) {
+            this.queue.push({
+              logId: log._id,
+              user: log.user,
+              recipientEmail: log.recipientEmail,
+              recipientName: log.recipientName,
+              type: log.type,
+              subject: log.subject,
+              htmlBody: log.htmlBody,
+              textBody: log.textBody,
+              attachments: log.metadata?.attachments || [],
+              replyTo: log.replyTo,
+              attempts: log.attempts || 0,
+            });
+            recoveredCount++;
+          }
+        }
+      }
+
+      if (!this.isRedisMode() && recoveredCount > 0) {
+        setImmediate(() => {
+          this.processQueue().catch((err) =>
+            console.error('[EmailQueue] Error processing recovered queue:', err)
+          );
+        });
+      }
+
+      if (recoveredCount > 0) {
+        console.log(`[EmailQueue] Recovered ${recoveredCount} pending email(s)${olderThanMinutes > 0 ? ` older than ${olderThanMinutes}m` : ''}.`);
+      }
+
+      return recoveredCount;
+    } catch (err) {
+      console.error('[EmailQueue] Error recovering pending emails:', err.message);
+      return 0;
+    }
+  }
+
+  /**
+   * Start periodic recovery timer (runs every 5m recovering queued rows older than 2m)
+   */
+  startPeriodicRecovery(intervalMinutes = 5, olderThanMinutes = 2) {
+    if (this._periodicTimer) return;
+    this._periodicTimer = setInterval(() => {
+      this.recoverPendingEmails(olderThanMinutes).catch((err) => {
+        console.error('[EmailQueue] Error in periodic recovery:', err.message);
+      });
+    }, intervalMinutes * 60 * 1000);
+    this._periodicTimer.unref();
+  }
+
+  stopPeriodicRecovery() {
+    if (this._periodicTimer) {
+      clearInterval(this._periodicTimer);
+      this._periodicTimer = null;
+    }
+  }
+
+  /**
+   * Return job counts for health reporting: { waiting, active, failed }
+   */
+  async getJobCounts() {
+    if (this.isRedisMode() && getRedisStatus() === 'connected') {
+      const bullQueue = this.getBullQueue();
+      if (bullQueue) {
+        try {
+          const counts = await bullQueue.getJobCounts('waiting', 'active', 'failed');
+          return {
+            waiting: counts.waiting || 0,
+            active: counts.active || 0,
+            failed: counts.failed || 0,
+          };
+        } catch (_) {}
+      }
+    }
+
+    return {
+      waiting: this.queue.length,
+      active: this.isProcessing ? 1 : 0,
+      failed: 0,
+    };
+  }
+
+  /**
+   * In-Process Background Queue Worker Loop (used when Redis is unset)
    */
   async processQueue() {
     if (this.isProcessing) return;
@@ -256,6 +508,16 @@ class EmailQueue {
     }
 
     this.isProcessing = false;
+  }
+
+  async close() {
+    this.stopPeriodicRecovery();
+    if (this._bullQueue) {
+      try {
+        await this._bullQueue.close();
+      } catch (_) {}
+      this._bullQueue = null;
+    }
   }
 }
 

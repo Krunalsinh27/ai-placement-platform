@@ -622,8 +622,10 @@ async function runSuperadminTests() {
   }
 }
 
-runSuperadminTests().catch((err) => {
-  console.error('\n❌ SUPERADMIN TEST RUN FAILED:', err);
-  process.exit(1);
-});
+runSuperadminTests()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('\n❌ SUPERADMIN TEST RUN FAILED:', err);
+    process.exit(1);
+  });
 

@@ -293,6 +293,35 @@ async function runProdGuardTests() {
     );
     console.log('✓ Missing AI key degrades gracefully without throwing unhandled exceptions\n');
 
+    // ========================================================
+    // PART 6: Redis production startup guard
+    // ========================================================
+    console.log('7. Testing REDIS_URL production configuration guard...');
+    const { validateRedisConfig } = require('../config/redis');
+
+    assert.throws(
+      () => {
+        validateRedisConfig({ NODE_ENV: 'production' });
+      },
+      /FATAL: REDIS_URL environment variable is required in production/,
+      'validateRedisConfig must throw when NODE_ENV=production and REDIS_URL is missing'
+    );
+
+    assert.throws(
+      () => {
+        validateRedisConfig({ NODE_ENV: 'production', REDIS_URL: '' });
+      },
+      /FATAL: REDIS_URL environment variable is required in production/,
+      'validateRedisConfig must throw when REDIS_URL is empty in production'
+    );
+
+    assert.strictEqual(
+      validateRedisConfig({ NODE_ENV: 'production', REDIS_URL: 'redis://127.0.0.1:6379' }),
+      true,
+      'validateRedisConfig must return true when valid REDIS_URL is provided in production'
+    );
+    console.log('✓ REDIS_URL production requirement verified with clear fatal error\n');
+
     // Cleanup created test records
     process.env.NODE_ENV = 'test';
     delete process.env.AI_PROVIDER;

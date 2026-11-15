@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const crypto = require('crypto');
 const { User } = require('../models');
+const { assertSafeSeedEnvironment } = require('./seedGuard');
 
 dotenv.config();
 
@@ -39,6 +40,12 @@ function generateSecureRandomPassword() {
 }
 
 const seedSuperadmin = async () => {
+  const mongoUri =
+    process.env.MONGO_URI_TEST ||
+    process.env.MONGO_URI ||
+    'mongodb://localhost:27017/placement_management';
+  assertSafeSeedEnvironment(mongoUri);
+
   const isProd = process.env.NODE_ENV === 'production';
   let email = (process.env.SUPERADMIN_EMAIL || '').trim().toLowerCase();
   let password = process.env.SUPERADMIN_PASSWORD;
@@ -73,8 +80,6 @@ const seedSuperadmin = async () => {
     }
   }
 
-  const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/placement_management';
-
   try {
     console.log(`Connecting to database to provision superadmin (${email})...`);
     await mongoose.connect(mongoUri);
@@ -101,7 +106,8 @@ const seedSuperadmin = async () => {
       console.log(`Successfully created initial superadmin: "${email}" (ID: ${user._id}).`);
     }
 
-    if (isGenerated) {
+    const isTestOrCI = process.env.NODE_ENV === 'test' || Boolean(process.env.CI);
+    if (isGenerated && !isTestOrCI) {
       console.log('\n======================================================');
       console.log(' [SUPERADMIN PROVISIONED] ONE-TIME INITIAL PASSWORD:');
       console.log(`   ${password}`);

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const crypto = require('crypto');
 const { User, College } = require('../models');
+const { assertSafeSeedEnvironment } = require('./seedGuard');
 
 // Load environment variables
 dotenv.config();
@@ -40,6 +41,12 @@ function generateSecureRandomPassword() {
 }
 
 const seedAdmin = async () => {
+  const mongoUri =
+    process.env.MONGO_URI_TEST ||
+    process.env.MONGO_URI ||
+    'mongodb://localhost:27017/placement_management';
+  assertSafeSeedEnvironment(mongoUri);
+
   const isProd = process.env.NODE_ENV === 'production';
   let adminPassword = process.env.ADMIN_PASSWORD || process.env.TPO_PASSWORD;
   let isGenerated = false;
@@ -71,7 +78,6 @@ const seedAdmin = async () => {
     }
   }
   try {
-    const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/placement_management';
     await mongoose.connect(mongoUri);
     console.log('Connected to MongoDB for admin seeding...');
 
@@ -116,9 +122,12 @@ const seedAdmin = async () => {
         isApproved: true,
         isEmailVerified: true,
       });
+      const isTestOrCI = process.env.NODE_ENV === 'test' || Boolean(process.env.CI);
       console.log(`Default TPO created successfully!`);
       console.log(`Email: ${adminEmail}`);
-      console.log(`Password: ${adminPassword}`);
+      if (!isTestOrCI) {
+        console.log(`Password: ${adminPassword}`);
+      }
     }
 
     // Ensure Superadmin exists
@@ -204,7 +213,8 @@ const seedAdmin = async () => {
       console.log(`Default Aspirant profile created: ${aspirantEmail}`);
     }
 
-    if (isGenerated) {
+    const isTestOrCI = process.env.NODE_ENV === 'test' || Boolean(process.env.CI);
+    if (isGenerated && !isTestOrCI) {
       console.log('\n======================================================');
       console.log(' [TPO ADMIN PROVISIONED] ONE-TIME INITIAL PASSWORD:');
       console.log(`   ${adminPassword}`);

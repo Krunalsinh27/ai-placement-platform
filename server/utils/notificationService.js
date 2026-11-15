@@ -1,5 +1,6 @@
 const { Notification, User, Student, Company, College } = require('../models');
 const emailQueue = require('./emailQueue');
+const { isRedisConfigured, getRedisClient, getRedisStatus, getBullPrefix } = require('../config/redis');
 const {
   renderDrivePublishedTemplate,
   renderRoundScheduledTemplate,
@@ -488,10 +489,15 @@ const notifyDriveRequestResponse = async ({ companyId, collegeName, jobTitle, ac
 };
 
 /**
- * 5. Notify eligible students when a new drive is published
+ * 5. Process drive-published notification fan-out in batches
  */
-const _notifyDrivePublishedInternal = async (drive) => {
+const processDrivePublishedBatch = async (driveInput) => {
   try {
+    let drive = driveInput;
+    if (typeof driveInput === 'string' || (driveInput && !driveInput.college)) {
+      const Drive = require('../models/Drive');
+      drive = await Drive.findById(driveInput);
+    }
     if (!drive || !drive.college) return;
 
     const studentQuery = {
@@ -515,39 +521,120 @@ const _notifyDrivePublishedInternal = async (drive) => {
     const col = await College.findById(drive.college).select('name');
     const collegeName = col?.name || 'College Placement Cell';
 
-    const promises = [];
-    for (const s of eligibleStudents) {
-      if (s.user) {
-        const p = notifyUser(s.user, 'drive_published', {
-          collegeId: drive.college,
-          collegeName,
-          companyId: drive.company?._id || drive.company,
-          companyName,
-          role: drive.role,
-          packageLpa: drive.packageLpa,
-          allowedBranches: drive.allowedBranches,
-          minCgpa: drive.minCgpa,
-          maxBacklogs: drive.maxBacklogs,
-          lastDateToApply: drive.lastDateToApply,
-          driveId: drive._id,
-          message: `New campus drive published: ${companyName} is hiring for ${drive.role} (${drive.packageLpa} LPA)! Apply by ${formatISTDateOnly(drive.lastDateToApply)}.`,
-          link: '/student/drives',
-        }).catch((err) => {
-          console.error('Failed to notify student of drive published:', err);
-          return null;
-        });
-        promises.push(p);
-      }
+    // Fan-out notifications in batches of 25
+    const BATCH_SIZE = 25;
+    for (let i = 0; i < eligibleStudents.length; i += BATCH_SIZE) {
+      const batch = eligibleStudents.slice(i, i + BATCH_SIZE);
+      await Promise.allSettled(
+        batch.map((s) => {
+          if (s.user) {
+            return notifyUser(s.user, 'drive_published', {
+              collegeId: drive.college,
+              collegeName,
+              companyId: drive.company?._id || drive.company,
+              companyName,
+              role: drive.role,
+              packageLpa: drive.packageLpa,
+              allowedBranches: drive.allowedBranches,
+              minCgpa: drive.minCgpa,
+              maxBacklogs: drive.maxBacklogs,
+              lastDateToApply: drive.lastDateToApply,
+              driveId: drive._id,
+              message: `New campus drive published: ${companyName} is hiring for ${drive.role} (${drive.packageLpa} LPA)! Apply by ${formatISTDateOnly(drive.lastDateToApply)}.`,
+              link: '/student/drives',
+            }).catch((err) => {
+              console.error('Failed to notify student of drive published:', err);
+              return null;
+            });
+          }
+          return Promise.resolve();
+        })
+      );
     }
-    await Promise.allSettled(promises);
   } catch (error) {
-    console.error('Error in notifyDrivePublished:', error.message);
+    console.error('Error in processDrivePublishedBatch:', error.message);
+  }
+};
+
+let notificationQueue = null;
+
+const getNotificationQueue = () => {
+  if (!isRedisConfigured()) return null;
+  if (!notificationQueue) {
+    const { Queue } = require('bullmq');
+    notificationQueue = new Queue('notifications', {
+      connection: getRedisClient(),
+      prefix: getBullPrefix(),
+    });
+    notificationQueue.on('error', () => {});
+  }
+  return notificationQueue;
+};
+
+const closeNotificationQueue = async () => {
+  if (notificationQueue) {
+    try {
+      await notificationQueue.close();
+    } catch (_) {}
+    notificationQueue = null;
   }
 };
 
 const notifyDrivePublished = (drive) => {
-  const p = _notifyDrivePublishedInternal(drive);
+  if (isRedisConfigured()) {
+    const driveId = drive?._id ? drive._id.toString() : String(drive);
+    const p = (async () => {
+      try {
+        const queue = getNotificationQueue();
+        if (queue) {
+          await queue.add(
+            'drive-published',
+            { driveId },
+            {
+              jobId: `drive-pub-${driveId}-${Date.now()}`,
+              attempts: 3,
+              removeOnComplete: true,
+            }
+          );
+          return;
+        }
+      } catch (err) {
+        console.error('[NotificationService] Redis queue failed, falling back to in-process execution:', err.message);
+      }
+
+      // Fallback: execute in-process when BullMQ enqueue fails
+      await processDrivePublishedBatch(drive);
+    })().catch((err) => {
+      console.error('[NotificationService] Failed in fallback notifyDrivePublished:', err.message);
+    });
+    return trackNotificationPromise(p);
+  }
+
+  // In-process non-blocking fallback
+  const p = processDrivePublishedBatch(drive);
   return trackNotificationPromise(p);
+};
+
+const getNotificationJobCounts = async () => {
+  if (isRedisConfigured() && getRedisStatus() === 'connected') {
+    const queue = getNotificationQueue();
+    if (queue) {
+      try {
+        const counts = await queue.getJobCounts('waiting', 'active', 'failed');
+        return {
+          waiting: counts.waiting || 0,
+          active: counts.active || 0,
+          failed: counts.failed || 0,
+        };
+      } catch (_) {}
+    }
+  }
+
+  return {
+    waiting: pendingNotificationPromises.size,
+    active: 0,
+    failed: 0,
+  };
 };
 
 /**
@@ -611,8 +698,11 @@ module.exports = {
   notifyNewDriveRequest,
   notifyDriveRequestResponse,
   notifyDrivePublished,
+  processDrivePublishedBatch,
+  getNotificationJobCounts,
   notifyApplicationStatusChange,
   notifyNewApplicant,
   waitForPendingNotifications,
   trackNotificationPromise,
+  closeNotificationQueue,
 };

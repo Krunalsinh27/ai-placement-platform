@@ -6,7 +6,12 @@ const path = require('path');
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
-const { getTestDbUri } = require('./testHelper');
+const {
+  getTestDbUri,
+  startTestWorkers,
+  stopTestWorkers,
+  waitForEmailLog,
+} = require('./testHelper');
 
 const {
   User,
@@ -46,6 +51,7 @@ async function runEmailTests() {
   console.log('Connecting to MongoDB...');
   await mongoose.connect(getTestDbUri());
   console.log('Connected to MongoDB successfully:', mongoose.connection.name);
+  await startTestWorkers();
 
   // Setup express test server
   const app = express();
@@ -437,12 +443,11 @@ async function runEmailTests() {
     }
 
     // Wait for queue processing and 3 retries
-    let finalLog = null;
-    for (let i = 0; i < 30; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      finalLog = await EmailLog.findById(failedLog._id);
-      if (finalLog.status === 'failed') break;
-    }
+    const finalLog = await waitForEmailLog(
+      { _id: failedLog._id },
+      (doc) => doc.status === 'failed' && doc.attempts >= 3,
+      10000
+    );
 
     if (finalLog.status !== 'failed' || finalLog.attempts < 3) {
       throw new Error(`Expected log status 'failed' with 3 attempts, got status='${finalLog.status}', attempts=${finalLog.attempts}`);
@@ -454,12 +459,7 @@ async function runEmailTests() {
     const resentLog = await emailQueue.resendFailedEmail(finalLog._id);
 
     // Wait for queue
-    let successfulLog = null;
-    for (let i = 0; i < 20; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      successfulLog = await EmailLog.findById(resentLog._id);
-      if (successfulLog.status === 'sent') break;
-    }
+    const successfulLog = await waitForEmailLog({ _id: resentLog._id }, 'sent', 10000);
 
     if (successfulLog.status !== 'sent') {
       throw new Error(`Expected resent log status 'sent', got '${successfulLog.status}'`);
@@ -709,9 +709,16 @@ async function runEmailTests() {
     } catch (cleanErr) {
       console.warn('Cleanup warning:', cleanErr.message);
     }
+    emailQueue.resetSenderFunction();
+    await stopTestWorkers();
     server.close();
     await mongoose.connection.close();
   }
 }
 
-runEmailTests();
+runEmailTests()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('Email tests failed:', err);
+    process.exit(1);
+  });

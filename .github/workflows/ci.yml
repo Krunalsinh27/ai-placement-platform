@@ -21,6 +21,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7.0-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Check out repository
@@ -47,7 +56,9 @@ jobs:
           EMAIL_MODE: console
           JWT_SECRET: supersecret_ci_jwt_key_must_be_over_32_characters_long_for_security
           MONGO_URI_TEST: mongodb://127.0.0.1:27017/placement_management_test
+          REDIS_URL: redis://127.0.0.1:6379
           CLIENT_URL: http://localhost:5173
+          TEST_KEEP_GOING: 1
         run: npm run test:fresh
 
       - name: Install client dependencies

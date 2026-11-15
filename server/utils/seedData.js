@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const bcrypt = require('bcryptjs');
+const { assertSafeSeedEnvironment } = require('./seedGuard');
 const {
   User,
   Student,
@@ -136,13 +137,17 @@ const COMPANIES_DATA = [
 ];
 
 const seedData = async () => {
+  const mongoUri =
+    process.env.MONGO_URI_TEST ||
+    process.env.MONGO_URI ||
+    'mongodb://localhost:27017/placement_management';
+  assertSafeSeedEnvironment(mongoUri);
+
   if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PRODUCTION_SEED !== 'true') {
     console.error('REFUSING TO SEED DATABASE IN PRODUCTION: Set ALLOW_PRODUCTION_SEED=true to override.');
     process.exit(1);
   }
   try {
-    const mongoUri =
-      process.env.MONGO_URI || 'mongodb://localhost:27017/placement_management';
     await mongoose.connect(mongoUri);
     console.log('Connected to MongoDB. Starting comprehensive database seed...\n');
 
@@ -1085,13 +1090,25 @@ const seedData = async () => {
         100
       ).toFixed(2)}%`
     );
-    console.log(`NITD TPO Login       : admin@college.com / Admin@123`);
-    console.log(`PICT TPO Login       : tpo.pict@college.com / Admin@123`);
-    console.log(`Recruiter Login      : recruiter@google.com / Recruiter@123`);
-    console.log(`Analyst Login        : analyst@portal.com / Analyst@123`);
-    console.log(`Superadmin Login     : superadmin@portal.com / Super@12345`);
-    console.log(`Aspirant Login       : aspirant@portal.com / Aspirant@123`);
-    console.log(`Sample Student Login : ${studentUsers[0].email} / Student@123`);
+    const isTestOrCI = process.env.NODE_ENV === 'test' || Boolean(process.env.CI);
+    if (isTestOrCI) {
+      console.log(`Seed accounts created:`);
+      console.log(` - admin@college.com`);
+      console.log(` - tpo.pict@college.com`);
+      console.log(` - recruiter@google.com`);
+      console.log(` - analyst@portal.com`);
+      console.log(` - superadmin@portal.com`);
+      console.log(` - aspirant@portal.com`);
+      console.log(` - ${studentUsers[0].email}`);
+    } else {
+      console.log(`NITD TPO Login       : admin@college.com / Falcon#2026!Secured`);
+      console.log(`PICT TPO Login       : tpo.pict@college.com / Falcon#2026!Secured`);
+      console.log(`Recruiter Login      : recruiter@google.com / Vanguard#2026!Access`);
+      console.log(`Analyst Login        : analyst@portal.com / Horizon#2026!Metric`);
+      console.log(`Superadmin Login     : superadmin@portal.com / Apex#2026!Shielded`);
+      console.log(`Aspirant Login       : aspirant@portal.com / Gateway#2026!Pathway`);
+      console.log(`Sample Student Login : ${studentUsers[0].email} / Quantum#2026!Target`);
+    }
     console.log(`==============================================\n`);
 
     await mongoose.connection.close();

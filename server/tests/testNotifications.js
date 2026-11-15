@@ -6,7 +6,12 @@ const path = require('path');
 dotenv.config({ path: path.join(__dirname, '../.env') });
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
-const { getTestDbUri, assertTestDatabase } = require('./testHelper');
+const {
+  getTestDbUri,
+  assertTestDatabase,
+  startTestWorkers,
+  stopTestWorkers,
+} = require('./testHelper');
 const { waitForPendingNotifications } = require('../utils/notificationService');
 
 const {
@@ -25,6 +30,7 @@ async function runNotificationTests() {
   console.log('Connecting to MongoDB...');
   await mongoose.connect(getTestDbUri());
   console.log('Connected to MongoDB successfully:', mongoose.connection.name);
+  await startTestWorkers();
 
   const app = express();
   app.use(express.json());
@@ -425,9 +431,11 @@ async function runNotificationTests() {
     console.error('Notification Test Suite Failed:', err);
     process.exitCode = 1;
   } finally {
+    await stopTestWorkers();
     server.close();
     await mongoose.connection.close();
     console.log('Test connections closed.');
+    process.exit(process.exitCode || 0);
   }
 }
 
