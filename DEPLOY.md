@@ -117,6 +117,8 @@ Under the **Environment** tab, configure the following keys:
 | `EMAIL_MODE` | `brevo` | Delivery mode (`brevo`, `smtp`, or `console`) |
 | `CLIENT_URL` | `https://your-app.vercel.app` | Allowed CORS origin. Supports comma-separated list of origins for preview branches |
 | `MONGO_URI` | `mongodb+srv://...` | MongoDB Atlas connection string from Step 1 |
+| `REDIS_URL` | `rediss://...` or `redis://...` | **Required in production**. Redis connection URL (supports TLS `rediss://`). Powers BullMQ queues, durable rate limits, and distributed cron job schedulers |
+| `RUN_WORKER_IN_API` | `true` | Runs queue workers & cron scheduler inside the web process (recommended for free single-instance plans; set `false` if using a dedicated worker) |
 | `JWT_SECRET` | *32+ character random string* | Secret key for signing short-lived access tokens (min 32 chars in production) |
 | `JWT_REFRESH_SECRET` | *32+ character random string* | Secret key for signing 7-day refresh tokens |
 | `BREVO_API_KEY` | `xkeysib-...` | API key from your Brevo account (Settings $\rightarrow$ SMTP & API) |
@@ -133,10 +135,30 @@ Under the **Environment** tab, configure the following keys:
 | `AI_USER_DAILY_CHAT_CAP` | `30` | Personal daily assistant chat/routing limit per user |
 
 > [!WARNING]
-> **Render Free Tier Spin-Down & Scheduled Jobs**:
-> Render free instances spin down after 15 minutes without incoming HTTP traffic. When asleep, Node.js background timers (`node-cron`) for interview reminders and application auto-closing pause until traffic arrives.
-> To ensure cron tasks fire reliably on the free tier:
-> Configure a free monitoring service like [UptimeRobot](https://uptimerobot.com) or [Cron-Job.org](https://cron-job.org) to send an HTTP GET request to `https://<your-service>.onrender.com/api/health` every **10 minutes**.
+> **Render Free Tier Spin-Down & Queues / Scheduled Jobs**:
+> Render free instances spin down after 15 minutes without incoming HTTP traffic. When asleep, all in-process execution halts: background queues (BullMQ/emails/notifications) and scheduled cron jobs pause until an incoming request wakes the instance.
+> To keep the instance awake and ensure scheduled reminders and queues process on time on the free tier:
+> Configure an uptime ping service like [UptimeRobot](https://uptimerobot.com) or [Cron-Job.org](https://cron-job.org) to send an HTTP GET request to `https://<your-service>.onrender.com/api/health` every **10 minutes**.
+
+### Running Local Redis for Testing & Development
+
+While development and test suites fall back gracefully to in-process memory queues when `REDIS_URL` is omitted, you can run a local Redis instance to test distributed durability:
+
+**Via Docker:**
+```bash
+docker run -d --name local-redis -p 6379:6379 redis:alpine
+```
+
+**Via Windows Subsystem for Linux (WSL) or Ubuntu:**
+```bash
+sudo apt update && sudo apt install redis-server
+sudo service redis-server start
+```
+
+Set in `server/.env`:
+```env
+REDIS_URL=redis://127.0.0.1:6379
+```
 
 ---
 

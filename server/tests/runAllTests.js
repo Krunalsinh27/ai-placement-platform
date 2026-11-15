@@ -30,6 +30,7 @@ const testSuites = [
   { name: 'test:ai', file: 'tests/testAiFeatures.js' },
   { name: 'test:assistant', file: 'tests/testAssistant.js' },
   { name: 'test:security', file: 'tests/testSecurityHardening.js' },
+  { name: 'test:redis', file: 'tests/testRedisDurable.js' },
 ];
 
 async function ensureSeedInTestDb() {

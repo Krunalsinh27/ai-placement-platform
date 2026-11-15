@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const { isRedisConfigured, getRedisClient } = require('../config/redis');
 const {
   User,
   Student,
@@ -319,31 +320,108 @@ const handleWindowEndAbsentees = async () => {
   return markedCount;
 };
 
+let cronQueue = null;
+
+const getCronQueue = () => {
+  if (!isRedisConfigured()) return null;
+  if (!cronQueue) {
+    const { Queue } = require('bullmq');
+    cronQueue = new Queue('scheduled-jobs', {
+      connection: getRedisClient(),
+    });
+  }
+  return cronQueue;
+};
+
+/**
+ * Execute a scheduled job body (used by BullMQ worker)
+ */
+const executeCronJob = async (jobName) => {
+  switch (jobName) {
+    case 'cleanup-unverified-accounts':
+      return await deleteExpiredUnverifiedAccounts();
+    case 'send-upcoming-reminders':
+      return await sendUpcomingReminders();
+    case 'aptitude-test-monitor': {
+      const submitted = await autoSubmitExpiredTestAttempts();
+      const absentees = await handleWindowEndAbsentees();
+      return { submitted, absentees };
+    }
+    default:
+      console.warn(`[CRON] Unknown scheduled job: ${jobName}`);
+      return null;
+  }
+};
+
+/**
+ * Register repeatable BullMQ job schedulers in Redis.
+ * Multiple server instances calling this target the same scheduler ID,
+ * ensuring each schedule runs only once across the entire cluster.
+ */
+const registerBullCronSchedulers = async () => {
+  const queue = getCronQueue();
+  if (!queue) return;
+
+  try {
+    // 1. Hourly at minute 0: cleanup unverified accounts
+    await queue.upsertJobScheduler(
+      'cleanup-unverified-accounts',
+      { pattern: '0 * * * *' },
+      { name: 'cleanup-unverified-accounts' }
+    );
+
+    // 2. Every 5 minutes: send 24h/1h reminders and 48h offer expiry alerts
+    await queue.upsertJobScheduler(
+      'send-upcoming-reminders',
+      { pattern: '*/5 * * * *' },
+      { name: 'send-upcoming-reminders' }
+    );
+
+    // 3. Every minute: auto-submit expired aptitude test attempts & mark window-end absentees
+    await queue.upsertJobScheduler(
+      'aptitude-test-monitor',
+      { pattern: '* * * * *' },
+      { name: 'aptitude-test-monitor' }
+    );
+
+    console.log('[CRON] Registered BullMQ job schedulers (hourly cleanup, 5m reminders, 1m test monitor).');
+  } catch (err) {
+    console.error('[CRON] Error registering BullMQ job schedulers:', err.message);
+  }
+};
+
 /**
  * Initialize background cron tasks
  */
-const initCronJobs = () => {
-  // 1. Run once every hour at minute 0: cleanup unverified accounts
-  cron.schedule('0 * * * *', async () => {
-    await deleteExpiredUnverifiedAccounts();
-  });
+const initCronJobs = async () => {
+  if (isRedisConfigured()) {
+    await registerBullCronSchedulers();
+  } else {
+    // 1. Run once every hour at minute 0: cleanup unverified accounts
+    cron.schedule('0 * * * *', async () => {
+      await deleteExpiredUnverifiedAccounts();
+    });
 
-  // 2. Run every 5 minutes: send 24h/1h reminders and 48h offer expiry alerts
-  cron.schedule('*/5 * * * *', async () => {
-    await sendUpcomingReminders();
-  });
+    // 2. Run every 5 minutes: send 24h/1h reminders and 48h offer expiry alerts
+    cron.schedule('*/5 * * * *', async () => {
+      await sendUpcomingReminders();
+    });
 
-  // 3. Run every minute: auto-submit expired aptitude test attempts & mark window-end absentees
-  cron.schedule('* * * * *', async () => {
-    await autoSubmitExpiredTestAttempts();
-    await handleWindowEndAbsentees();
-  });
+    // 3. Run every minute: auto-submit expired aptitude test attempts & mark window-end absentees
+    cron.schedule('* * * * *', async () => {
+      await autoSubmitExpiredTestAttempts();
+      await handleWindowEndAbsentees();
+    });
 
-  console.log('[CRON] Initialized: Hourly account cleanup, 5-minute reminder scanner, and 1-minute aptitude test monitor active.');
+    console.log('[CRON] Initialized node-cron: Hourly account cleanup, 5-minute reminder scanner, and 1-minute aptitude test monitor active.');
+  }
 };
 
 module.exports = {
   initCronJobs,
+  registerBullCronSchedulers,
+  executeCronJob,
+  getCronQueue,
   deleteExpiredUnverifiedAccounts,
   sendUpcomingReminders,
   autoSubmitExpiredTestAttempts,

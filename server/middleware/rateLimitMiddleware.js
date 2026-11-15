@@ -1,19 +1,26 @@
 const rateLimit = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
+const { isRedisConfigured, getRedisClient } = require('../config/redis');
 
 const isTestEnv = () => process.env.NODE_ENV === 'test';
 
-// Login rate limiter: 15 attempts per 15 minutes per IP
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 15,
-  skip: isTestEnv,
-  message: {
-    success: false,
-    message: 'Too many login attempts from this IP address. Please try again after 15 minutes.',
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+/**
+ * Build Redis store for rate limiter when Redis is configured.
+ * Gracefully returns undefined (falling back to MemoryStore) when Redis is unset.
+ */
+const createRedisStore = (prefix) => {
+  if (!isRedisConfigured()) {
+    return undefined;
+  }
+  const client = getRedisClient();
+  if (!client) {
+    return undefined;
+  }
+  return new RedisStore({
+    sendCommand: (...args) => client.call(...args),
+    prefix,
+  });
+};
 
 /**
  * Helper to normalize email key for account-keyed rate limiting (trim, lowercase).
@@ -41,11 +48,26 @@ const normalizeUserKey = (prefix, req) => {
   return `${prefix}:ip:${req.ip || 'unknown'}`;
 };
 
+// Login rate limiter: 15 attempts per 15 minutes per IP
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  skip: isTestEnv,
+  store: createRedisStore('rl:login:'),
+  message: {
+    success: false,
+    message: 'Too many login attempts from this IP address. Please try again after 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Authenticated user API rate limiter: 120 requests per minute per user (falls back to IP if unauthenticated)
 const userApiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 120,
   skip: isTestEnv,
+  store: createRedisStore('rl:user_api:'),
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => normalizeUserKey('user_api', req),
   message: {
@@ -61,6 +83,7 @@ const accountLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   skip: isTestEnv,
+  store: createRedisStore('rl:account_login:'),
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => normalizeAccountKey('account_login', req.body?.email, req.ip),
   message: {
@@ -76,6 +99,7 @@ const otpVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 25,
   skip: isTestEnv,
+  store: createRedisStore('rl:otp_verify:'),
   message: {
     success: false,
     message: 'Too many verification attempts from this IP address. Please try again after 15 minutes.',
@@ -89,6 +113,7 @@ const accountOtpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   skip: isTestEnv,
+  store: createRedisStore('rl:account_otp:'),
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => normalizeAccountKey('account_otp', req.body?.email, req.ip),
   message: {
@@ -104,6 +129,7 @@ const otpResendLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   skip: isTestEnv,
+  store: createRedisStore('rl:otp_resend:'),
   message: {
     success: false,
     message: 'Too many requests from this IP address. Please try again after 15 minutes.',
@@ -117,6 +143,7 @@ const publicApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   skip: isTestEnv,
+  store: createRedisStore('rl:public_api:'),
   message: {
     success: false,
     message: 'Too many requests from this IP address. Please try again after 15 minutes.',
@@ -130,6 +157,7 @@ const reportLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 60,
   skip: isTestEnv,
+  store: createRedisStore('rl:report:'),
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => normalizeUserKey('report', req),
   message: {
@@ -145,6 +173,7 @@ const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 40,
   skip: isTestEnv,
+  store: createRedisStore('rl:ai:'),
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => normalizeUserKey('ai', req),
   message: {
@@ -156,6 +185,7 @@ const aiLimiter = rateLimit({
 });
 
 module.exports = {
+  createRedisStore,
   normalizeAccountKey,
   normalizeUserKey,
   userApiLimiter,
@@ -168,4 +198,3 @@ module.exports = {
   reportLimiter,
   aiLimiter,
 };
-

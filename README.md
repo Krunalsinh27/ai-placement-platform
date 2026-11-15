@@ -258,6 +258,8 @@ cp client/.env.example client/.env
 | `FRONTEND_URL` | Optional | `http://localhost:5173` | Frontend URL for email verification links |
 | `MONGO_URI` | **Required** | `mongodb://127.0.0.1:27017/placement_management` | Main MongoDB connection URI |
 | `MONGO_URI_TEST` | Optional | `mongodb://127.0.0.1:27017/placement_management_test` | Isolated database used for automated tests |
+| `REDIS_URL` | **Required in Prod** | `redis://127.0.0.1:6379` | Redis connection URL (supports TLS `rediss://`). Powers BullMQ queues, rate limits, and cron schedulers. In dev/test, falls back to in-process memory queue when unset |
+| `RUN_WORKER_IN_API` | Optional | `true` | When true (default), runs BullMQ queue workers & cron scheduler in the API process. Set to false if running workers in `node worker.js` |
 | `JWT_SECRET` | **Required** | `your_secure_random_key_min_32_characters_long` | Secret for signing JWT access tokens (must be >= 32 chars) |
 | `JWT_REFRESH_SECRET` | **Required** | `your_secure_refresh_key_min_32_characters_long` | Secret for signing refresh tokens |
 | `COOKIE_SAME_SITE` | Optional | `lax` | SameSite cookie policy (`lax`, `strict`, `none`) |
@@ -298,6 +300,15 @@ cp client/.env.example client/.env
 | Variable | Required | Default Value | Description |
 |---|---|---|---|
 | `VITE_API_BASE_URL` | Optional | `http://localhost:5000/api` | Base URL pointing to Express backend |
+
+#### Redis & Background Queues Configuration:
+- **Production Requirement**: `REDIS_URL` is required in production (`NODE_ENV=production`). Startup validation will fail fast if it is missing.
+- **Development & Test Fallback**: In development and test, if `REDIS_URL` is omitted, the platform falls back to in-process memory queues, in-memory rate limiting, and `node-cron`, allowing the entire test suite to run without Redis.
+- **Free-Tier Sleeping Behavior**: On sleeping free instances (such as Render free tier), the process pauses during sleep, halting background queues and scheduled cron jobs until incoming traffic wakes the server. Ping `/api/health` every 10 minutes to maintain persistent uptime.
+- **Running Local Redis for Durability Testing**:
+  - **Docker**: `docker run -d --name redis-test -p 6379:6379 redis:alpine`
+  - **WSL / Linux**: `sudo apt update && sudo apt install redis-server && sudo service redis-server start`
+  - Set `REDIS_URL=redis://127.0.0.1:6379` in `server/.env` to enable durable BullMQ queues and run the live Redis test suite.
 
 ### 3. Seed Database
 Populate the database with synthetic colleges, companies, recruiters, TPOs, students, applications, and placement metrics:
