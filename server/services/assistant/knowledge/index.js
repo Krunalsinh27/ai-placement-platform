@@ -34,6 +34,19 @@ function matchHelpTopicByKeywords(role, questionText) {
   const normRole = String(role || '').toLowerCase();
   const topics = getTopicsForRole(normRole);
 
+  // If question is an inquiry about general career advice or interview preparation, do not route to platform UI help
+  if (
+    q.includes('star method') ||
+    q.includes('behavioral interview') ||
+    q.includes('coding interview') ||
+    q.includes('prepare for interview') ||
+    q.includes('interview prep') ||
+    q.includes('interview tips') ||
+    q.includes('how should i prepare')
+  ) {
+    return null;
+  }
+
   // If question is clearly an inquiry about the user's specific records/data, do NOT route to generic help
   if (normRole === 'student') {
     if (

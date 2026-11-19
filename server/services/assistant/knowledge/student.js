@@ -51,7 +51,7 @@ const STUDENT_HELP_TOPICS = [
     title: 'How to Attend Online Interviews',
     role: 'student',
     keywords: [
-      'interview',
+      'how to attend interview',
       'attend interview',
       'interview room',
       'join interview',

@@ -42,7 +42,7 @@ const RECRUITER_TOOLS = [
   'myDriveRequests',
 ];
 
-const COMMON_TOOLS = ['help', 'general'];
+const COMMON_TOOLS = ['help', 'general', 'searchKnowledgeBase'];
 
 const ROLE_ALLOWED_TOOLS = {
   student: [...STUDENT_TOOLS, ...COMMON_TOOLS],
@@ -228,6 +228,14 @@ const ToolParamsSchemas = {
   general: z
     .object({
       question: z.string().max(300).optional(),
+    })
+    .passthrough()
+    .optional()
+    .default({}),
+
+  searchKnowledgeBase: z
+    .object({
+      query: z.string().max(500).optional(),
     })
     .passthrough()
     .optional()
@@ -479,8 +487,15 @@ function generateCantAnswerResponse(role = 'tpo', suggestedQuestions = null) {
  */
 function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
   if (typeof question !== 'string') return { tool: 'unknown', params: {} };
+  let prevContext = previous;
+  let targetRole = role;
+  // If role was passed as 2nd arg by callers like matchRuleBasedIntent(q, role)
+  if (typeof previous === 'string' && ['student', 'recruiter', 'tpo', 'superadmin', 'admin'].includes(previous.toLowerCase())) {
+    targetRole = previous;
+    prevContext = null;
+  }
   const q = question.toLowerCase().trim();
-  const normRole = String(role || 'tpo').toLowerCase();
+  const normRole = String(targetRole || 'tpo').toLowerCase();
 
   // 1. HELP KNOWLEDGE BASE MATCHING (deterministic across all roles)
   const helpMatch = matchHelpTopicByKeywords(normRole, q);
@@ -496,8 +511,17 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     q.includes('how should i prepare') ||
     q.includes('coding interview') ||
     q.includes('behavioral interview') ||
+    q.includes('behavioral rounds') ||
     q.includes('star method') ||
     q.includes('resume tips') ||
+    q.includes('bullet points') ||
+    q.includes('tell me about yourself') ||
+    q.includes('interview questions') ||
+    q.includes('academic gaps') ||
+    q.includes('synchronous and asynchronous') ||
+    q.includes('negotiate') ||
+    q.includes('system design') ||
+    q.includes('portfolio project') ||
     q.includes('how to learn') ||
     q.includes('what is react') ||
     q.includes('what is docker') ||
@@ -505,7 +529,7 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     q.includes('assessment practices') ||
     q.includes('hiring practices');
 
-  if (isGeneralCareerQuestion && !q.includes('my application') && !q.includes('my drive')) {
+  if (isGeneralCareerQuestion && !q.includes('my application') && !q.includes('my drive') && !q.includes('eligible drive')) {
     return { tool: 'general', params: { question } };
   }
 
@@ -517,7 +541,19 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
       q.includes('applied drive') ||
       q.includes('application status') ||
       q.includes('have i applied') ||
-      q.includes('status of my')
+      q.includes('status of my') ||
+      q.includes('applied to') ||
+      q.includes('shortlisted for') ||
+      q.includes('submitted applications') ||
+      q.includes('application progress') ||
+      q.includes('selected in') ||
+      q.includes('rejected in') ||
+      q.includes('pending job') ||
+      q.includes('where did i apply') ||
+      q.includes('track my drive') ||
+      q.includes('my job applications') ||
+      q.includes('applied company') ||
+      q.includes('my applications')
     ) {
       return { tool: 'myApplications', params: {} };
     }
@@ -529,28 +565,44 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
       q.includes('interview slot') ||
       q.includes('when is my interview') ||
       q.includes('any interview') ||
+      q.includes('interviews scheduled') ||
+      q.includes('technical interview') ||
+      q.includes('interview timetable') ||
+      q.includes('interview round') ||
+      q.includes('interview meeting') ||
+      q.includes('interview appointment') ||
+      q.includes('hr round') ||
+      q.includes('scheduled interview') ||
       q.includes('interview room')
     ) {
       return { tool: 'myUpcomingInterviews', params: {} };
     }
 
-    // S4. myEligibility (Check eligibility for specific company/drive)
-    const eligibilityMatch = q.match(/(?:eligible for|eligibility for|can i apply for|apply to)\s+([a-z0-9 ]{2,30})/i);
-    if (eligibilityMatch && !q.includes('how to apply')) {
-      const company = eligibilityMatch[1].replace(/drive|company|job|role/gi, '').trim();
-      return { tool: 'myEligibility', params: { company } };
-    }
-
-    // S3. upcomingEligibleDrives
+    // S3. upcomingEligibleDrives (Checked before myEligibility unless asking about a specific company)
     if (
       q.includes('eligible drive') ||
+      q.includes('drives am i eligible') ||
+      q.includes('eligible placement') ||
       q.includes('can i apply') ||
+      q.includes('matching my cgpa') ||
+      q.includes('matching drive') ||
+      q.includes('placement opportunities') ||
       q.includes('open drive') ||
       q.includes('upcoming drive') ||
       q.includes('available drive') ||
+      q.includes('open for me') ||
+      q.includes('eligible opportunit') ||
+      q.includes('open campus drive') ||
       q.includes('drives for me')
     ) {
       return { tool: 'upcomingEligibleDrives', params: {} };
+    }
+
+    // S4. myEligibility (Check eligibility for specific company/drive)
+    const eligibilityMatch = q.match(/(?:eligible for|eligibility for|can i apply for|apply to)\s+([a-z0-9 ]{2,30})/i);
+    if (eligibilityMatch && !q.includes('how to apply') && !/^(any|all|drives?|placement|campus|job|me|my)/i.test(eligibilityMatch[1].trim())) {
+      const company = eligibilityMatch[1].replace(/drive|company|job|role/gi, '').trim();
+      return { tool: 'myEligibility', params: { company } };
     }
 
     // S5. myResumeStatus
@@ -560,7 +612,16 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
       q.includes('ats score') ||
       q.includes('resume ai') ||
       q.includes('missing skill') ||
-      q.includes('my resume')
+      q.includes('missing on my cv') ||
+      q.includes('my resume') ||
+      q.includes('on my cv') ||
+      q.includes('ats readiness') ||
+      q.includes('resume match') ||
+      q.includes('ats profile') ||
+      q.includes('cv analysis') ||
+      q.includes('resume profile') ||
+      q.includes('improve my resume') ||
+      q.includes('extracted skills')
     ) {
       return { tool: 'myResumeStatus', params: {} };
     }
@@ -600,7 +661,12 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
       q.includes('candidate ranking') ||
       q.includes('applicant ranking') ||
       q.includes('candidates for') ||
-      q.includes('applicants for')
+      q.includes('applicants for') ||
+      q.includes('highest scoring') ||
+      q.includes('match score') ||
+      q.includes('best matching') ||
+      q.includes('highest match') ||
+      q.includes('scored highest')
     ) {
       const limitMatch = q.match(/\b(?:top|highest)\s+(\d{1,2})\b/i);
       const limit = limitMatch ? Math.min(10, Number(limitMatch[1])) : 5;
@@ -613,7 +679,16 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
       q.includes('drives summary') ||
       q.includes('all drives') ||
       q.includes('drives overview') ||
-      q.includes('active drives')
+      q.includes('active drives') ||
+      q.includes('applied to our') ||
+      q.includes('applications received') ||
+      q.includes('recruitment pool') ||
+      q.includes('drive status overview') ||
+      q.includes('application count') ||
+      q.includes('drive summary') ||
+      q.includes('dashboard metrics') ||
+      q.includes('applications do we have') ||
+      q.includes('applied to our drives')
     ) {
       return { tool: 'myDrivesSummary', params: {} };
     }
@@ -638,11 +713,11 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     /^(what about|how about|and for|check|show)\s+(cse|it|ece|ee|me|ce|civil|mechanical|20\d{2})/i.test(q) ||
     /^(cse|it|ece|ee|me|ce|20\d{2})\??$/i.test(q);
 
-  if (isFollowUpPattern && previous && previous.tool && TPO_TOOLS.includes(previous.tool)) {
-    const mergedParams = { ...(previous.params || {}) };
+  if (isFollowUpPattern && prevContext && prevContext.tool && TPO_TOOLS.includes(prevContext.tool)) {
+    const mergedParams = { ...(prevContext.params || {}) };
     if (department) mergedParams.department = department;
     if (batch) mergedParams.batch = batch;
-    return { tool: previous.tool, params: mergedParams };
+    return { tool: prevContext.tool, params: mergedParams };
   }
 
   // Tool 8: studentsWithSkill
@@ -658,9 +733,19 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
   if (
     q.includes('without resume') ||
     q.includes('no resume') ||
+    q.includes('no-resume') ||
     q.includes('missing resume') ||
+    q.includes('lack resume') ||
+    q.includes('incomplete resume') ||
     q.includes('not uploaded') ||
-    q.includes('not analyzed')
+    q.includes('not analyzed') ||
+    q.includes('without an ats resume') ||
+    q.includes('no cv') ||
+    q.includes('without cv') ||
+    q.includes('without uploaded') ||
+    q.includes('resume reminders') ||
+    q.includes('resume missing') ||
+    q.includes('need to upload resume')
   ) {
     const params = {};
     if (department) params.department = department;
@@ -673,21 +758,40 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     q.includes('highest package') ||
     q.includes('top salary') ||
     q.includes('highest salary') ||
-    q.includes('best package') ||
-    q.includes('top offer')
+    q.includes('highest compensation') ||
+    q.includes('highest paying') ||
+    q.includes('top offer') ||
+    q.includes('top salaries') ||
+    q.includes('top 10 highest') ||
+    q.includes('top 5 packages')
   ) {
-    const limitMatch = q.match(/\b(?:top|highest)\s+(\d{1,2})\b/i);
-    const limit = limitMatch ? Math.min(10, Number(limitMatch[1])) : 5;
-    return { tool: 'topPackages', params: { limit } };
+    if (
+      !q.includes('which company') &&
+      !q.includes('company offered') &&
+      !q.includes('median ctc') &&
+      !q.includes('average salary') &&
+      !q.includes('placement percentage')
+    ) {
+      const limitMatch = q.match(/\b(?:top|highest)\s+(\d{1,2})\b/i);
+      const limit = limitMatch ? Math.min(10, Number(limitMatch[1])) : 5;
+      return { tool: 'topPackages', params: { limit } };
+    }
   }
 
   // Tool 3: unplacedStudents
   if (
-    q.includes('unplaced') ||
-    q.includes('not placed') ||
-    q.includes('jobless') ||
-    q.includes('yet to be placed') ||
-    q.includes('remaining students')
+    !q.includes('placed vs') &&
+    !q.includes('vs total unplaced') &&
+    (q.includes('unplaced') ||
+      q.includes('not placed') ||
+      q.includes('jobless') ||
+      q.includes('yet to be placed') ||
+      q.includes('remaining students') ||
+      q.includes('looking for jobs') ||
+      q.includes('need placement support') ||
+      q.includes('zero offers') ||
+      q.includes('have not received any offer') ||
+      q.includes('have not received offers'))
   ) {
     const params = {};
     if (department) params.department = department;
@@ -697,10 +801,11 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
 
   // Tool 5: driveFunnel
   if (
-    q.includes('funnel') ||
-    q.includes('conversion') ||
-    q.includes('shortlisted to offered') ||
-    q.includes('pipeline for')
+    !q.includes('across the whole college') &&
+    !q.includes('departmental') &&
+    (q.includes('funnel') ||
+      q.includes('shortlisted to offered') ||
+      q.includes('pipeline for'))
   ) {
     const compMatch = q.match(/(?:for|of)\s+([a-z0-9 ]{2,30})/i);
     const company = compMatch ? compMatch[1].replace(/drive|funnel|pipeline/gi, '').trim() : undefined;
@@ -714,7 +819,14 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     q.includes('future drive') ||
     q.includes('next drive') ||
     q.includes('next 30 days') ||
-    q.includes('next 60 days')
+    q.includes('next 60 days') ||
+    q.includes('scheduled this week') ||
+    q.includes('drives next week') ||
+    q.includes('drive calendar') ||
+    q.includes('visiting campus') ||
+    q.includes('placement events') ||
+    q.includes('happening soon') ||
+    q.includes('recruitment timeline')
   ) {
     const daysMatch = q.match(/\b(?:next|in)\s+(\d{1,2})\s+days?\b/i);
     const days = daysMatch ? Math.min(60, Number(daysMatch[1])) : 30;
@@ -739,8 +851,13 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     q.includes('company') ||
     q.includes('companies') ||
     q.includes('recruiter') ||
+    q.includes('recruiters') ||
     q.includes('hiring partner') ||
-    q.includes('top recruiter')
+    q.includes('top recruiter') ||
+    q.includes('employer') ||
+    q.includes('google hire') ||
+    q.includes('amazon extend') ||
+    q.includes('visiting companies')
   ) {
     const compMatch = q.match(/(?:for|about|from)\s+([a-z0-9 ]{2,30})/i);
     const company = compMatch ? compMatch[1].replace(/company|recruiter|stats/gi, '').trim() : undefined;
@@ -754,7 +871,13 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     q.includes('branch') ||
     q.includes('dept wise') ||
     q.includes('department-wise') ||
-    q.includes('compare dept')
+    q.includes('compare dept') ||
+    q.includes('across branches') ||
+    q.includes('mechanical engineering') ||
+    q.includes('civil engineering') ||
+    q.includes('departmental') ||
+    q.includes('comparative analysis') ||
+    q.includes('by branch')
   ) {
     const params = {};
     if (batch) params.batch = batch;
@@ -771,7 +894,14 @@ function matchRuleBasedIntent(question = '', previous = null, role = 'tpo') {
     q.includes('overall stats') ||
     q.includes('placed') ||
     q.includes('placement') ||
-    q.includes('stats')
+    q.includes('stats') ||
+    q.includes('total offers') ||
+    q.includes('median ctc') ||
+    q.includes('conversion rate') ||
+    q.includes('macro placement') ||
+    q.includes('headcount') ||
+    q.includes('season going') ||
+    q.includes('college placement')
   ) {
     const params = {};
     if (batch) params.batch = batch;
