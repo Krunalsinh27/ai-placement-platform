@@ -1,33 +1,46 @@
 /**
  * Controller for Multi-Role Assistant (Student, TPO, Recruiter, Superadmin).
- * Handles /api/assistant/ask (AI/rules routed), /api/assistant/run (direct tool execution), and /api/assistant/suggestions.
+ * Handles:
+ * - POST /api/assistant/ask (Standard JSON response)
+ * - POST /api/assistant/chat/stream (Server-Sent Events streaming)
+ * - GET /api/assistant/conversations (List user threads)
+ * - GET /api/assistant/conversations/:conversationId (Get thread history)
+ * - DELETE /api/assistant/conversations/:conversationId (Clear single thread)
+ * - DELETE /api/assistant/conversations (Clear all threads)
+ * - POST /api/assistant/feedback (Thumbs up/down rating)
+ * - POST /api/assistant/escalate (Send unanswered question to college TPO)
+ * - POST /api/assistant/run (Direct tool execution)
+ * - GET /api/assistant/suggestions (Role-tailored chips & quota status)
  */
 
 const mongoose = require('mongoose');
-const { ChatLog, AiUsage, Student } = require('../models');
+const { ChatLog, AiUsage, Student, User, Notification, ConversationMeta } = require('../models');
 const assistantTools = require('../services/assistant/assistantTools');
 const {
-  TOOL_NAMES,
-  ROLE_ALLOWED_TOOLS,
+  processAssistantTurn,
+} = require('../services/assistant/orchestrator');
+const {
+  listUserConversations,
+  getConversationMessages,
+  deleteConversation,
+  clearAllConversations,
+  recordFeedback,
+} = require('../services/assistant/conversationService');
+const { generateAndSaveTitle } = require('../services/assistant/titleService');
+const {
   validateToolAndParams,
+  formatAssistantAnswer,
   generateCantAnswerResponse,
   getSuggestedQuestions,
-  routeIntent,
-  formatAssistantAnswer,
-  callGeneralCareerAdvisor,
 } = require('../services/assistant/intentRouter');
 const {
   findHelpTopicById,
   matchHelpTopicByKeywords,
 } = require('../services/assistant/knowledge');
+const { callGeneralCareerAdvisor } = require('../services/assistant/careerAdvisor');
 
 /**
  * Resolves the authenticated user scope and enforces role boundaries.
- * Students: own profile only.
- * Recruiters: own company only.
- * TPOs / Admins: own college only.
- * Superadmins: must pass collegeId explicitly.
- * Analysts & Aspirants: strictly 403 Forbidden.
  */
 async function resolveAssistantScope(req) {
   const user = req.user;
@@ -43,7 +56,7 @@ async function resolveAssistantScope(req) {
 
   // 2. Student scope
   if (role === 'student') {
-    const student = await Student.findOne({ user: user._id });
+    const student = await Student.findOne({ user: user._id }).populate('user', 'name email');
     if (!student) {
       return { errorStatus: 404, errorMessage: 'Student profile not found' };
     }
@@ -132,7 +145,7 @@ async function resolveAssistantScope(req) {
 }
 
 /**
- * @desc    Ask a natural language analytics or help question (AI/rules routed)
+ * @desc    Ask assistant (standard JSON response)
  * @route   POST /api/assistant/ask
  * @access  Private (Student, TPO, Recruiter, Superadmin)
  */
@@ -146,9 +159,7 @@ const askAssistant = async (req, res, next) => {
       });
     }
 
-    const { role } = scope;
-    const { question, previous } = req.body || {};
-
+    const { question, conversationId } = req.body || {};
     if (!question || typeof question !== 'string' || !question.trim()) {
       return res.status(400).json({
         success: false,
@@ -156,201 +167,423 @@ const askAssistant = async (req, res, next) => {
       });
     }
 
-    const trimmedQuestion = question.trim();
+    const result = await processAssistantTurn({
+      question: question.trim(),
+      conversationId: conversationId || null,
+      userId: req.user._id,
+      scope,
+    });
 
-    // Oversized question (> 300 chars): return friendly refusal without error stack
-    if (trimmedQuestion.length > 300) {
-      const cantAnswer = generateCantAnswerResponse(role, scope.suggestedQuestions);
-      try {
-        await ChatLog.create({
-          user: req.user._id,
-          role,
-          college: scope.collegeObjId || undefined,
-          company: scope.companyObjId || undefined,
-          question: trimmedQuestion.slice(0, 300),
-          tool: 'unknown',
-          params: {},
-          status: 'cant_answer',
-        });
-      } catch (_) {}
-
-      const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
-
-      return res.status(200).json({
-        success: true,
-        ...cantAnswer,
-        generatedAt: new Date(),
-        source: 'rules',
-        dailyUsage,
-      });
-    }
-
-    // Deterministic help knowledge base check: Help queries consume 0 quota and bypass rate limit
-    const helpMatch = matchHelpTopicByKeywords(role, trimmedQuestion);
-    if (helpMatch) {
-      const topic = findHelpTopicById(role, helpMatch.id) || helpMatch;
-      const answer = `### 📖 ${topic.title}\n\n${topic.answer}`;
-      const data = { topicId: topic.id, title: topic.title, answer: topic.answer };
-
-      try {
-        await ChatLog.create({
-          user: req.user._id,
-          role,
-          college: scope.collegeObjId || undefined,
-          company: scope.companyObjId || undefined,
-          question: trimmedQuestion,
-          tool: 'help',
-          params: { topicId: topic.id },
-          status: 'success',
-        });
-      } catch (_) {}
-
-      const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
-      return res.status(200).json({
-        success: true,
-        canAnswer: true,
-        answer,
-        data,
-        tool: 'help',
-        params: { topicId: topic.id },
-        generatedAt: new Date(),
-        source: 'help',
-        dailyUsage,
-        suggestedQuestions: scope.suggestedQuestions,
-      });
-    }
-
-    // Check user daily chat quota before invoking AI
-    const quotaCheck = await AiUsage.canMakeCall(req.user._id, 'assistant');
-    if (!quotaCheck.allowed) {
-      const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+    if (result.status === 'rate_limited') {
       return res.status(429).json({
         success: false,
         status: 'rate_limited',
-        message: quotaCheck.message || 'Daily AI chat quota reached. Please try again tomorrow.',
-        dailyUsage,
+        message: result.answer,
+        dailyUsage: result.dailyUsage,
       });
     }
 
-    // Route intent via AI (or fallback to rule-based matcher)
-    const routed = await routeIntent(trimmedQuestion, previous, req.user._id, role);
-    const { tool, params, source } = routed;
-
-    // Strict role validation: Ensure tool is authorized for this role
-    const validation = validateToolAndParams(tool, params, role);
-    if (!validation.valid || tool === 'unknown') {
-      const cantAnswer = generateCantAnswerResponse(role, scope.suggestedQuestions);
-      try {
-        await ChatLog.create({
-          user: req.user._id,
-          role,
-          college: scope.collegeObjId || undefined,
-          company: scope.companyObjId || undefined,
-          question: trimmedQuestion,
-          tool: tool || 'unknown',
-          params: params || {},
-          status: 'cant_answer',
+    // Trigger async title generation for first/second turn in background
+    if (result.conversationId) {
+      setImmediate(() => {
+        generateAndSaveTitle({
+          conversationId: result.conversationId,
+          userId: req.user._id,
+        }).catch((err) => {
+          console.warn('[AssistantController] Async title generation error:', err.message);
         });
-      } catch (_) {}
-
-      const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
-
-      return res.status(200).json({
-        success: true,
-        ...cantAnswer,
-        generatedAt: new Date(),
-        source: source || 'rules',
-        dailyUsage,
       });
     }
 
-    // Execute tool based on role
-    let data = null;
-    let answer = '';
-    let responseSource = source;
+    return res.status(200).json({
+      ...result,
+      generatedAt: new Date(),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
-    if (tool === 'help') {
-      const topic =
-        findHelpTopicById(role, validation.params?.topicId) ||
-        matchHelpTopicByKeywords(role, trimmedQuestion);
-      if (topic) {
-        answer = `### 📖 ${topic.title}\n\n${topic.answer}`;
-        data = { topicId: topic.id, title: topic.title, answer: topic.answer };
-      } else {
-        answer = 'Here is the platform documentation guide for your inquiry.';
-        data = { help: true };
-      }
-      responseSource = 'help';
-    } else if (tool === 'general') {
-      const advisorRes = await callGeneralCareerAdvisor(trimmedQuestion, req.user._id);
-      answer = advisorRes.answer;
-      data = { general: true, answer: advisorRes.answer };
-      responseSource = 'general';
-    } else if (role === 'student') {
-      const toolFn = assistantTools[tool];
-      if (!toolFn) {
-        return res.status(200).json({
-          success: true,
-          ...generateCantAnswerResponse(role, scope.suggestedQuestions),
-          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id),
-        });
-      }
-      data = await toolFn(scope.student, validation.params);
-      answer = formatAssistantAnswer(tool, validation.params, data, 'student');
-    } else if (role === 'recruiter') {
-      const toolFn = assistantTools[tool];
-      if (!toolFn) {
-        return res.status(200).json({
-          success: true,
-          ...generateCantAnswerResponse(role, scope.suggestedQuestions),
-          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id),
-        });
-      }
-      data = await toolFn(scope.companyObjId, validation.params);
-      answer = formatAssistantAnswer(tool, validation.params, data, 'recruiter');
-    } else {
-      // TPO / Superadmin / Admin
-      const toolFn = assistantTools[tool];
-      if (!toolFn) {
-        return res.status(200).json({
-          success: true,
-          ...generateCantAnswerResponse(role, scope.suggestedQuestions),
-          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id),
-        });
-      }
-      data = await toolFn(scope.collegeObjId, validation.params);
-      answer = formatAssistantAnswer(tool, validation.params, data, 'tpo');
+/**
+ * @desc    Stream assistant response via Server-Sent Events (SSE)
+ * @route   POST /api/assistant/chat/stream
+ * @access  Private (Student, TPO, Recruiter, Superadmin)
+ */
+const streamAssistantChat = async (req, res, next) => {
+  try {
+    const scope = await resolveAssistantScope(req);
+    if (scope.errorStatus) {
+      return res.status(scope.errorStatus).json({
+        success: false,
+        message: scope.errorMessage,
+      });
     }
 
-    // Audit query in ChatLog (strictly metadata only, zero results stored)
+    const { question, conversationId } = req.body || {};
+    if (!question || typeof question !== 'string' || !question.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Question is required',
+      });
+    }
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    const streamSender = {
+      sendEvent: (event, data) => {
+        try {
+          if (!res.writableEnded) {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+          }
+        } catch (_) {}
+      },
+    };
+
+    const turnResult = await processAssistantTurn({
+      question: question.trim(),
+      conversationId: conversationId || null,
+      userId: req.user._id,
+      scope,
+      streamSender,
+    });
+
+    const finalConvId = turnResult?.conversationId || conversationId;
+
+    res.end();
+
+    // Trigger async title generation AFTER SSE stream ends so response is never delayed
+    if (finalConvId) {
+      setImmediate(async () => {
+        try {
+          await generateAndSaveTitle({
+            conversationId: finalConvId,
+            userId: req.user._id,
+            streamSender,
+          });
+        } catch (err) {
+          console.warn('[AssistantController] Async title generation error:', err.message);
+        }
+      });
+    }
+  } catch (error) {
     try {
-      await ChatLog.create({
-        user: req.user._id,
-        role,
-        college: scope.collegeObjId || undefined,
-        company: scope.companyObjId || undefined,
-        question: trimmedQuestion,
-        tool,
-        params: validation.params,
-        status: 'success',
+      res.write(`event: error\ndata: ${JSON.stringify({ message: error.message || 'Stream failed' })}\n\n`);
+      res.end();
+    } catch (_) {
+      next(error);
+    }
+  }
+};
+
+/**
+ * @desc    List user's active conversations
+ * @route   GET /api/assistant/conversations
+ * @access  Private
+ */
+const listConversations = async (req, res, next) => {
+  try {
+    const conversations = await listUserConversations(req.user._id);
+    return res.status(200).json({
+      success: true,
+      conversations,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Get message history of a conversation
+ * @route   GET /api/assistant/conversations/:conversationId
+ * @access  Private
+ */
+const getConversation = async (req, res, next) => {
+  try {
+    const { conversationId } = req.params;
+    const messages = await getConversationMessages(conversationId, req.user._id);
+    return res.status(200).json({
+      success: true,
+      conversationId,
+      messages,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Delete a specific conversation
+ * @route   DELETE /api/assistant/conversations/:conversationId
+ * @access  Private
+ */
+const deleteConversationHandler = async (req, res, next) => {
+  try {
+    const { conversationId } = req.params;
+
+    // Check conversation existence across ChatLog and ConversationMeta
+    const existingLog = await ChatLog.findOne({ conversationId });
+    const existingMeta = await ConversationMeta.findOne({ conversationId });
+
+    if (!existingLog && !existingMeta) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found',
       });
-    } catch (auditErr) {
-      console.warn('[Assistant Audit] Failed to record ChatLog:', auditErr.message);
     }
 
-    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+    // Enforce ownership: must belong to authenticated user
+    const ownerId = (existingMeta?.user || existingLog?.user)?.toString();
+    if (ownerId && ownerId !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You do not own this conversation',
+      });
+    }
+
+    const deletedCount = await deleteConversation(conversationId, req.user._id);
+    return res.status(200).json({
+      success: true,
+      deletedCount,
+      message: 'Conversation cleared successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Update conversation title or pinned status
+ * @route   PATCH /api/assistant/conversations/:conversationId
+ * @access  Private
+ */
+const updateConversation = async (req, res, next) => {
+  try {
+    const { conversationId } = req.params;
+    const { title, pinned } = req.body || {};
+
+    if (title === undefined && pinned === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least one of title or pinned must be provided',
+      });
+    }
+
+    // Check existing conversation in ChatLog or ConversationMeta
+    const existingLog = await ChatLog.findOne({ conversationId });
+    const existingMeta = await ConversationMeta.findOne({ conversationId });
+
+    if (!existingLog && !existingMeta) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found',
+      });
+    }
+
+    // Ownership check: must match req.user._id
+    const ownerId = (existingMeta?.user || existingLog?.user)?.toString();
+    if (ownerId && ownerId !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You do not own this conversation',
+      });
+    }
+
+    const updates = { updatedAt: new Date() };
+
+    if (title !== undefined) {
+      if (typeof title !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Title must be a string',
+        });
+      }
+      // Strip script/style tags and their contents, then strip remaining HTML tags
+      const cleanTitle = title
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+        .replace(/<[^>]*>/g, '')
+        .trim();
+      if (!cleanTitle || cleanTitle.length < 1 || cleanTitle.length > 60) {
+        return res.status(400).json({
+          success: false,
+          message: 'Title must be between 1 and 60 characters',
+        });
+      }
+      updates.title = cleanTitle;
+      updates.titleSource = 'user';
+    }
+
+    if (pinned !== undefined) {
+      if (typeof pinned !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          message: 'Pinned must be a boolean',
+        });
+      }
+      updates.pinned = pinned;
+    }
+
+    let meta = existingMeta;
+    if (meta) {
+      if (updates.title !== undefined) {
+        meta.title = updates.title;
+        meta.titleSource = updates.titleSource;
+      }
+      if (updates.pinned !== undefined) {
+        meta.pinned = updates.pinned;
+      }
+      meta.updatedAt = updates.updatedAt;
+      await meta.save();
+    } else {
+      meta = await ConversationMeta.create({
+        conversationId,
+        user: req.user._id,
+        title: updates.title || 'New Conversation',
+        titleSource: updates.titleSource || 'user',
+        pinned: updates.pinned ?? false,
+        createdAt: existingLog?.createdAt || new Date(),
+        updatedAt: updates.updatedAt,
+      });
+    }
 
     return res.status(200).json({
       success: true,
-      canAnswer: true,
-      answer,
-      data,
-      tool,
-      params: validation.params,
-      generatedAt: new Date(),
-      source: responseSource,
-      dailyUsage,
-      suggestedQuestions: scope.suggestedQuestions,
+      message: 'Conversation updated successfully',
+      conversation: {
+        conversationId: meta.conversationId,
+        title: meta.title,
+        pinned: meta.pinned,
+        titleSource: meta.titleSource,
+        updatedAt: meta.updatedAt,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Clear all conversations for the user
+ * @route   DELETE /api/assistant/conversations
+ * @access  Private
+ */
+const clearAllConversationsHandler = async (req, res, next) => {
+  try {
+    const deletedCount = await clearAllConversations(req.user._id);
+    return res.status(200).json({
+      success: true,
+      deletedCount,
+      message: 'All conversations cleared successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Submit feedback (thumbs up / down)
+ * @route   POST /api/assistant/feedback
+ * @access  Private
+ */
+const submitFeedback = async (req, res, next) => {
+  try {
+    const { messageId, conversationId, rating, comment } = req.body || {};
+    if (rating !== 1 && rating !== -1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Rating must be 1 (thumbs up) or -1 (thumbs down)',
+      });
+    }
+
+    const recorded = await recordFeedback(
+      messageId,
+      conversationId,
+      req.user._id,
+      rating,
+      comment
+    );
+
+    return res.status(200).json({
+      success: recorded,
+      message: recorded ? 'Feedback recorded successfully' : 'Could not find message to record feedback',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Escalate unanswered question to College TPO (student only)
+ * @route   POST /api/assistant/escalate
+ * @access  Private (Student only)
+ */
+const escalateToTpo = async (req, res, next) => {
+  try {
+    const scope = await resolveAssistantScope(req);
+    if (scope.errorStatus) {
+      return res.status(scope.errorStatus).json({
+        success: false,
+        message: scope.errorMessage,
+      });
+    }
+
+    if (scope.role !== 'student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only students can escalate inquiries to the college TPO',
+      });
+    }
+
+    const { question, conversationId } = req.body || {};
+    if (!question || typeof question !== 'string' || !question.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Question is required for escalation',
+      });
+    }
+
+    if (!scope.collegeObjId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Student is not affiliated with a valid college placement office',
+      });
+    }
+
+    // Find TPOs for the college
+    const tpoUsers = await User.find({
+      college: scope.collegeObjId,
+      role: { $in: ['tpo', 'admin'] },
+    }).select('_id name email');
+
+    if (!tpoUsers || tpoUsers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active TPO staff found for your college.',
+      });
+    }
+
+    const studentName = scope.student?.user?.name || scope.student?.enrollmentNo || 'Student';
+    const message = `Student Inquiry from ${studentName}: "${question.trim().slice(0, 150)}"`;
+
+    const notifications = tpoUsers.map((tpo) => ({
+      user: tpo._id,
+      type: 'general',
+      message,
+      link: '/admin/students',
+    }));
+
+    await Notification.insertMany(notifications);
+
+    return res.status(200).json({
+      success: true,
+      message: `Your question has been forwarded to ${tpoUsers.length} TPO coordinator(s) at your college.`,
+      forwardedCount: tpoUsers.length,
     });
   } catch (error) {
     next(error);
@@ -378,7 +611,7 @@ const runAssistantTool = async (req, res, next) => {
     const validation = validateToolAndParams(tool, params, role);
     if (!validation.valid) {
       const cantAnswer = generateCantAnswerResponse(role, scope.suggestedQuestions);
-      const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+      const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id, role);
       return res.status(200).json({
         success: true,
         ...cantAnswer,
@@ -415,7 +648,7 @@ const runAssistantTool = async (req, res, next) => {
         return res.status(200).json({
           success: true,
           ...generateCantAnswerResponse(role, scope.suggestedQuestions),
-          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id),
+          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id, role),
         });
       }
       data = await toolFn(scope.student, validation.params);
@@ -426,7 +659,7 @@ const runAssistantTool = async (req, res, next) => {
         return res.status(200).json({
           success: true,
           ...generateCantAnswerResponse(role, scope.suggestedQuestions),
-          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id),
+          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id, role),
         });
       }
       data = await toolFn(scope.companyObjId, validation.params);
@@ -438,7 +671,7 @@ const runAssistantTool = async (req, res, next) => {
         return res.status(200).json({
           success: true,
           ...generateCantAnswerResponse(role, scope.suggestedQuestions),
-          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id),
+          dailyUsage: await AiUsage.getUserDailyUsage(req.user._id, role),
         });
       }
       data = await toolFn(scope.collegeObjId, validation.params);
@@ -461,7 +694,7 @@ const runAssistantTool = async (req, res, next) => {
       console.warn('[Assistant Audit] Failed to record ChatLog:', auditErr.message);
     }
 
-    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id, role);
 
     return res.status(200).json({
       success: true,
@@ -495,7 +728,7 @@ const getAssistantSuggestions = async (req, res, next) => {
       });
     }
 
-    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id);
+    const dailyUsage = await AiUsage.getUserDailyUsage(req.user._id, scope.role);
 
     return res.status(200).json({
       success: true,
@@ -512,6 +745,14 @@ const getAssistantSuggestions = async (req, res, next) => {
 module.exports = {
   resolveAssistantScope,
   askAssistant,
+  streamAssistantChat,
+  listConversations,
+  getConversation,
+  updateConversation,
+  deleteConversation: deleteConversationHandler,
+  clearAllConversations: clearAllConversationsHandler,
+  submitFeedback,
+  escalateToTpo,
   runAssistantTool,
   getAssistantSuggestions,
 };

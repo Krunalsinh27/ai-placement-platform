@@ -21,6 +21,12 @@ const TestAttempt = require('./TestAttempt');
 const Aspirant = require('./Aspirant');
 const AiUsage = require('./AiUsage');
 const ChatLog = require('./ChatLog');
+const SkillEmbedding = require('./SkillEmbedding');
+const KnowledgeDocument = require('./KnowledgeDocument');
+const MockInterviewSession = require('./MockInterviewSession');
+const ResumeVersion = require('./ResumeVersion');
+const AiCallLog = require('./AiCallLog');
+const ConversationMeta = require('./ConversationMeta');
 
 module.exports = {
   User,
@@ -46,4 +52,10 @@ module.exports = {
   Aspirant,
   AiUsage,
   ChatLog,
+  SkillEmbedding,
+  KnowledgeDocument,
+  MockInterviewSession,
+  ResumeVersion,
+  AiCallLog,
+  ConversationMeta,
 };

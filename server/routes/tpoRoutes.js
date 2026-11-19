@@ -30,5 +30,53 @@ router.put('/students/:id/reject', rejectStudent);
 router.patch('/students/:id/reject', rejectStudent);
 router.delete('/students/:id/reject', rejectStudent);
 
+// TPO Insights & Analytics
+router.get('/insights/at-risk', async (req, res, next) => {
+  try {
+    const { getAtRiskStudents } = require('../services/analytics/tpoInsightsService');
+    const collegeId = req.user.college?._id || req.user.college;
+    if (!collegeId && req.user.role !== 'superadmin') {
+      return res.status(403).json({ success: false, message: 'College assignment required' });
+    }
+    const targetCollegeId = collegeId || req.query.collegeId;
+    const data = await getAtRiskStudents({
+      collegeId: targetCollegeId,
+      filters: {
+        branch: req.query.branch,
+        batchYear: req.query.batchYear,
+        riskTier: req.query.riskTier,
+      },
+    });
+    res.status(200).json({
+      success: true,
+      ...data,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/insights/weekly-summary', async (req, res, next) => {
+  try {
+    const { getWeeklyPlacementSummary } = require('../services/analytics/tpoInsightsService');
+    const collegeId = req.user.college?._id || req.user.college;
+    if (!collegeId && req.user.role !== 'superadmin') {
+      return res.status(403).json({ success: false, message: 'College assignment required' });
+    }
+    const targetCollegeId = collegeId || req.query.collegeId;
+    const result = await getWeeklyPlacementSummary({
+      collegeId: targetCollegeId,
+      userRole: req.user.role,
+      userId: req.user._id,
+    });
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
 
