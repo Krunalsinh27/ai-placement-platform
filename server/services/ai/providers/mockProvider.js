@@ -290,18 +290,19 @@ class MockProvider {
       const rewrites = [];
       for (const m of bulletMatches) {
         const orig = m.replace(/^Original Bullet:\s*"/, '').replace(/"$/, '').trim();
+        const core = orig.replace(/^(worked|collaborated|built|developed|handled|helped|created|assisted)\s+(on|with|in)?\s*/i, '');
         rewrites.push({
           original: orig,
-          suggested: `Architected and optimized services delivering [add your real number]% improvement in response throughput`,
+          suggested: `Developed ${core} [add your real number]%`,
           why: 'Replaces passive wording with a decisive action verb and highlights quantifiable performance impact.',
         });
       }
       return JSON.stringify({
-        summary: 'Proactive software engineer skilled in full-stack architecture, API optimization, and scalable database systems.',
+        summary: 'Passionate computer science engineer with experience in distributed backend APIs and database indexing with [add your real number]% latency reduction.',
         rewrites: rewrites.length > 0 ? rewrites : [
           {
             original: 'Worked on backend apis and web features',
-            suggested: 'Architected and optimized REST APIs delivering [add your real number]% faster response latency',
+            suggested: 'Developed backend apis and web features [add your real number]%',
             why: 'Leads with an active verb and frames contribution with quantifiable impact.',
           },
         ],

@@ -36,10 +36,17 @@ const {
 } = require('../models');
 
 const mockProvider = require('../services/ai/providers/mockProvider');
-const { validateBulletRewrite } = require('../services/ai/resumeAnalyzer');
 const {
   checkUnresolvedPlaceholders,
   compileBaseResume,
+  loadResumeSource,
+  analyzeResumeTarget,
+  generateMatchReport,
+  validateSummaryRewrite,
+  validateBulletRewrite,
+  BANNED_INFLATION_WORDS,
+  ALLOW_LISTED_OPENING_VERBS,
+  CONDITIONALLY_BANNED_WORDS,
   tailorResume,
   generateCoverLetter,
   saveResumeVersion,
@@ -105,6 +112,7 @@ async function runResumeBuilderTests() {
   function fail(testName, error) {
     testFailedCount++;
     console.error(`  ✗ ${testName}:`, error.message);
+    if (error.stack) console.error(error.stack);
   }
 
   try {
@@ -341,7 +349,7 @@ async function runResumeBuilderTests() {
       // 3.1 Legitimate rewrite with placeholder -> MUST PASS
       const validRewrite = {
         original: 'Worked on backend apis and web features',
-        suggested: 'Architected and optimized REST APIs delivering [add your real number]% faster response latency',
+        suggested: 'Built backend apis and web features with nodejs [add your real number]%',
       };
       assert.strictEqual(
         validateBulletRewrite(validRewrite, resumeCorpus, candidateSkillsSet, existingBullets),
@@ -607,6 +615,641 @@ async function runResumeBuilderTests() {
       fail('Offline fallback', err);
     } finally {
       mockProvider.forceRateLimit = false;
+    }
+
+    // =========================================================================
+    // TEST 8: GUIDED WIZARD STEPS 1, 2, AND 3 ENDPOINTS & NORMALIZATION
+    // =========================================================================
+    console.log('\n--- TEST 8: Guided Wizard Steps 1, 2, and 3 Endpoints ---');
+    try {
+      // Step 1: POST /api/resume-builder/source with type: 'profile'
+      const srcProfRes = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ type: 'profile' }),
+      });
+      assert.strictEqual(srcProfRes.status, 200);
+      const srcProfData = await srcProfRes.json();
+      assert.strictEqual(srcProfData.success, true);
+      assert.ok(srcProfData.resumeData, 'Must return normalized resumeData');
+      assert.strictEqual(srcProfData.resumeData.contact.fullName, 'Devika Sharma');
+      assert.strictEqual(srcProfData.parseConfidence, 1.0);
+      assert.ok(Array.isArray(srcProfData.warnings), 'Must return warnings array');
+
+      // Step 1: POST /api/resume-builder/source with type: 'text'
+      const sampleText = `
+        Devika Sharma
+        devika@portal.com
+        Education:
+        B.Tech Computer Science, Apex Institute, 2025
+        Experience:
+        Backend Engineer at TechCorp (2024)
+        - Developed REST APIs in Node.js and MongoDB
+        Projects:
+        Distributed Cache (2024)
+        - Built key-value store using Redis
+        Skills: Node.js, MongoDB, Redis, JavaScript
+      `;
+      const srcTextRes = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ type: 'text', text: sampleText }),
+      });
+      assert.strictEqual(srcTextRes.status, 200);
+      const srcTextData = await srcTextRes.json();
+      assert.strictEqual(srcTextData.success, true);
+      assert.ok(srcTextData.resumeData.skills.length > 0, 'Must extract structured skills with rules');
+
+      // Invalid source type -> 400
+      const invalidSrcRes = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ type: 'unsupported_source' }),
+      });
+      assert.strictEqual(invalidSrcRes.status, 400);
+
+      // Step 2: POST /api/resume-builder/analyze-target
+      const targetDriveRes = await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ driveId: testDrive._id.toString() }),
+      });
+      assert.strictEqual(targetDriveRes.status, 200);
+      const targetDriveData = await targetDriveRes.json();
+      assert.strictEqual(targetDriveData.success, true);
+      assert.strictEqual(targetDriveData.target.type, 'drive');
+      assert.strictEqual(targetDriveData.target.roleTitle, 'Backend Systems Engineer');
+      assert.ok(targetDriveData.target.requiredSkills.includes('nodejs'));
+
+      // Step 3: POST /api/resume-builder/match-report
+      const matchReportRes = await fetch(`${BASE_URL}/resume-builder/match-report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({
+          resumeData: srcProfData.resumeData,
+          target: targetDriveData.target,
+        }),
+      });
+      assert.strictEqual(matchReportRes.status, 200);
+      const matchReportData = await matchReportRes.json();
+      assert.strictEqual(matchReportData.success, true);
+      assert.ok(typeof matchReportData.matchReport.atsScore === 'number');
+      assert.ok(Array.isArray(matchReportData.matchReport.matchedSkills));
+      assert.ok(Array.isArray(matchReportData.matchReport.learningResources));
+
+      pass('Guided wizard Steps 1, 2, and 3 endpoints and data normalization verified');
+    } catch (err) {
+      fail('Guided wizard endpoints', err);
+    }
+
+    // =========================================================================
+    // TEST 9: CROSS-STUDENT ISOLATION (source=upload) & PII LOGGING PROTECTION
+    // =========================================================================
+    console.log('\n--- TEST 9: Cross-Student Isolation & Zero PII Logging ---');
+    try {
+      // 1. Create Student B
+      await User.deleteMany({ email: 'builder.test.rohan@portal.com' });
+      await Student.deleteMany({ enrollmentNo: 'RB-ENR-002' });
+
+      const userB = await User.create({
+        name: 'Rohan Verma',
+        email: 'builder.test.rohan@portal.com',
+        password: 'password123',
+        role: 'student',
+        college: collegeA._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+      cleanupUsers.push(userB._id);
+
+      const studentB = await Student.create({
+        user: userB._id,
+        college: collegeA._id,
+        enrollmentNo: 'RB-ENR-002',
+        branch: 'Information Technology',
+        batchYear: 2025,
+        cgpa: 7.9,
+        phone: '9123456789',
+        skills: ['python', 'django'],
+      });
+      cleanupStudents.push(studentB._id);
+
+      const tokenB = createToken(userB);
+
+      // Student B calls source=upload when no resume is uploaded -> 400
+      const bUploadNoRes = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenB}`,
+        },
+        body: JSON.stringify({ type: 'upload' }),
+      });
+      assert.strictEqual(bUploadNoRes.status, 400);
+      const bUploadNoData = await bUploadNoRes.json();
+      assert.strictEqual(bUploadNoData.success, false);
+      assert.ok(bUploadNoData.message.includes('No uploaded resume found'));
+
+      // Attach student B's own resumeProfile
+      studentB.resumeProfile = {
+        status: 'parsed',
+        source: 'rules',
+        summary: 'Aspiring IT developer specialized in Python and Django backends.',
+        skills: [{ name: 'python' }, { name: 'django' }],
+        experience: [
+          {
+            title: 'Python Intern',
+            company: 'DataTech Innovations',
+            bullets: ['Built automation scripts in Python'],
+          },
+        ],
+      };
+      await studentB.save();
+
+      // Student B loads source=upload -> strictly returns Student B's data
+      const bUploadRes = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenB}`,
+        },
+        body: JSON.stringify({ type: 'upload' }),
+      });
+      assert.strictEqual(bUploadRes.status, 200);
+      const bUploadData = await bUploadRes.json();
+      assert.strictEqual(bUploadData.resumeData.contact.fullName, 'Rohan Verma');
+      assert.ok(
+        bUploadData.resumeData.summary.includes('Python and Django'),
+        'Student B must only see their own summary'
+      );
+      assert.ok(
+        !bUploadData.resumeData.summary.includes('Devika'),
+        'Student B must never see Student A resume data'
+      );
+
+      // 2. Logging Protection: Spy on console to verify raw resume text is never logged
+      const loggedMessages = [];
+      const originalLog = console.log;
+      const originalInfo = console.info;
+      const originalWarn = console.warn;
+      const originalError = console.error;
+
+      const captureLog = (...args) => {
+        loggedMessages.push(args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
+      };
+
+      console.log = captureLog;
+      console.info = captureLog;
+      console.warn = captureLog;
+      console.error = captureLog;
+
+      try {
+        await fetch(`${BASE_URL}/resume-builder/source`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${tokenA}`,
+          },
+          body: JSON.stringify({ type: 'profile' }),
+        });
+
+        await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${tokenA}`,
+          },
+          body: JSON.stringify({ driveId: testDrive._id.toString() }),
+        });
+      } finally {
+        console.log = originalLog;
+        console.info = originalInfo;
+        console.warn = originalWarn;
+        console.error = originalError;
+      }
+
+      const allLogs = loggedMessages.join('\n');
+      assert.ok(
+        !allLogs.includes('Passionate computer science engineer with experience in distributed backend APIs'),
+        'Endpoints must never log confidential candidate resume text'
+      );
+      assert.ok(
+        !allLogs.includes('9876501234'),
+        'Endpoints must never log candidate contact phone number'
+      );
+
+      pass('Cross-student isolation on source=upload and zero PII logging verified');
+    } catch (err) {
+      fail('Cross-student isolation & zero PII logging', err);
+    }
+
+    // =========================================================================
+    // TEST 10: ZERO AI QUOTA ON STEPS 1-3, ONLY STEP 4 CONSUMES TAILOR QUOTA
+    // =========================================================================
+    console.log('\n--- TEST 10: AI Quota Consumption Verification ---');
+    try {
+      const usageBefore = await AiUsage.getUserDailyUsage(userA._id, 'student');
+      const tailorCountBefore = usageBefore?.tailorUsed || 0;
+
+      // Execute Step 1 (Source: text, uses extractWithRules)
+      await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ type: 'text', text: 'Devika Sharma\nSkills: Node.js, Redis' }),
+      });
+
+      // Execute Step 2 (Target: rules/drive)
+      await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ driveId: testDrive._id.toString() }),
+      });
+
+      // Execute Step 3 (Match report: computeAtsScore deterministic rules)
+      const baseResume = await compileBaseResume(userA._id);
+      await fetch(`${BASE_URL}/resume-builder/match-report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({
+          resumeData: baseResume,
+          target: { requiredSkills: ['nodejs', 'redis'] },
+        }),
+      });
+
+      // Verify tailorCalls did NOT change
+      const usageAfter123 = await AiUsage.getUserDailyUsage(userA._id, 'student');
+      const tailorCountAfter123 = usageAfter123?.tailorUsed || 0;
+      assert.strictEqual(
+        tailorCountAfter123,
+        tailorCountBefore,
+        'Steps 1, 2, and 3 must use 0 AI tailor quota'
+      );
+
+      // Execute Step 4 (Tailor Resume)
+      const tailorRes = await fetch(`${BASE_URL}/students/me/resume-builder/tailor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({
+          resumeData: baseResume,
+          driveId: testDrive._id.toString(),
+        }),
+      });
+      assert.strictEqual(tailorRes.status, 200);
+
+      // Verify tailorCalls incremented by exactly 1
+      const usageAfterStep4 = await AiUsage.getUserDailyUsage(userA._id, 'student');
+      assert.strictEqual(
+        usageAfterStep4?.tailorUsed,
+        tailorCountBefore + 1,
+        'Only Step 4 must consume tailor quota'
+      );
+
+      pass('Wizard consumes zero AI quota on Steps 1-3, and strictly increments quota on Step 4');
+    } catch (err) {
+      fail('AI quota consumption', err);
+    }
+
+    // =========================================================================
+    // TEST 11: GENERAL RESUME MODE & ANTI-HALLUCINATION ACROSS SUMMARY, BULLETS, AND SKILLS
+    // =========================================================================
+    console.log('\n--- TEST 11: General Resume Mode & Anti-Hallucination Guard ---');
+    try {
+      // 1. General Mode Target Analysis
+      const genTargetRes = await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({}),
+      });
+      assert.strictEqual(genTargetRes.status, 200);
+      const genTargetData = await genTargetRes.json();
+      assert.strictEqual(genTargetData.target.type, 'general');
+      assert.strictEqual(genTargetData.target.roleTitle, 'General Software Engineer');
+
+      // 2. Tailor in General Mode
+      const baseResume = await compileBaseResume(userA._id);
+      const genTailorRes = await tailorResume({
+        studentUserId: userA._id,
+        baseResumeData: baseResume,
+      });
+      assert.ok(genTailorRes.tailoredResume, 'General mode must successfully tailor resume');
+
+      // 3. Anti-Hallucination: Summary Rewrite Guard
+      const candidateSkillsSet = new Set(['javascript', 'nodejs', 'mongodb', 'react', 'redis']);
+      const resumeCorpus = 'Passionate computer science engineer with experience in distributed backend APIs, database indexing, and reducing latency.';
+      const knownEmployers = ['Apex Technology'];
+
+      // Invented Skill -> Reject
+      const inventedSkillSummary = 'Expert engineer with 3 years writing Solidity smart contracts and Rust compilers.';
+      assert.strictEqual(
+        validateSummaryRewrite(inventedSkillSummary, baseResume.summary, resumeCorpus, candidateSkillsSet, knownEmployers),
+        false,
+        'Must reject invented skill in summary'
+      );
+
+      // Invented Number without placeholder -> Reject
+      const inventedNumberSummary = 'Engineered distributed APIs serving 500,000 active users with 99.99% uptime.';
+      assert.strictEqual(
+        validateSummaryRewrite(inventedNumberSummary, baseResume.summary, resumeCorpus, candidateSkillsSet, knownEmployers),
+        false,
+        'Must reject invented numbers without placeholder in summary'
+      );
+
+      // Invented Employer -> Reject
+      const inventedEmployerSummary = 'Former senior backend engineering intern at Google and Meta.';
+      assert.strictEqual(
+        validateSummaryRewrite(inventedEmployerSummary, baseResume.summary, resumeCorpus, candidateSkillsSet, knownEmployers),
+        false,
+        'Must reject unverified employers in summary'
+      );
+
+      // Valid Summary with allowed placeholder and verified skills -> Accept
+      const validSummary = 'Full-stack software engineer skilled in Node.js, MongoDB, and Redis with [add your real number]% latency reduction.';
+      assert.strictEqual(
+        validateSummaryRewrite(validSummary, baseResume.summary, resumeCorpus, candidateSkillsSet, knownEmployers),
+        true,
+        'Must accept truthful summary using allowed placeholder and verified skills'
+      );
+
+      // 4. Anti-Hallucination: Bullet Rewrites Guard
+      const existingBullet = 'Developed REST APIs using Node.js and MongoDB.';
+      const existingBullets = [existingBullet];
+
+      // Invented Skill in bullet -> Reject
+      assert.strictEqual(
+        validateBulletRewrite(
+          { original: existingBullet, suggested: 'Architected distributed consensus protocol in Rust.' },
+          resumeCorpus,
+          candidateSkillsSet,
+          existingBullets
+        ),
+        false,
+        'Must reject invented skill in bullet'
+      );
+
+      // Invented Metric in bullet -> Reject
+      assert.strictEqual(
+        validateBulletRewrite(
+          { original: existingBullet, suggested: 'Developed REST APIs reducing server latency by 45%.' },
+          resumeCorpus,
+          candidateSkillsSet,
+          existingBullets
+        ),
+        false,
+        'Must reject invented metric number in bullet'
+      );
+
+      // Allowed placeholder in bullet -> Accept
+      assert.strictEqual(
+        validateBulletRewrite(
+          { original: existingBullet, suggested: 'Built REST APIs using Node.js and MongoDB [add your real number]%' },
+          resumeCorpus,
+          candidateSkillsSet,
+          existingBullets
+        ),
+        true,
+        'Must accept bullet rewrite containing [add your real number] placeholder'
+      );
+
+      pass('General resume mode and anti-hallucination guard across summary, bullets, and skills verified');
+    } catch (err) {
+      fail('General mode & anti-hallucination guard', err);
+    }
+
+    // =========================================================================
+    // TEST 12: BANNED INFLATION WORDS, SUMMARY NUMBER RETENTION, & NUMERIC MATCH REPORT
+    // =========================================================================
+    console.log('\n--- TEST 12: Banned Inflation Words, Summary Retention, & Numeric Match Report ---');
+    try {
+      const originalBullet = 'Developed backend apis and web features with Node.js and MongoDB.';
+      const existingBullets = [originalBullet];
+      const candidateSkillsSet = new Set(['javascript', 'nodejs', 'mongodb', 'react', 'redis']);
+      const resumeCorpus = 'Passionate computer science engineer with experience in distributed backend APIs, database indexing, and reducing latency.';
+      const entryContext = 'Backend Developer Intern at Acme Cloud Labs';
+
+      // 1. Strict rejection of exact banned inflation words / ungrounded claims
+      const bannedExamples = [
+        'Built backend APIs delivering cross-device compatibility',
+        'Built backend APIs using collaborative version control',
+        'Architected REST APIs with Node.js [add your real number]%',
+        'Orchestrated container deployment for backend APIs',
+        'Built backend APIs and seamlessly integrated payment gateways',
+        'Built comprehensive unit test suite for backend APIs',
+        'Built backend APIs using cutting-edge algorithms',
+        'Built robust data pipelines for backend APIs',
+        'Spearheaded frontend migration for web features',
+        'Pioneered backend architecture with Node.js',
+        'Leveraged React state across web features',
+      ];
+
+      for (const suggested of bannedExamples) {
+        const isValid = validateBulletRewrite(
+          { original: originalBullet, suggested },
+          resumeCorpus,
+          candidateSkillsSet,
+          existingBullets,
+          entryContext
+        );
+        assert.strictEqual(
+          isValid,
+          false,
+          `validateBulletRewrite must reject ungrounded/inflated phrase: "${suggested}"`
+        );
+      }
+
+      // Truthful rewrite adhering to allow-list synonym and content word diff check
+      const validSynonymRewrite = {
+        original: originalBullet,
+        suggested: 'Implemented backend apis and web features with nodejs [add your real number]%',
+      };
+      assert.strictEqual(
+        validateBulletRewrite(validSynonymRewrite, resumeCorpus, candidateSkillsSet, existingBullets, entryContext),
+        true,
+        'Must accept rewrite with allow-listed verb and verified content words'
+      );
+
+      // Rejection during tailorResume falls back to original bullet marked "kept original"
+      mockProvider.mockTailorResponse = {
+        summary: resumeCorpus,
+        rewrites: [
+          {
+            original: originalBullet,
+            suggested: 'Architected and orchestrated cutting-edge backend APIs',
+            why: 'Banned inflation words test',
+          },
+        ],
+      };
+
+      const baseResume = await compileBaseResume(userA._id);
+      const tailoredWithFallback = await tailorResume({
+        studentUserId: userA._id,
+        baseResumeData: baseResume,
+      });
+
+      const fallbackRewrite = tailoredWithFallback.bulletRewrites.find(
+        (rw) => rw.original === originalBullet
+      );
+      assert.ok(fallbackRewrite, 'Must return rewrite entry');
+      assert.strictEqual(
+        fallbackRewrite.status,
+        'kept original',
+        'Rejected rewrite must fall back to original with status: kept original'
+      );
+      assert.strictEqual(
+        fallbackRewrite.suggested,
+        originalBullet,
+        'Suggested text must fall back to original bullet text'
+      );
+      mockProvider.reset();
+
+      // 2. Summary rewrite: must preserve numbers and facts (e.g. "250+ problems on LeetCode")
+      const originalSummaryWithFacts =
+        'Passionate software engineer who solved 250+ problems on LeetCode and built full-stack applications with Node.js and MongoDB.';
+
+      // Dropping 250+ -> must reject
+      const droppedNumberSummary =
+        'Passionate software engineer who solved problems on LeetCode and built full-stack applications with Node.js and MongoDB.';
+      assert.strictEqual(
+        validateSummaryRewrite(
+          droppedNumberSummary,
+          originalSummaryWithFacts,
+          resumeCorpus,
+          candidateSkillsSet,
+          ['Acme Cloud Labs']
+        ),
+        false,
+        'Summary rewrite dropping "250+" must be rejected'
+      );
+
+      // Dropping LeetCode -> must reject
+      const droppedFactSummary =
+        'Passionate software engineer who solved 250+ problems and built full-stack applications with Node.js and MongoDB.';
+      assert.strictEqual(
+        validateSummaryRewrite(
+          droppedFactSummary,
+          originalSummaryWithFacts,
+          resumeCorpus,
+          candidateSkillsSet,
+          ['Acme Cloud Labs']
+        ),
+        false,
+        'Summary rewrite dropping "LeetCode" platform fact must be rejected'
+      );
+
+      // Retaining both 250+ and LeetCode -> must accept
+      const truthfulSummary =
+        'Software engineer who solved 250+ problems on LeetCode and built full-stack applications with Node.js and MongoDB with [add your real number]% latency reduction.';
+      assert.strictEqual(
+        validateSummaryRewrite(
+          truthfulSummary,
+          originalSummaryWithFacts,
+          resumeCorpus,
+          candidateSkillsSet,
+          ['Acme Cloud Labs']
+        ),
+        true,
+        'Summary rewrite retaining "250+" and "LeetCode" must be accepted'
+      );
+
+      // 3. Match report response always returns numeric fields across all 7 rubric parts and General mode
+      // 3.1 Targeted Drive Match Report
+      const driveMatchRes = await fetch(`${BASE_URL}/resume-builder/match-report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({
+          resumeData: baseResume,
+          target: {
+            type: 'drive',
+            driveId: testDrive._id.toString(),
+            requiredSkills: ['nodejs', 'mongodb', 'redis'],
+            preferredSkills: ['docker', 'aws'],
+          },
+        }),
+      });
+      assert.strictEqual(driveMatchRes.status, 200);
+      const driveMatchData = await driveMatchRes.json();
+      assert.strictEqual(driveMatchData.success, true);
+      const driveReport = driveMatchData.matchReport;
+
+      // Numeric atsScore
+      assert.strictEqual(typeof driveReport.atsScore, 'number', 'atsScore must be numeric');
+      assert.ok(!isNaN(driveReport.atsScore), 'atsScore must not be NaN');
+      assert.ok(driveReport.atsScore >= 0 && driveReport.atsScore <= 100);
+
+      // Numeric breakdown for all 7 parts
+      assert.strictEqual(typeof driveReport.breakdown.keywordMatch, 'number');
+      assert.strictEqual(typeof driveReport.breakdown.experience, 'number');
+      assert.strictEqual(typeof driveReport.breakdown.education, 'number');
+      assert.strictEqual(typeof driveReport.breakdown.structure, 'number');
+      assert.strictEqual(typeof driveReport.breakdown.impact, 'number');
+      assert.strictEqual(typeof driveReport.breakdown.actionVerbs, 'number');
+      assert.strictEqual(typeof driveReport.breakdown.formatting, 'number');
+
+      // 3.2 General Mode Match Report
+      const genMatchRes = await fetch(`${BASE_URL}/resume-builder/match-report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({
+          resumeData: baseResume,
+          target: { type: 'general' },
+        }),
+      });
+      assert.strictEqual(genMatchRes.status, 200);
+      const genMatchData = await genMatchRes.json();
+      assert.strictEqual(genMatchData.success, true);
+      const genReport = genMatchData.matchReport;
+
+      // General mode numeric total and flag
+      assert.strictEqual(typeof genReport.atsScore, 'number', 'General atsScore must be numeric');
+      assert.ok(!isNaN(genReport.atsScore), 'General atsScore must not be NaN');
+      assert.strictEqual(genReport.isGeneral, true, 'isGeneral flag must be true');
+      assert.strictEqual(genReport.generalNote, 'score excludes keyword match, no job selected');
+      assert.strictEqual(genReport.breakdown.keywordMatch, null, 'keywordMatch in general mode is null');
+      assert.strictEqual(typeof genReport.breakdown.experience, 'number');
+      assert.strictEqual(typeof genReport.breakdown.education, 'number');
+      assert.strictEqual(typeof genReport.breakdown.structure, 'number');
+      assert.strictEqual(typeof genReport.breakdown.impact, 'number');
+      assert.strictEqual(typeof genReport.breakdown.actionVerbs, 'number');
+      assert.strictEqual(typeof genReport.breakdown.formatting, 'number');
+
+      pass('Banned inflation words rejected, summary numbers/facts retained, and match report always returns numeric fields');
+    } catch (err) {
+      fail('Banned inflation words & match report numeric fields', err);
     }
   } finally {
     console.log('\n--- CLEANING UP TEST FIXTURES ---');

@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const {
   getBaseResume,
+  loadSourceHandler,
+  analyzeTargetHandler,
+  generateMatchReportHandler,
   tailorResumeHandler,
   generateCoverLetterHandler,
   exportPdfHandler,
@@ -18,6 +21,16 @@ const { aiLimiter } = require('../middleware/rateLimitMiddleware');
 router.use(protect);
 router.use(authorize('student'));
 
+// Wizard Step 1: Source Normalization
+router.post('/source', loadSourceHandler);
+
+// Wizard Step 2: Target Analysis
+router.post('/analyze-target', analyzeTargetHandler);
+
+// Wizard Step 3: Match & ATS Report
+router.post('/match-report', generateMatchReportHandler);
+
+// Wizard Step 4: Tailoring, PDF Export & Legacy Base
 router.get('/base', getBaseResume);
 router.get('/quota', getQuotaHandler);
 router.post('/tailor', aiLimiter, tailorResumeHandler);
