@@ -1,0 +1,24 @@
+SURESH MENON
+suresh.menon@example.com | +91-0000000000 | Bengaluru, India
+
+SUMMARY
+SAP Technical Consultant with 3.5 years of experience developing enterprise ERP solutions using SAP ABAP, SAP HANA, and S/4HANA.
+
+EXPERIENCE
+SAP ABAP Consultant | EnterpriseIT Global | Bengaluru
+2021 - Present
+- Developed complex reports, interfaces, conversions, and smart forms (RICEFW) using SAP ABAP and SAP HANA.
+- Optimized ABAP database queries and CDS views, boosting report execution speed by 3x.
+- Integrated SAP ERP with external enterprise applications using OData and REST web services.
+- Supported SAP S/4HANA migration projects for Fortune 500 manufacturing clients.
+
+Junior ABAP Developer | ERPTech Solutions | Chennai
+2020 - 2021
+- Developed ALV reports and user exits for SAP MM and SD modules.
+
+EDUCATION
+Bachelor of Technology in Mechanical Engineering (2016 - 2020)
+NIT Calicut | CGPA: 8.0/10
+
+SKILLS
+SAP, SAP ABAP, SAP ERP, SAP HANA, SAP S/4HANA, SQL, Database Query Optimization, Git

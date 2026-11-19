@@ -1,0 +1,24 @@
+DEEPAK YADAV
+deepak.yadav@example.com | +91-0000000000 | Ahmedabad, India
+
+SUMMARY
+Salesforce Developer with 3.5 years of experience developing customized CRM solutions using Apex, Visualforce, and Lightning Web Components (LWC).
+
+EXPERIENCE
+Salesforce Developer | CRMCloud Partners | Ahmedabad
+2021 - Present
+- Engineered customized business workflows, triggers, and batch classes using Apex and SOQL on Salesforce platform.
+- Developed modern responsive UI using Lightning Web Components (LWC) and JavaScript.
+- Integrated external payment and ERP systems using RESTful web services in Salesforce.
+- Decreased sales lead qualification turnaround time by 40% through automated workflow rules.
+
+Salesforce Administrator | TechCRM Solutions | Surat
+2020 - 2021
+- Configured security profiles, permission sets, validation rules, and custom reports.
+
+EDUCATION
+Bachelor of Engineering in Computer Engineering (2016 - 2020)
+Gujarat Technological University | CGPA: 8.1/10
+
+SKILLS
+Salesforce, Apex, Visualforce, Lightning Web Components, SOQL, Salesforce CRM, Salesforce Admin, REST API, JavaScript, Git

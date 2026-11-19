@@ -1,0 +1,24 @@
+ROHAN VERMA
+rohan.verma@example.com | +91-0000000000 | Noida, India
+
+SUMMARY
+DevOps and Site Reliability Engineer with 4.5 years of experience automating infrastructure as code using Terraform, Kubernetes, Docker, and AWS.
+
+EXPERIENCE
+Lead DevOps Engineer | CloudScale Tech | Gurugram
+2021 - Present
+- Provisioned multi-region AWS cloud infrastructure using Terraform and Ansible.
+- Managed 12 Kubernetes clusters hosting 200+ containerized microservices with 99.99% uptime.
+- Built automated CI/CD deployment pipelines using GitHub Actions and ArgoCD, accelerating releases by 4x.
+- Configured real-time observability dashboards using Prometheus, Grafana, and ELK Stack.
+
+DevOps Engineer | NexaSoft | Noida
+2019 - 2021
+- Containerized legacy applications using Docker and maintained Jenkins pipelines.
+
+EDUCATION
+Bachelor of Technology in Electronics & Communication (2015 - 2019)
+DTU Delhi | CGPA: 8.2/10
+
+SKILLS
+Terraform, Kubernetes, Docker, AWS, CI/CD, Linux, Ansible, Prometheus, Grafana, Helm, ArgoCD, Bash, Python, Git

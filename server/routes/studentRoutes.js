@@ -20,6 +20,14 @@ const {
   getStudentSkillMatch,
   analyzeResumeHandler,
 } = require('../controllers/aiResumeController');
+const {
+  startSession,
+  submitAnswer,
+  getSession,
+  listSessions,
+  deleteSession,
+  getQuota,
+} = require('../controllers/mockInterviewController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 const uploadResume = require('../middleware/uploadMiddleware');
 const { aiLimiter, userApiLimiter } = require('../middleware/rateLimitMiddleware');
@@ -39,6 +47,45 @@ router
   .put(protect, authorize('student'), updateResumeProfile)
   .delete(protect, authorize('student'), deleteResumeProfile);
 router.get('/me/skill-match/:driveId', protect, authorize('student'), aiLimiter, getStudentSkillMatch);
+
+// AI Mock Interview routes for students
+router.post('/me/mock-interviews', protect, authorize('student'), aiLimiter, startSession);
+router.get('/me/mock-interviews', protect, authorize('student'), listSessions);
+router.get('/me/mock-interviews/quota', protect, authorize('student'), getQuota);
+router.get('/me/mock-interviews/:id', protect, authorize('student'), getSession);
+router.post('/me/mock-interviews/:id/answers', protect, authorize('student'), aiLimiter, submitAnswer);
+router.delete('/me/mock-interviews/:id', protect, authorize('student'), deleteSession);
+
+// AI Resume Builder & Tailoring routes for students
+router.use('/me/resume-builder', require('./resumeBuilderRoutes'));
+
+// AI Skill-Gap Learning Plan route
+router.get('/me/skill-gap-plan', protect, authorize('student'), aiLimiter, async (req, res, next) => {
+  try {
+    const { generateSkillGapPlan } = require('../services/ai/skillGapService');
+    const plan = await generateSkillGapPlan({ studentUserId: req.user._id });
+    res.status(200).json({
+      success: true,
+      plan,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Asynchronous AI Job Status Polling
+router.get('/me/ai-jobs/:jobId', protect, authorize('student'), async (req, res, next) => {
+  try {
+    const { getAiJobStatus } = require('../services/ai/aiQueue');
+    const status = await getAiJobStatus(req.params.jobId);
+    res.status(200).json({
+      success: true,
+      ...status,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Dedicated resume upload route
 router

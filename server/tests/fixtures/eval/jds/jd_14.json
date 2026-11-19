@@ -1,0 +1,22 @@
+{
+  "id": "jd_14",
+  "roleTitle": "Business Intelligence Analyst",
+  "text": "Job Title: Business Intelligence Analyst\nRequirements:\n- Bachelor's degree in Mathematics, Statistics, Engineering or Business\n- At least 2 years of experience in data visualization and reporting\n- Must have strong expertise in Power BI, Tableau, SQL, Advanced Excel, and Business Intelligence\n- Experience building executive dashboards and complex SQL queries\nBonus:\n- Proficiency in Python, DAX, and Data Warehousing is preferred\n- Excellent communication and presentation skills",
+  "expected": {
+    "requiredSkills": [
+      "power bi",
+      "tableau",
+      "sql",
+      "advanced excel",
+      "business intelligence"
+    ],
+    "preferredSkills": [
+      "python",
+      "dax",
+      "data warehousing"
+    ],
+    "minYearsExperience": 2,
+    "education": "Bachelor's degree",
+    "roleTitle": "Business Intelligence Analyst"
+  }
+}

@@ -1,0 +1,24 @@
+SANJAY RAO
+sanjay.rao@example.com | +91-0000000000 | Bengaluru, India
+
+SUMMARY
+Android Native Developer with 3 years of experience engineering mobile applications using Kotlin, Jetpack Compose, and Retrofit.
+
+EXPERIENCE
+Android Engineer | MobileApps Studio | Bengaluru
+2021 - Present
+- Built modern Android applications in Kotlin utilizing Jetpack Compose and MVVM clean architecture.
+- Integrated REST APIs with Retrofit and Coroutines, supporting 300k+ active mobile app users.
+- Implemented offline-first persistence using Room Database and SQLite, reducing data synchronization latency by 45%.
+- Implemented dependency injection using Dagger Hilt and wrote unit tests in JUnit and Mockito.
+
+Junior Android Developer | AppWorks | Mysuru
+2020 - 2021
+- Developed UI screens and fixed memory leaks in Android apps using Java and XML.
+
+EDUCATION
+Bachelor of Engineering in Information Science (2016 - 2020)
+BMS College of Engineering | CGPA: 8.4/10
+
+SKILLS
+Kotlin, Android Development, Jetpack Compose, Retrofit, SQLite, Room Database, Dagger Hilt, JUnit, Java, Git

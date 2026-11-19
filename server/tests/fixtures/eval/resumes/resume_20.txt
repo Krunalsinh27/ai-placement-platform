@@ -1,0 +1,25 @@
+AAYUSH GUPTA
+aayush.gupta@example.com | +91-0000000000 | Delhi, India | LinkedIn / GitHub
+
+SUMMARY
+Enthusiastic and proactive Computer Science Engineering graduate (2025 Batch) with strong foundation in Data Structures, Algorithms, Java, Python, and Database Management.
+
+PROJECTS & EXPERIENCE
+Software Engineering Intern | TechCampus | Delhi
+June 2024 - August 2024 (3 months)
+- Developed REST APIs using Java and Spring Boot for a campus event management system.
+- Built MySQL relational schemas with normalized tables, indexing, and foreign key constraints.
+- Optimized query execution, reducing API response times by 35ms.
+
+Full Stack Student Portal (Academic Project)
+- Developed responsive web application using React, Node.js, and SQL.
+- Solved 450+ Data Structures and Algorithms problems across LeetCode and GeeksforGeeks.
+
+EDUCATION
+Bachelor of Technology in Computer Science & Engineering (2021 - 2025)
+National Institute of Technology Delhi | CGPA: 8.8/10
+
+TECHNICAL SKILLS
+Languages: Java, Python, C++, SQL
+CS Fundamentals: Data Structures & Algorithms, DBMS, Operating Systems, Computer Networks, Object Oriented Programming
+Web & Tools: HTML, CSS, JavaScript, Spring Boot, MySQL, Git, GitHub

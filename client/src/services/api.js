@@ -43,6 +43,8 @@ export const isSlowEndpoint = (config = {}) => {
     url.includes('/resume/analyze') ||
     url.includes('/ai/') ||
     url.includes('/assistant') ||
+    url.includes('/mock-interviews') ||
+    url.includes('/resume-builder') ||
     url.includes('/export') ||
     url.includes('/reports') ||
     url.includes('/upload') ||

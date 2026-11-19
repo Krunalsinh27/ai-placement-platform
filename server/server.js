@@ -175,6 +175,9 @@ app.use('/api/superadmin', require('./routes/superadminRoutes'));
 app.use('/api/aspirant', publicApiLimiter, require('./routes/aspirantRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/assistant', require('./routes/assistantRoutes'));
+app.use('/api/mock-interviews', require('./routes/mockInterviewRoutes'));
+app.use('/api/admin/mock-interviews', require('./routes/mockInterviewRoutes'));
+app.use('/api/resume-builder', require('./routes/resumeBuilderRoutes'));
 
 // 404 Handler
 app.use(notFound);

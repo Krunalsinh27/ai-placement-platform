@@ -1,0 +1,21 @@
+{
+  "id": "jd_13",
+  "roleTitle": "SAP Technical Consultant",
+  "text": "Position: SAP Technical Consultant\nRequirements:\n- B.Tech/B.E. in Engineering or Computer Science\n- Minimum 3 years of SAP development experience\n- Must have in-depth skills in SAP, SAP ABAP, SAP ERP, and SAP HANA\n- Experience developing reports, interfaces, conversions, and enhancements (RICEFW)\nNice to have:\n- Experience with SAP S/4HANA, SAP FICO, or SAP MM is a plus\n- Knowledge of OData services and SAP Fiori is preferred",
+  "expected": {
+    "requiredSkills": [
+      "sap",
+      "sap abap",
+      "sap erp",
+      "sap hana"
+    ],
+    "preferredSkills": [
+      "sap s/4hana",
+      "sap fico",
+      "sap mm"
+    ],
+    "minYearsExperience": 3,
+    "education": "B.Tech/B.E.",
+    "roleTitle": "SAP Technical Consultant"
+  }
+}

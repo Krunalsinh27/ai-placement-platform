@@ -1,0 +1,25 @@
+PRIYA SHARMA
+priya.sharma@example.com | +91-0000000000 | Pune, India
+
+PROFESSIONAL SUMMARY
+Backend Python Developer with 3.5 years of experience developing robust RESTful APIs and distributed systems using Python, Django, and PostgreSQL.
+
+EXPERIENCE
+Backend Engineer | DataSphere Tech | Pune
+2021 - Present
+- Engineered scalable backend microservices using Python, Django Rest Framework, and PostgreSQL.
+- Implemented asynchronous task workers using Celery and Redis, reducing background task execution time by 55%.
+- Optimized complex SQL queries saving 14 hours weekly in report generation.
+- Scaled API infrastructure to handle 45k req/s during peak events.
+
+Junior Python Developer | WebInnovate | Pune
+2020 - 2021
+- Built REST API endpoints and integrated third-party payment gateways.
+- Containerized application environments using Docker.
+
+EDUCATION
+Bachelor of Engineering in Information Technology (2016 - 2020)
+Pune Institute of Computer Technology | CGPA: 8.4/10
+
+SKILLS
+Python, Django, PostgreSQL, REST API, Celery, Redis, Docker, Git, Linux, SQL

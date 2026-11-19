@@ -1,0 +1,24 @@
+{
+  "id": "jd_03",
+  "roleTitle": "Senior Data Engineer",
+  "text": "Role: Senior Data Engineer\nRequirements:\n- B.Tech or M.Tech in Computer Science or Data Engineering\n- At least 3 years of experience in data engineering and large-scale data pipelines\n- Must have strong hands-on skills in Apache Spark, Python, SQL, Kafka, and Airflow\n- Solid understanding of data warehousing and ETL architecture\nNice to have:\n- Experience with Snowflake, Databricks, and dbt is a plus\n- Cloud experience with AWS or GCP is desirable",
+  "expected": {
+    "requiredSkills": [
+      "apache spark",
+      "python",
+      "sql",
+      "kafka",
+      "apache airflow"
+    ],
+    "preferredSkills": [
+      "snowflake",
+      "databricks",
+      "dbt",
+      "aws",
+      "google cloud"
+    ],
+    "minYearsExperience": 3,
+    "education": "B.Tech or M.Tech",
+    "roleTitle": "Senior Data Engineer"
+  }
+}

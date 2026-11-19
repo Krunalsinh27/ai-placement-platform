@@ -1,0 +1,24 @@
+MANOJ NAIR
+manoj.nair@example.com | +91-0000000000 | Kochi, India
+
+SUMMARY
+Senior Java Backend Engineer with 4 years of experience architecting high-throughput microservices using Java, Spring Boot, Hibernate, and MySQL.
+
+EXPERIENCE
+Senior Software Engineer | FinTech Systems | Kochi
+2022 - Present
+- Engineered distributed microservices architecture using Java 17, Spring Boot, Hibernate, and MySQL.
+- Processed 12,000 financial transactions per second with sub-50ms response times.
+- Integrated event-driven messaging utilizing Apache Kafka for asynchronous order settlement.
+- Containerized microservices using Docker and deployed on AWS EKS.
+
+Java Developer | TechSolutions | Trivandrum
+2020 - 2022
+- Developed RESTful APIs and database schemas using Spring Boot and MySQL.
+
+EDUCATION
+Bachelor of Technology in Computer Science (2016 - 2020)
+Cochin University of Science and Technology | CGPA: 8.6/10
+
+SKILLS
+Java, Spring Boot, Hibernate, Microservices, MySQL, REST API, Apache Kafka, Docker, AWS, Object Oriented Programming, Design Patterns, Git

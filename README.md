@@ -120,13 +120,16 @@ sequenceDiagram
 ### 3. Resume AI & Target Job Analyzer
 - **Skill Extraction & Normalization**: PDF resume parsing (max 5MB, `%PDF` magic byte verification) with AI-assisted parsing and rule-based fallback; the ATS score itself is deterministic. Technical proficiencies, education, experience, and projects are extracted, with skills normalized (lowercase, alphanumeric + `# . - /`, max 40 chars) and categorized into Languages, Frontend, Backend, Databases, Tools & Platforms, Concepts, and CS Fundamentals.
 - **Privacy & PII Stripping**: Personal identifiable information (phone numbers, emails, national identity numbers, external URLs) is stripped before any text is transmitted to an LLM provider.
-- **Deterministic ATS-Readiness Scoring (0-100)**: Computed deterministically across 5 weighted categories:
-  - *Keyword Match (40 pts)*: Required proficiencies (75% weight) and preferred proficiencies (25% weight), weighted by evidence depth (1.0 for projects/experience vs 0.7 for list-only mentions).
-  - *Resume Structure (20 pts)*: Presence of experience, projects, education, contact, and skills sections.
-  - *Quantifiable Impact (15 pts)*: Metrics, percentages, currency, and scaling indicators in bullet points.
-  - *Action Verbs (10 pts)*: Strong action verbs initiating bullet points.
-  - *Formatting & Cleanliness (15 pts)*: Readable line lengths and clean document layout.
-- **Target Job Alignment**: Aligns resume profiles against either an active campus placement drive or an arbitrary pasted job description (up to 6,000 characters).
+- **Deterministic ATS-Readiness Scoring (0-100)**: Computed deterministically across 7 weighted categories summing strictly to 100 points:
+  - *Keywords & Semantic Evidence Match (35 pts)*: Required proficiencies (25 pts) and preferred proficiencies (10 pts), weighted by evidence depth (1.0 for projects/experience vs 0.7 for list-only mentions) and semantic similarity with embedding clusters. Unknown skills are preserved, and single-category targets scale proportionally up to 35 pts.
+  - *Years of Experience Fit (10 pts)*: Evaluates candidate experience duration against target minimum years (10/10 if candidate meets or exceeds requirement, scaled proportionally if below, or 10/10 if entry-level/unspecified).
+  - *Education Fit (5 pts)*: Aligns candidate degree level (B.Tech, M.Tech, MCA, BCA, Bachelor's, Master's) against target requirements (5/5 for direct degree match or unspecified requirement, 3/5 for related degree).
+  - *Resume Structure (15 pts)*: Standard section presence (contact details: 4 pts, education: 3 pts, skills: 4 pts, projects/experience: 4 pts).
+  - *Quantifiable Impact & Scale (15 pts)*: Bullet-level impact detected with hardened metrics regex (% improvements, multipliers like 2x, currency, scale terms like users/requests/clusters, and time saved; bare counts like "3 projects" or graduation years are rejected).
+  - *Action Verbs Usage (10 pts)*: Direct, decisive action verbs initiating project and experience bullet points.
+  - *Formatting, Length & Density (10 pts)*: Machine-parseable text (3 pts), sensible length (150–1200 words, 4 pts), and clean line density (3 pts).
+- **OCR Fallback for Scanned Resumes**: When text extraction returns fewer than 20 characters from a PDF (e.g. image-only or scanned PDF), multimodal OCR fallback is triggered automatically to recover resume text, preserving the 5MB file size limit and %PDF magic byte validation.
+- **Target Job Alignment**: Aligns resume profiles against either an active campus placement drive or an arbitrary pasted job description (up to 8,000 characters) with LLM and rule-based section and requirement extraction.
 - **Missing Skills Identification**: Surfaces missing required and preferred proficiencies needed for the role.
 - **Actionable Bullet Rewrites**: AI-generated bullet recommendations using the XYZ / STAR format with highlighted bracketed metric placeholders (`[add your real number]`, `[metric]`), paired with clear warnings advising candidates to insert real figures and keep truthful claims only.
 - **Instant Hash Caching**: SHA-256 content hashing of resume text and target job descriptions returns instant cached scores on duplicate requests, consuming zero quota.
@@ -165,40 +168,57 @@ sequenceDiagram
 
 ---
 
-## AI Providers & Quota Architecture
+## AI Providers & Production Resiliency Architecture
 
 ```mermaid
-flowchart LR
-    Request["Incoming Query / Resume"] --> QuotaCheck{"Check Daily Quotas\n(AiUsage in MongoDB)"}
-    QuotaCheck -- "Quota Available" --> ProviderRouter{"Active AI Provider\n(AI_PROVIDER)"}
-    QuotaCheck -- "Quota Exceeded" --> FallbackRules["Deterministic Rule Fallback\n(Regex / Knowledge Base)"]
+flowchart TD
+    Request["Incoming AI Request\n(Resume / JD / Assistant / Mock Interview)"] --> FeatureCheck{"Granular Feature Flag\n(AI_FEATURE_*)"}
+    FeatureCheck -- "Feature Disabled" --> FallbackRules["Deterministic Rule Fallback\n(Regex / Rule Engine / Knowledge Base)"]
+    FeatureCheck -- "Feature Enabled" --> HeavyJobCheck{"Job Type\nHeavy (Parse, Analyze, Mock Score)\nvs Light (Chat, Summary)"}
 
-    ProviderRouter -- "groq" --> Groq["Groq Cloud API\n(Llama 3.3 / Llama 3.1)"]
-    ProviderRouter -- "gemini" --> Gemini["Google Gemini API\n(Gemini 1.5 Flash)"]
-    ProviderRouter -- "mock" --> Mock["In-Memory Mock Provider\n(Forbidden in Production)"]
-    ProviderRouter -- "none" --> FallbackRules
+    HeavyJobCheck -- "Heavy Job" --> QueueDispatch["BullMQ Asynchronous Job Queue\n('ai-jobs' on Redis / In-Process Fallback)"]
+    QueueDispatch --> WorkerPoll["Worker Execution & UI Polling\n(GET /api/students/me/ai-jobs/:id)"]
+    WorkerPoll --> QuotaCheck
 
-    Groq -- "Valid JSON" --> Success["Response Delivered\n(Increment User & Global Quota)"]
-    Gemini -- "Valid JSON" --> Success
-    Mock -- "Valid JSON" --> Success
+    HeavyJobCheck -- "Light Job (Synchronous)" --> QuotaCheck{"Check Daily Quotas\n(AiUsage in MongoDB)"}
 
-    Groq -- "Invalid JSON / Rate Limit" --> Retry{"Retry Once"}
-    Gemini -- "Invalid JSON / Rate Limit" --> Retry
-    Retry -- "Failure" --> FallbackRules
+    QuotaCheck -- "Quota Exceeded" --> FallbackRules
+    QuotaCheck -- "Quota Available" --> ProviderChain["Provider Fallback Chain\n(AI_PROVIDER_CHAIN e.g. groq → gemini → rules)"]
+
+    subgraph Resiliency["Resilience, Circuit Breaker & Fallback Layer"]
+        ProviderChain --> BreakerCheck{"Circuit Breaker Check\n(CLOSED / OPEN / HALF-OPEN)\nThreshold: 3 failures | 60s cooldown"}
+        BreakerCheck -- "Tripped (OPEN)" --> TryNextProvider{"Next Provider in Chain?"}
+        BreakerCheck -- "Healthy (CLOSED / HALF-OPEN)" --> TimeoutRace{"Timeout Race\n(AI_CALL_TIMEOUT_MS = 12s)"}
+        TimeoutRace -- "Success (Valid JSON)" --> Telemetry["Sanitized Telemetry Log\n(AiCallLog: latency, tokens, cost, 0 PII)"]
+        TimeoutRace -- "Timeout / API Error" --> JitterRetry{"Retry with Jitter\n(0.8x - 1.2x Backoff)"}
+        JitterRetry -- "Retry Failed" --> RecordFailure["Record Breaker Failure & Sentry Log\n(aiErrorLogger: Scrubbed Keys/PII)"]
+        RecordFailure --> TryNextProvider
+        TryNextProvider -- "Provider Available" --> BreakerCheck
+        TryNextProvider -- "All Providers Exhausted" --> FallbackRules
+    end
+
+    Telemetry --> SuccessResponse["Deliver Response to User\n(Increment User & Global Quotas)"]
+    FallbackRules --> SuccessResponse
 ```
 
-### Supported AI Providers
-1. **`groq`**: Fast inference via Groq Cloud API. Uses `llama-3.3-70b-versatile` for deep parsing and `llama-3.1-8b-instant` for fast assistant intent routing.
-2. **`gemini`**: Google Gemini API via REST endpoints. Uses `gemini-1.5-flash`.
-3. **`mock`**: In-memory simulated provider returning synthetic structured JSON for zero-cost offline development and testing. Strictly forbidden when `NODE_ENV=production`.
-4. **`none`** *(default)*: Completely disables external LLM calls. The system seamlessly falls back to deterministic regex parsing, rule matching, and curated guides without service disruption.
+### Production AI Resilience Features
+1. **Multi-Provider Fallback Chain**: Configurable failover sequence (`AI_PROVIDER_CHAIN`, default `groq,gemini,rules`). If the primary provider experiences transient downtime, rate limiting, or malformed outputs, requests seamlessly cascade to secondary providers before defaulting to the zero-downtime rule-based engine.
+2. **Three-State Circuit Breaker**: Tracks provider failure states (`CLOSED`, `OPEN`, `HALF-OPEN`). If a provider accumulates 3 consecutive failures, it trips to `OPEN` for 60 seconds to prevent resource exhaustion and timeout cascades, automatically probing with a single trial request in `HALF-OPEN` mode.
+3. **Strict Timeouts & Jittered Backoff**: Every provider call races against a strict timeout (`AI_CALL_TIMEOUT_MS`, default 12,000 ms). Retries employ exponential backoff with randomized full jitter ($0.8\times - 1.2\times$) to prevent thundering herd spikes.
+4. **Asynchronous Heavy Job Processing (BullMQ)**: Resource-intensive operations (PDF resume parsing, ATS job analysis, mock interview scoring) are dispatched to BullMQ background queues with Redis backing (and automatic in-process fallback in local dev/test). The frontend polls status every 1.5 seconds, eliminating HTTP timeout vulnerabilities.
+5. **Sanitized Telemetry Logging (`AiCallLog`)**: Logs operational latency, token counts, cost estimations, and failure reasons with automated 30-day TTL indexing. **Strictly zero PII, zero student names, and zero raw resume text are ever logged.**
+6. **Sentry Error Tracking**: Scrubbed error hooks (`aiErrorLogger.js`) capture provider stack traces while proactively stripping API keys, bearer tokens, passwords, and sensitive student metadata.
+7. **Granular Feature Flags**: Every AI capability can be individually enabled or disabled via environment variables (`AI_FEATURE_*`) without restarting or redeploying the platform.
+8. **Superadmin AI Observability Dashboard**: Real-time operational dashboard for root administrators displaying total daily AI invocations, estimated API expenditure, provider fallback rates, circuit breaker health, failure breakdowns, and average latency per feature.
 
 ### Daily Usage Quotas & Caps
 All AI operations are governed by daily sliding-window caps persisted in MongoDB (`AiUsage` model) keyed by `YYYY-MM-DD`:
 - **Global Daily Cap (`AI_DAILY_CALL_CAP`, default 400)**: Total AI provider calls allowed across all tenants and users combined.
 - **User Parse Cap (`AI_USER_DAILY_PARSE_CAP`, default 5)**: Daily resume parsing attempts per candidate.
-- **User Analyze Cap (`AI_USER_DAILY_ANALYZE_CAP`, default 10)**: Daily ATS target job analyses per candidate (independent of the parse cap).
-- **User Chat Cap (`AI_USER_DAILY_CHAT_CAP`, default 30)**: Daily assistant interactions per user. Pure rules/help queries consume 0 quota.
+- **User Analyze Cap (`AI_USER_DAILY_ANALYZE_CAP`, default 10)**: Daily ATS target job analyses per candidate.
+- **User Chat Cap (`AI_USER_DAILY_CHAT_CAP`, default 30)**: Daily assistant interactions per user. Curated help queries consume 0 quota.
+- **User Mock Interview Cap (`AI_USER_DAILY_MOCK_CAP`, default 5)**: Daily mock interview sessions per candidate.
+- **User Resume Builder Cap (`AI_USER_DAILY_BUILDER_CAP`, default 10)**: Daily resume tailoring and cover letter generations per candidate.
 
 ---
 
@@ -285,17 +305,30 @@ cp client/.env.example client/.env
 | `EMAIL_DEV_ALLOWLIST` | Optional | `dev@example.com` | Comma-separated addresses permitted in dev SMTP |
 | `EMAIL_MAX_PER_MINUTE` | Optional | `20` | Sliding window rate cap on SMTP dispatches |
 
-#### AI Service & Quota Configuration (`server/.env`):
+#### AI Service, Resilience & Quota Configuration (`server/.env`):
 | Variable | Required | Default / Example Value | Description |
 |---|---|---|---|
-| `AI_PROVIDER` | Optional | `none` | Active provider: `groq`, `gemini`, `mock`, or `none`. (`mock` is forbidden in production). |
-| `AI_API_KEY` | Conditional | `gsk_...` / `AIza...` | API key for Groq or Gemini (required if `AI_PROVIDER` is set). |
+| `AI_PROVIDER` | Optional | `none` | Active primary provider: `groq`, `gemini`, `mock`, or `none`. (`mock` is forbidden in production). |
+| `AI_PROVIDER_CHAIN` | Optional | `groq,gemini,rules` | Ordered failover chain across providers with automated circuit breaking and timeout handling. |
+| `AI_CALL_TIMEOUT_MS` | Optional | `12000` | Per-call timeout threshold (milliseconds) before aborting and failing over. |
+| `SENTRY_DSN` | Optional | `https://...@sentry.io/...` | Optional Sentry DSN for capturing sanitized AI exceptions (PII and API keys stripped). |
+| `AI_API_KEY` | Conditional | `gsk_...` / `AIza...` | API key for Groq or Gemini (required if using external AI providers). |
 | `AI_MODEL` | Optional | `llama-3.3-70b-versatile` | Primary model name for resume parsing, analysis, and advisor completions. |
 | `AI_MODEL_FAST` | Optional | `llama-3.1-8b-instant` | Fast model for assistant intent routing (falls back to `AI_MODEL`). |
 | `AI_DAILY_CALL_CAP` | Optional | `400` | Global daily AI call cap persisted in MongoDB across all tenants. |
 | `AI_USER_DAILY_PARSE_CAP` | Optional | `5` | Daily resume parsing cap per candidate. |
 | `AI_USER_DAILY_ANALYZE_CAP` | Optional | `10` | Daily resume ATS job analysis cap per candidate (separate from parsing). |
 | `AI_USER_DAILY_CHAT_CAP` | Optional | `30` | Daily assistant chat cap per user (separate from parsing and analyze caps). |
+| `AI_USER_DAILY_MOCK_CAP` | Optional | `5` | Daily mock interview attempts per candidate. |
+| `AI_USER_DAILY_BUILDER_CAP`| Optional | `10` | Daily resume builder & tailoring generations per candidate. |
+| `AI_FEATURE_RESUME_PARSE` | Optional | `true` | Feature flag toggle for AI resume parsing. |
+| `AI_FEATURE_RESUME_ANALYZE`| Optional | `true` | Feature flag toggle for ATS job description analysis. |
+| `AI_FEATURE_ASSISTANT` | Optional | `true` | Feature flag toggle for Multi-Role Ask AI assistant. |
+| `AI_FEATURE_MOCK_INTERVIEW`| Optional | `true` | Feature flag toggle for Student Mock Interview simulation. |
+| `AI_FEATURE_RESUME_BUILDER`| Optional | `true` | Feature flag toggle for AI Resume Builder & Tailoring. |
+| `AI_FEATURE_RECOMMENDATIONS`| Optional | `true` | Feature flag toggle for Smart Drive Recommendations. |
+| `AI_FEATURE_SKILL_GAP` | Optional | `true` | Feature flag toggle for Weekly Skill-Gap Learning Plans. |
+| `AI_FEATURE_TPO_INSIGHTS` | Optional | `true` | Feature flag toggle for At-Risk Student Lists & TPO Insights. |
 
 #### Client Configuration (`client/.env`):
 | Variable | Required | Default Value | Description |
@@ -336,14 +369,30 @@ npm run dev
 
 ---
 
-## Known Limitations
+## Known Limitations & Boundaries
 
+### 1. Platform Infrastructure Limitations
 1. **Development Seed Credentials**: All demonstration accounts (`superadmin@portal.com`, `admin@college.com`, etc.) exist exclusively in non-production development seeds. When `NODE_ENV=production`, seeding scripts strictly refuse to create demo accounts. Production superadmin accounts must be provisioned via `npm run seed:superadmin`.
 2. **Aptitude Test Proctoring**: The on-platform assessment engine provides timed attempts with server-enforced countdown deadlines, real-time autosave, question palette navigation, and client-side tab-switch detection and event logging. It does **not** provide automated biometric, webcam, or audio/video AI proctoring.
 3. **Small-Group Privacy Suppression (k-Anonymity, k=5)**: In aggregate analytics and public benchmarks, cohort groups with fewer than 5 matching candidates are masked (`lt5`) to protect student identities and prevent re-identification.
-4. **AI Quotas & Offline Fallback**: AI features are subject to daily global and per-user caps. When quota is exceeded or when unconfigured (`AI_PROVIDER=none`), the platform gracefully falls back to deterministic rule-based algorithms, regex skill extraction, and curated documentation without downtime.
-5. **Resume File Support**: Resume uploads are strictly restricted to PDF documents under 2MB, validated via `%PDF` magic byte header checks.
-6. **Render Free Tier Spin-Down**: On free-tier hosting without persistent background processes, in-process cron jobs pause during inactivity sleep unless an external keep-alive ping (`GET /api/health`) is configured.
+4. **Resume File Support**: Resume uploads are strictly restricted to PDF documents under 5MB, validated via `%PDF` magic byte header checks.
+5. **Render Free Tier Spin-Down**: On free-tier hosting without persistent background processes, in-process cron jobs pause during inactivity sleep unless an external keep-alive ping (`GET /api/health`) is configured.
+
+### 2. AI System Boundaries & Limitations
+1. **Deterministic vs. Generative Separation**: All candidate evaluations, ATS readiness scores (0-100), applicant ranking, drive eligibility checks, and at-risk student flags are **100% deterministic algorithms** ($\sigma^2 \equiv 0$). Generative LLMs are strictly prohibited from generating numeric candidate scores or ranking applicants. LLM usage is constrained to text extraction, semantic paraphrasing, mock interview feedback, and intent routing.
+2. **Truthfulness & Anti-Hallucination Guarantees**:
+   - In AI Resume Tailoring, the system strictly forbids the LLM from inventing employers, technical skills, dates, or quantitative metrics.
+   - Any suggested metric must use bracketed placeholders (`[add your real number]`), and the UI blocks PDF export until placeholders are replaced with genuine candidate accomplishments.
+   - In Skill-Gap Learning Plans, the AI is constrained to curated allowlisted resources or generic resource types; it is prohibited from fabricating non-existent web URLs.
+3. **Multimodal OCR Limits**: Scanned or rasterized PDF resumes with fewer than 20 characters automatically fall back to multimodal OCR. However, low-DPI scans (< 150 DPI), skewed smartphone photos, or heavily degraded documents may experience diminished extraction recall.
+4. **Token Context & Input Length Bounds**: To prevent Denial of Service (DoS) and context window exhaustion, user inputs are strictly bounded:
+   - Assistant queries: Capped at 1,500 characters.
+   - Pasted Job Descriptions: Capped at 8,000 characters.
+   - Resume PDFs: Capped at 5MB with strict `%PDF` header validation.
+   - Assistant memory: Sliding window of the last 10 messages with automatic summarization of older dialogue history.
+5. **Strict Data Tenancy Isolation**: The assistant operates on pre-defined server-side tools where the calling user's tenant ID (college for TPO, corporate entity for Recruiter, student ID for Student) is injected strictly from the authenticated JWT session. The LLM has zero direct SQL/MongoDB access and cannot retrieve data across tenant boundaries regardless of prompt framing or adversarial jailbreak attempts.
+6. **PII Redaction & Sanitization**: Prior to transmitting resumes, job descriptions, or user queries to external LLM providers (Groq/Gemini), personal identifiers (phone numbers, personal emails, national IDs, external URLs) are scrubbed. Telemetry logs (`AiCallLog`) store strictly zero PII and zero raw resume text.
+7. **Demographic Neutrality**: Scoring, matching, and recommendation algorithms strictly exclude protected demographic attributes (name, gender, religion, caste/category, photo, and college name) to prevent algorithmic bias.
 
 ---
 
@@ -402,6 +451,11 @@ npm run test:prodguard    # Production safety guards and forbidden mock provider
 npm run test:reports      # Report generation, formula injection safety, Excel/CSV exports
 npm run test:ai           # Resume parsing, ATS scoring, JD matching, quotas, PII stripping
 npm run test:assistant    # Multi-role Ask AI assistant, tool scoping, zero-quota help topics
+npm run test:mockinterview# AI Mock interview, rubric evaluation, STAR format, session teardown
+npm run test:resumebuilder# Resume builder templates, ATS check, anti-hallucination, cover letter
+npm run test:smartanalytics# Smart drive ranking, skill-gap learning plans, explainable at-risk TPO insights
+npm run test:redteam      # Red-team adversarial attacks (prompt injection, cross-tenant leaks, breaker)
+npm run ai:eval           # Labeled AI evaluation harness: Skill extraction F1, ATS invariance, 200 routing questions
 ```
 
 #### Manual Verification Scripts (with running server):

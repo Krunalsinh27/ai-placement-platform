@@ -16,6 +16,8 @@ const { getSkillEvidence, normalizeSkillList } = require('./matchingEngine');
 const { redactPII } = require('./redactor');
 const { callAiWithQuotaAndRetry } = require('./aiClient');
 const { extractResumeText } = require('./resumeTextExtractor');
+const { analyzeJobDescription, extractJdRequirementsWithRules } = require('./jdAnalyzer');
+const { getSkillSimilaritySync, findBestSemanticMatch } = require('./embeddingService');
 const AiUsage = require('../../models/AiUsage');
 
 // Fixed list of recognized resume action verbs (case-insensitive)
@@ -41,8 +43,20 @@ const ACTION_VERBS = new Set([
   'benchmarked', 'benchmark', 'spearheading', 'developing', 'designing', 'building', 'implementing'
 ]);
 
-// Metrics & numbers regex detecting quantifiable impact
-const METRICS_REGEX = /(?:\b\d+(?:[.,]\d+)?\s*(?:%|x|k|m|b|lpa|cr|lakh|ms|s|sec|min|hr|users|clients|students|customers|requests|req\/s|qps|stars|fps|gb|tb|mb)?\b|\$\d+|\b\d+\+)/i;
+// Metrics & numbers regex detecting quantifiable impact (strictly real metrics, %, currency, scale, time saved - not bare numbers/years)
+const METRICS_REGEX = new RegExp(
+  '(' +
+  '\\b\\d+(?:\\.\\d+)?\\s*%(?![a-zA-Z0-9])' +
+  '|\\b\\d+(?:\\.\\d+)?\\s*(?:x\\b|times\\b|fold\\b)' +
+  '|[$€£₹]\\s*\\d+(?:[.,]\\d+)?\\s*(?:[kmb]|thousand|million|billion|cr|crore|crores|lakh|lakhs|lpa)?\\b' +
+  '|\\b\\d+(?:[.,]\\d+)?\\s*(?:lpa|cr|crore|crores|lakh|lakhs)\\b' +
+  '|\\b\\d+(?:,\\d{3})*(?:\\.\\d+)?\\s*\\+?\\s*(?:[kmb]|thousand|million|billion)?\\s*(?:(?:daily|monthly|active|concurrent|container|database|microservice|backend|cloud)\\s+)?(?:active\\s+users|daily\\s+active\\s+users|users|clients|customers|students|requests|req\\/s|rps|qps|queries|transactions|tps|downloads|records|rows|events|messages|stars|visitors|pageviews|views|endpoints|microservices|services|clusters|containers|nodes|servers|instances|pipelines)\\b' +
+  '|\\b\\d+(?:\\.\\d+)?\\s*(?:ms|milliseconds?|secs?|seconds?|mins?|minutes?|hrs?|hours?|days?|weeks?)\\s*(?:faster|slower|reduction|decrease|saved|improvement|latency|turnaround|response\\s+time)\\b' +
+  '|(?:reduced|reducing|decreased|decreasing|cut|cutting|lowered|lowering|increased|increasing|improved|improving|boosted|boosting|grew|growing|accelerated|accelerating|streamlined|streamlining|saved|saving)\\s+(?:[a-zA-Z0-9_,-]+\\s+){0,6}(?:by\\s+)?\\d+(?:\\.\\d+)?\\s*(?:%|ms|hrs?|hours?|mins?|minutes?|days?|weeks?|x\\b|times\\b)' +
+  '|\\b\\d+(?:\\.\\d+)?\\s*(?:gb|tb|pb|mb)\\b' +
+  ')',
+  'i'
+);
 
 // Zod schema for validated LLM output
 const ResumeAnalysisZodSchema = z.object({
@@ -142,18 +156,111 @@ function startsWithActionVerb(bullet) {
 }
 
 /**
+ * Estimate candidate's total years of experience from profile and resume text
+ */
+function estimateCandidateExperienceYears(studentData, resumeText = '') {
+  let maxYears = 0;
+  const profile = studentData.resumeProfile || studentData;
+
+  // 1. From experience array in profile
+  if (Array.isArray(profile?.experience) && profile.experience.length > 0) {
+    let totalMonths = 0;
+    profile.experience.forEach((exp) => {
+      const dur = String(exp.duration || exp.description || '').toLowerCase();
+      const yrMatch = dur.match(/(\d+(?:\.\d+)?)\s*(?:years?|yrs?)/);
+      if (yrMatch) {
+        totalMonths += parseFloat(yrMatch[1]) * 12;
+      } else {
+        const moMatch = dur.match(/(\d+)\s*(?:months?|mos?)/);
+        if (moMatch) {
+          totalMonths += parseInt(moMatch[1], 10);
+        } else {
+          const yearRangeMatch = dur.match(/\b(20\d\d)\s*(?:-|to|–)\s*(20\d\d|present|current)\b/i);
+          if (yearRangeMatch) {
+            const startYr = parseInt(yearRangeMatch[1], 10);
+            const endYr = (yearRangeMatch[2].includes('present') || yearRangeMatch[2].includes('current'))
+              ? new Date().getFullYear()
+              : parseInt(yearRangeMatch[2], 10);
+            const diff = Math.max(0, endYr - startYr);
+            totalMonths += (diff || 1) * 12;
+          } else {
+            totalMonths += 6;
+          }
+        }
+      }
+    });
+    maxYears = Math.max(maxYears, Math.round((totalMonths / 12) * 10) / 10);
+  }
+
+  // 2. From student document
+  if (typeof studentData.yearsOfExperience === 'number') {
+    maxYears = Math.max(maxYears, studentData.yearsOfExperience);
+  }
+
+  // 3. From text
+  if (maxYears === 0 && typeof resumeText === 'string') {
+    const textExpMatch = resumeText.match(/(\d+(?:\.\d+)?)\+?\s*(?:years?|yrs?)(?:\s+of)?\s+experience/i);
+    if (textExpMatch) {
+      maxYears = Math.max(maxYears, parseFloat(textExpMatch[1]));
+    }
+  }
+
+  return maxYears;
+}
+
+/**
+ * Evaluates candidate degree against target education requirement
+ */
+function evaluateEducationFit(studentData, targetEducation) {
+  const profile = studentData.resumeProfile || studentData;
+  if (!targetEducation || typeof targetEducation !== 'string' || !targetEducation.trim()) {
+    return { score: 5, candidateDegree: 'Degree unspecified', match: true };
+  }
+
+  const targetEduLower = targetEducation.toLowerCase();
+  const degrees = [];
+
+  if (Array.isArray(profile?.education)) {
+    profile.education.forEach((edu) => {
+      const d = String(edu.degree || edu.field || '').toLowerCase();
+      if (d) degrees.push(d);
+    });
+  }
+  if (studentData.degree) degrees.push(String(studentData.degree).toLowerCase());
+  if (studentData.department) degrees.push(String(studentData.department).toLowerCase());
+
+  function getLevel(text) {
+    if (/ph\.?d|doctorate/i.test(text)) return 4;
+    if (/m\.?tech|m\.?s|master|mca|mba|m\.?e/i.test(text)) return 3;
+    if (/b\.?tech|b\.?e|bachelor|bca|b\.?s|undergraduate/i.test(text)) return 2;
+    if (/diploma|associate/i.test(text)) return 1;
+    return text.length > 0 ? 2 : 0;
+  }
+
+  const targetLevel = getLevel(targetEduLower);
+  const candidateLevel = degrees.length > 0 ? Math.max(...degrees.map(getLevel)) : 2;
+
+  if (candidateLevel >= targetLevel) {
+    return { score: 5, candidateDegree: degrees[0] || 'Bachelor of Technology', match: true };
+  } else {
+    return { score: 2, candidateDegree: degrees[0] || 'Undergraduate', match: false };
+  }
+}
+
+/**
  * Deterministic scoring engine for ATS-readiness estimate (0-100)
  *
- * Breakdown:
- * - keywordMatch (40): required skills (weighted higher) and preferred skills found in resume
- *                      using existing evidence weighting (projects/experience = 1.0, list-only = 0.7)
- * - structure (20): contact info present, education present, skills present, projects/experience present
- * - impact (15): share of bullets containing numbers/metrics
+ * Re-balanced Breakdown (Strictly sums to 100 pts):
+ * - keywordMatch (35): required & preferred skills with evidence & semantic matching
+ * - experienceMatch (10): candidate experience vs JD minYearsExperience
+ * - educationMatch (5): candidate degree vs target education
+ * - structure (15): contact info, education present, skills present, projects/exp present
+ * - impact (15): share of bullets containing verifiable metrics & scale (not bare numbers)
  * - actionVerbs (10): share of bullets starting with strong action verbs
- * - formatting (15): sensible length (1-2 pages), no extreme density, parseable text
+ * - formatting (10): sensible length (150-1200 words), clean density, parseable text
  *
  * @param {Object} studentData - Student document or resumeProfile
- * @param {Object} targetData - { requiredSkills: [], preferredSkills: [] }
+ * @param {Object} targetData - { requiredSkills: [], preferredSkills: [], minYearsExperience?: number, education?: string }
  * @param {string} resumeText - Raw or extracted resume text
  * @returns {Object} { atsScore, breakdown, matchedSkills, missingRequired, missingPreferred, reasons }
  */
@@ -182,23 +289,23 @@ function computeAtsScore(studentData, targetData, resumeText = '') {
   const bullets = extractBulletsFromProfile(profile);
   const totalBullets = bullets.length;
 
-  // 1. Structure (20 points)
+  // 1. Structure (15 points)
   let contactPoints = 0;
   const hasPhone = Boolean(studentData.phone || (typeof resumeText === 'string' && /\b\d{10}\b/.test(resumeText)));
   const hasEmail = Boolean(studentData.user?.email || (typeof resumeText === 'string' && /@/.test(resumeText)));
   if (hasPhone || hasEmail) {
-    contactPoints = (hasPhone && hasEmail) ? 5 : 4;
+    contactPoints = (hasPhone && hasEmail) ? 4 : 3;
   }
 
-  const educationPoints = (profile?.education && profile.education.length > 0) ? 5 : 0;
-  const skillsPoints = candidateSkillsSet.size > 0 ? 5 : 0;
+  const educationPoints = (profile?.education && profile.education.length > 0) ? 3 : 0;
+  const skillsPoints = candidateSkillsSet.size > 0 ? 4 : 0;
   const projectsOrExpPoints =
     ((profile?.projects && profile.projects.length > 0) ||
-     (profile?.experience && profile.experience.length > 0)) ? 5 : 0;
+     (profile?.experience && profile.experience.length > 0)) ? 4 : 0;
 
   const structure = contactPoints + educationPoints + skillsPoints + projectsOrExpPoints;
 
-  // 2. Impact (15 points): share of bullets containing numbers/metrics
+  // 2. Impact (15 points): share of bullets containing verifiable numbers/metrics
   let bulletsWithMetrics = 0;
   bullets.forEach((b) => {
     if (METRICS_REGEX.test(b)) bulletsWithMetrics++;
@@ -212,7 +319,7 @@ function computeAtsScore(studentData, targetData, resumeText = '') {
   });
   const actionVerbs = totalBullets > 0 ? Math.round((bulletsWithVerbs / totalBullets) * 10) : 0;
 
-  // 4. Formatting (15 points): sensible length (1-2 pages), no extreme density, parseable text
+  // 4. Formatting (10 points): sensible length, clean density, parseable text
   let parseablePoints = 0;
   let sensibleLengthPoints = 0;
   let cleanDensityPoints = 0;
@@ -222,42 +329,60 @@ function computeAtsScore(studentData, targetData, resumeText = '') {
     : bullets.join('\n') + '\n' + (profile?.summary || '');
 
   if (textToEvaluate.length >= 150) {
-    parseablePoints = 5;
-  } else if (textToEvaluate.length > 50) {
     parseablePoints = 3;
+  } else if (textToEvaluate.length > 50) {
+    parseablePoints = 2;
   }
 
   const words = textToEvaluate.trim().split(/\s+/).filter(Boolean);
   const wordCount = words.length;
 
   if (wordCount >= 150 && wordCount <= 1200) {
-    sensibleLengthPoints = 5; // Optimal 1-2 pages
+    sensibleLengthPoints = 4; // Optimal 1-2 pages
   } else if (wordCount > 1200 && wordCount <= 1800) {
-    sensibleLengthPoints = 3;
-  } else if (wordCount > 50) {
     sensibleLengthPoints = 2;
+  } else if (wordCount > 50) {
+    sensibleLengthPoints = 1;
   }
 
   const lines = textToEvaluate.split('\n').filter((l) => l.trim().length > 0);
   const avgLineLength = lines.length > 0 ? textToEvaluate.length / lines.length : textToEvaluate.length;
   if (lines.length >= 8 && avgLineLength < 200) {
-    cleanDensityPoints = 5;
-  } else if (lines.length >= 4) {
     cleanDensityPoints = 3;
-  } else if (textToEvaluate.length > 0) {
+  } else if (lines.length >= 4) {
     cleanDensityPoints = 2;
+  } else if (textToEvaluate.length > 0) {
+    cleanDensityPoints = 1;
   }
 
   const formatting = parseablePoints + sensibleLengthPoints + cleanDensityPoints;
 
-  // 5. Keyword Match (40 points)
-  // If target has NO extractable skills, return score null with clear reason
+  // 5. Experience Match (10 points)
+  const minExp = typeof targetData?.minYearsExperience === 'number' ? targetData.minYearsExperience : 0;
+  const candidateExp = estimateCandidateExperienceYears(studentData, resumeText);
+  let experienceMatch = 10;
+  if (minExp > 0) {
+    if (candidateExp >= minExp) {
+      experienceMatch = 10;
+    } else {
+      experienceMatch = Math.round((candidateExp / minExp) * 10);
+    }
+  }
+  experienceMatch = Math.min(10, Math.max(0, experienceMatch));
+
+  // 6. Education Match (5 points)
+  const eduEval = evaluateEducationFit(studentData, targetData?.education);
+  const educationMatch = eduEval.score;
+
+  // 7. Keyword & Semantic Match (35 points)
   if (totalTargetSkills === 0) {
     return {
       atsScore: null,
       reason: 'no_extractable_requirements',
       breakdown: {
         keywordMatch: null,
+        experienceMatch,
+        educationMatch,
         structure,
         impact,
         actionVerbs,
@@ -266,53 +391,103 @@ function computeAtsScore(studentData, targetData, resumeText = '') {
       matchedSkills: [],
       missingRequired: [],
       missingPreferred: [],
+      experienceDetails: { candidateYears: candidateExp, requiredYears: minExp, match: candidateExp >= minExp },
+      educationDetails: { candidateDegree: eduEval.candidateDegree, requiredDegree: targetData?.education || 'Not specified', match: eduEval.match },
       reasons: ['No extractable skill requirements found for the target role or job description.'],
     };
   }
 
-  const matchedRequired = requiredSkills.filter((s) => candidateSkillsSet.has(s));
-  const missingRequired = requiredSkills.filter((s) => !candidateSkillsSet.has(s));
+  const candidateSkillsArray = Array.from(candidateSkillsSet);
 
-  const matchedPreferred = preferredSkills.filter((s) => candidateSkillsSet.has(s));
-  const missingPreferred = preferredSkills.filter((s) => !candidateSkillsSet.has(s));
+  const matchedRequired = [];
+  const missingRequired = [];
+  let matchedRequiredWeight = 0;
+
+  for (const sk of requiredSkills) {
+    if (candidateSkillsSet.has(sk)) {
+      matchedRequired.push(sk);
+      const ev = getSkillEvidence(sk, studentData);
+      matchedRequiredWeight += ev.weight;
+    } else {
+      // Check semantic similarity match
+      let bestSim = 0;
+      let bestCand = null;
+      for (const cand of candidateSkillsArray) {
+        const sim = getSkillSimilaritySync(sk, cand);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestCand = cand;
+        }
+      }
+      if (bestSim >= 0.80 && bestCand) {
+        matchedRequired.push(`${sk} (via ${bestCand})`);
+        const ev = getSkillEvidence(bestCand, studentData);
+        matchedRequiredWeight += ev.weight * bestSim * 0.85;
+      } else {
+        missingRequired.push(sk);
+      }
+    }
+  }
+
+  const matchedPreferred = [];
+  const missingPreferred = [];
+  let matchedPreferredWeight = 0;
+
+  for (const sk of preferredSkills) {
+    if (candidateSkillsSet.has(sk)) {
+      matchedPreferred.push(sk);
+      const ev = getSkillEvidence(sk, studentData);
+      matchedPreferredWeight += ev.weight;
+    } else {
+      let bestSim = 0;
+      let bestCand = null;
+      for (const cand of candidateSkillsArray) {
+        const sim = getSkillSimilaritySync(sk, cand);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestCand = cand;
+        }
+      }
+      if (bestSim >= 0.80 && bestCand) {
+        matchedPreferred.push(`${sk} (via ${bestCand})`);
+        const ev = getSkillEvidence(bestCand, studentData);
+        matchedPreferredWeight += ev.weight * bestSim * 0.85;
+      } else {
+        missingPreferred.push(sk);
+      }
+    }
+  }
 
   const matchedSkills = Array.from(new Set([...matchedRequired, ...matchedPreferred]));
-
-  let matchedRequiredWeight = 0;
-  for (const sk of matchedRequired) {
-    const ev = getSkillEvidence(sk, studentData);
-    matchedRequiredWeight += ev.weight; // 1.0 if in project/experience, 0.7 if list-only
-  }
-
-  let matchedPreferredWeight = 0;
-  for (const sk of matchedPreferred) {
-    const ev = getSkillEvidence(sk, studentData);
-    matchedPreferredWeight += ev.weight;
-  }
 
   let keywordMatch = 0;
   if (requiredSkills.length > 0 && preferredSkills.length > 0) {
     const reqRatio = matchedRequiredWeight / requiredSkills.length;
     const prefRatio = matchedPreferredWeight / preferredSkills.length;
-    keywordMatch = Math.round(reqRatio * 30 + prefRatio * 10);
+    keywordMatch = Math.round(reqRatio * 25 + prefRatio * 10);
   } else if (requiredSkills.length > 0) {
     const reqRatio = matchedRequiredWeight / requiredSkills.length;
-    keywordMatch = Math.round(reqRatio * 40);
+    keywordMatch = Math.round(reqRatio * 35);
   } else if (preferredSkills.length > 0) {
     const prefRatio = matchedPreferredWeight / preferredSkills.length;
-    keywordMatch = Math.round(prefRatio * 40);
+    keywordMatch = Math.round(prefRatio * 35);
   }
 
-  keywordMatch = Math.min(40, Math.max(0, keywordMatch));
+  keywordMatch = Math.min(35, Math.max(0, keywordMatch));
 
-  // Breakdown strictly sums to atsScore
-  const atsScore = Math.min(100, Math.max(0, keywordMatch + structure + impact + actionVerbs + formatting));
+  // Breakdown strictly sums to atsScore (total max 100)
+  const atsScore = Math.min(
+    100,
+    Math.max(0, keywordMatch + experienceMatch + educationMatch + structure + impact + actionVerbs + formatting)
+  );
 
   return {
     atsScore,
     reason: null,
     breakdown: {
       keywordMatch,
+      experienceMatch,
+      educationMatch,
       structure,
       impact,
       actionVerbs,
@@ -321,6 +496,8 @@ function computeAtsScore(studentData, targetData, resumeText = '') {
     matchedSkills,
     missingRequired,
     missingPreferred,
+    experienceDetails: { candidateYears: candidateExp, requiredYears: minExp, match: candidateExp >= minExp },
+    educationDetails: { candidateDegree: eduEval.candidateDegree, requiredDegree: targetData?.education || 'Not specified', match: eduEval.match },
     reasons: [],
   };
 }
@@ -551,6 +728,8 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
   let rawJd = '';
   let requiredSkills = [];
   let preferredSkills = [];
+  let minYearsExperience = 0;
+  let targetEducation = '';
 
   if (target.drive) {
     targetType = 'drive';
@@ -558,18 +737,29 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
     targetTitle = drive.title || drive.role || 'Placement Drive';
     requiredSkills = normalizeSkillList(drive.requiredSkills || []);
     preferredSkills = normalizeSkillList(drive.preferredSkills || []);
+    minYearsExperience = drive.minExperience || 0;
+    targetEducation = drive.eligibility?.degree || '';
 
     if (requiredSkills.length === 0 && preferredSkills.length === 0) {
-      const extractedFromDrive = extractSkillsFromText(`${drive.role || ''} ${drive.description || ''}`);
-      requiredSkills = extractedFromDrive;
+      const extractedFromDrive = await analyzeJobDescription(
+        `Role: ${drive.role || ''}\nTitle: ${drive.title || ''}\nDescription: ${drive.description || ''}`,
+        { userId: student.user?._id || student.user }
+      );
+      requiredSkills = extractedFromDrive.requiredSkills;
+      preferredSkills = extractedFromDrive.preferredSkills;
+      minYearsExperience = extractedFromDrive.minYearsExperience;
+      targetEducation = extractedFromDrive.education;
     }
     rawJd = `Role: ${drive.role || ''}\nTitle: ${drive.title || ''}\nDescription: ${drive.description || ''}`;
   } else if (target.jdText) {
     targetType = 'jd';
-    rawJd = String(target.jdText).trim().slice(0, 6000);
-    const titleMatch = rawJd.match(/(?:title|role|position):\s*([^\n]+)/i);
-    targetTitle = titleMatch ? titleMatch[1].trim() : 'Pasted Job Description';
-    requiredSkills = extractSkillsFromText(rawJd);
+    rawJd = String(target.jdText).trim().slice(0, 8000);
+    const analyzedJd = await analyzeJobDescription(rawJd, { userId: student.user?._id || student.user });
+    targetTitle = analyzedJd.roleTitle || 'Pasted Job Description';
+    requiredSkills = analyzedJd.requiredSkills;
+    preferredSkills = analyzedJd.preferredSkills;
+    minYearsExperience = analyzedJd.minYearsExperience;
+    targetEducation = analyzedJd.education;
   }
 
   // Compute Target Cache Key
@@ -591,7 +781,7 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
   }
 
   // 3. Compute Deterministic Score
-  const targetData = { requiredSkills, preferredSkills };
+  const targetData = { requiredSkills, preferredSkills, minYearsExperience, education: targetEducation };
   const scoreResult = computeAtsScore(student, targetData, resumeText);
 
   // If target has no extractable requirements, return score null immediately
@@ -603,6 +793,8 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
       matchedSkills: [],
       missingRequired: [],
       missingPreferred: [],
+      experienceDetails: scoreResult.experienceDetails,
+      educationDetails: scoreResult.educationDetails,
       suggestions: [
         {
           category: 'Keywords',
@@ -642,11 +834,13 @@ Candidate Skills: ${Array.from(candidateSkillsSet).join(', ')}
 Candidate Bullets:
 ${sampleBullets}
 Calculated ATS Breakdown:
-- Keyword Match: ${scoreResult.breakdown.keywordMatch}/40
-- Structure: ${scoreResult.breakdown.structure}/20
+- Keyword & Semantic Match: ${scoreResult.breakdown.keywordMatch}/35
+- Experience Match: ${scoreResult.breakdown.experienceMatch}/10
+- Education Match: ${scoreResult.breakdown.educationMatch}/5
+- Structure: ${scoreResult.breakdown.structure}/15
 - Impact (Metrics): ${scoreResult.breakdown.impact}/15
 - Action Verbs: ${scoreResult.breakdown.actionVerbs}/10
-- Formatting: ${scoreResult.breakdown.formatting}/15
+- Formatting: ${scoreResult.breakdown.formatting}/10
 Matched Skills: ${scoreResult.matchedSkills.join(', ')}
 Missing Required Skills: ${scoreResult.missingRequired.join(', ')}
 Missing Preferred Skills: ${scoreResult.missingPreferred.join(', ')}
@@ -742,6 +936,8 @@ ${redactedJd}
     matchedSkills: scoreResult.matchedSkills,
     missingRequired: scoreResult.missingRequired,
     missingPreferred: scoreResult.missingPreferred,
+    experienceDetails: scoreResult.experienceDetails,
+    educationDetails: scoreResult.educationDetails,
     suggestions: finalSuggestions,
     rewrites: finalRewrites,
     learningOrder: finalLearningOrder,

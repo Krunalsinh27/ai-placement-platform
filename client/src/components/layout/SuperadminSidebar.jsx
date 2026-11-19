@@ -18,6 +18,7 @@ import {
   Award,
   LineChart,
   UserCheck,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -59,6 +60,11 @@ const SuperadminSidebar = ({ isOpen, onClose }) => {
       name: 'Manage Companies',
       path: '/superadmin/companies',
       icon: Briefcase,
+    },
+    {
+      name: 'AI Operations & Telemetry',
+      path: '/superadmin/ai-dashboard',
+      icon: Sparkles,
     },
   ];
 

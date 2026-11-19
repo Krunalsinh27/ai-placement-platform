@@ -1,0 +1,24 @@
+VIKRAM CHOUDHARY
+vikram.c@example.com | +91-0000000000 | Jaipur, India
+
+SUMMARY
+Mobile App Developer with 2.5 years of experience delivering cross-platform iOS and Android applications with Flutter, Dart, and Firebase.
+
+EXPERIENCE
+Flutter Developer | AppCraft Studio | Jaipur
+2022 - Present
+- Built and published 4 cross-platform mobile apps to Google Play Store and Apple App Store using Flutter and Dart.
+- Integrated REST API backends, authentication, and push notifications via Firebase.
+- Optimized app render performance achieving consistent 60 FPS across low-end Android devices.
+- Implemented offline-first data caching with SQLite and Hive, serving 120k active mobile users.
+
+Junior Android Developer | MobileFirst | Jaipur
+2021 - 2022
+- Developed native Android apps using Kotlin and Java.
+
+EDUCATION
+Bachelor of Computer Applications (BCA) (2018 - 2021)
+University of Rajasthan | CGPA: 8.0/10
+
+SKILLS
+Flutter, Dart, Mobile App Development, Firebase, REST API, SQLite, Android Development, iOS Development, Git

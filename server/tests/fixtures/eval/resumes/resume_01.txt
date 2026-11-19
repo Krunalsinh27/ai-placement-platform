@@ -1,0 +1,28 @@
+JOHN DOE
+john.doe@example.com | +91-0000000000 | Bengaluru, India | LinkedIn / GitHub
+
+PROFESSIONAL SUMMARY
+Senior Full Stack Engineer with 4 years of experience designing and scaling web platforms using React, Node.js, TypeScript, and MongoDB.
+
+WORK EXPERIENCE
+Senior Software Engineer | CloudTech Solutions | Bengaluru
+2022 - Present
+- Architected microservices backend using Node.js, Express, and MongoDB serving over 1.5M active users.
+- Reduced API latency by 42% and optimized database indexing across 80M records.
+- Spearheaded frontend migration to React, TypeScript, and Tailwind CSS, increasing page load speed by 3x.
+- Automated CI/CD deployment pipelines using Docker, GitHub Actions, and AWS ECS.
+
+Software Engineer | FinServe India | Bengaluru
+2020 - 2022
+- Developed responsive web applications using React, Redux, and REST API integrations.
+- Cut bundle size by 35% and improved test coverage to 91% using Jest.
+
+EDUCATION
+Bachelor of Technology in Computer Science & Engineering (2016 - 2020)
+National Institute of Technology Karnataka | CGPA: 8.8/10
+
+TECHNICAL SKILLS
+Languages: JavaScript, TypeScript, Python, SQL
+Frontend: React, Next.js, Redux, Tailwind CSS, HTML5, CSS3
+Backend: Node.js, Express, REST API, GraphQL
+Databases & Cloud: MongoDB, PostgreSQL, Redis, Docker, AWS, Git

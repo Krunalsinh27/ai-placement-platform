@@ -1,0 +1,26 @@
+{
+  "id": "jd_09",
+  "roleTitle": "Java Backend Developer",
+  "text": "Role: Java Backend Developer\nRequirements:\n- B.Tech or B.E. in Computer Science or Information Technology\n- At least 3 years of enterprise software development experience\n- Must have solid hands-on experience in Java, Spring Boot, Hibernate, Microservices, and MySQL\n- Strong knowledge of Object Oriented Programming and Design Patterns\nNice to have:\n- Experience with Kafka, Docker, and AWS is a plus\n- Knowledge of Redis caching and Kubernetes is desirable",
+  "expected": {
+    "requiredSkills": [
+      "java",
+      "spring boot",
+      "hibernate",
+      "microservices",
+      "mysql",
+      "object oriented programming",
+      "design patterns"
+    ],
+    "preferredSkills": [
+      "kafka",
+      "docker",
+      "aws",
+      "redis",
+      "kubernetes"
+    ],
+    "minYearsExperience": 3,
+    "education": "B.Tech or B.E.",
+    "roleTitle": "Java Backend Developer"
+  }
+}

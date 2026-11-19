@@ -1,0 +1,24 @@
+{
+  "id": "jd_10",
+  "roleTitle": "Product Designer",
+  "text": "Position: Product Designer\nRequirements:\n- Bachelor's degree in Design, Computer Science, or Human-Computer Interaction\n- At least 2 years of UI/UX design experience\n- Must have strong skills in Figma, UI Design, UX Design, Wireframing, and Prototyping\n- Demonstrated portfolio showcasing mobile and desktop web applications\nPreferred:\n- Experience with Adobe XD, User Research, and Design Systems is preferred\n- Basic understanding of HTML and CSS is a plus",
+  "expected": {
+    "requiredSkills": [
+      "figma",
+      "ui design",
+      "ux design",
+      "wireframing",
+      "prototyping"
+    ],
+    "preferredSkills": [
+      "adobe xd",
+      "user research",
+      "design systems",
+      "html",
+      "css"
+    ],
+    "minYearsExperience": 2,
+    "education": "Bachelor's degree",
+    "roleTitle": "Product Designer"
+  }
+}

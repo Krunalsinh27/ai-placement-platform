@@ -284,10 +284,10 @@ const getEligibleDrives = async (req, res, next) => {
       .populate('company')
       .sort({ lastDateToApply: 1 });
 
-    const { computeMatchScore } = require('../services/ai');
+    const { computeMatchScore, buildRuleBasedExplanation } = require('../services/ai');
 
     // Return matching drives whose deadline hasn't passed in IST, with applicationsClosed flag and match analysis
-    const eligibleDrives = drives
+    let eligibleDrives = drives
       .filter((d) => {
         const deadlineEnd = getEndOfDayIST(d.lastDateToApply);
         return deadlineEnd && deadlineEnd >= now;
@@ -296,12 +296,34 @@ const getEligibleDrives = async (req, res, next) => {
         const obj = d.toObject();
         obj.applicationsClosed = Boolean(d.applicationsClosed);
         try {
-          obj.match = computeMatchScore(student, d);
+          const matchResult = computeMatchScore(student, d);
+          const whyRec = buildRuleBasedExplanation(matchResult, d.role);
+          obj.match = {
+            ...matchResult,
+            whyRecommended: whyRec,
+          };
+          obj.whyRecommended = whyRec;
         } catch (_) {
           obj.match = null;
+          obj.whyRecommended = null;
         }
         return obj;
       });
+
+    // Handle sorting: recommended (best match score), package, or default (closest deadline)
+    const sortParam = (req.query.sort || '').toLowerCase();
+    if (sortParam === 'recommended') {
+      eligibleDrives.sort((a, b) => {
+        const scoreA = typeof a.match?.score === 'number' ? a.match.score : -1;
+        const scoreB = typeof b.match?.score === 'number' ? b.match.score : -1;
+        if (scoreB !== scoreA) {
+          return scoreB - scoreA;
+        }
+        return new Date(a.lastDateToApply) - new Date(b.lastDateToApply);
+      });
+    } else if (sortParam === 'package') {
+      eligibleDrives.sort((a, b) => (Number(b.packageLpa) || 0) - (Number(a.packageLpa) || 0));
+    }
 
     const total = eligibleDrives.length;
     const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);

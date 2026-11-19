@@ -42,6 +42,8 @@ import {
   MyApplications,
   MyTests,
   ResumeAi,
+  MockInterview,
+  ResumeBuilder,
   MyPlacements,
   StudentProfile,
   StudentInterviewRoom,
@@ -80,6 +82,7 @@ import {
   SuperadminColleges,
   SuperadminCompanies,
   SuperadminPendingAccounts,
+  AiDashboard,
 } from './pages/superadmin/index';
 
 import NotFound from './pages/NotFound';
@@ -168,6 +171,7 @@ function App() {
             <Route path="pending-accounts" element={<SuperadminPendingAccounts />} />
             <Route path="colleges" element={<SuperadminColleges />} />
             <Route path="companies" element={<SuperadminCompanies />} />
+            <Route path="ai-dashboard" element={<AiDashboard />} />
             <Route path="analytics" element={<Navigate to="/superadmin/analytics/overview" replace />} />
             <Route path="analytics/overview" element={<AnalystDashboard />} />
             <Route path="analytics/colleges" element={<AnalystColleges />} />
@@ -251,6 +255,8 @@ function App() {
             <Route path="drives" element={<EligibleDrives />} />
             <Route path="applications" element={<MyApplications />} />
             <Route path="tests" element={<MyTests />} />
+            <Route path="mock-interview" element={<MockInterview />} />
+            <Route path="resume-builder" element={<ResumeBuilder />} />
             <Route path="assistant" element={<TpoAssistant />} />
             <Route path="resume-ai" element={<ResumeAi />} />
             <Route path="placements" element={<MyPlacements />} />

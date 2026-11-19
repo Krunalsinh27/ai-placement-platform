@@ -1,0 +1,26 @@
+{
+  "id": "jd_08",
+  "roleTitle": "Frontend Developer",
+  "text": "Title: Frontend Developer\nRequirements:\n- B.Tech/B.E. in CSE or IT\n- Minimum 1 year of frontend development experience\n- Must have strong expertise in React, Next.js, TypeScript, Tailwind CSS, HTML, and CSS\n- Strong knowledge of responsive web design and state management\nBonus:\n- Experience with Redux Toolkit, web performance optimization, and Storybook is preferred\n- Knowledge of GraphQL or Jest is a plus",
+  "expected": {
+    "requiredSkills": [
+      "react",
+      "next.js",
+      "typescript",
+      "tailwind css",
+      "html",
+      "css",
+      "responsive design"
+    ],
+    "preferredSkills": [
+      "redux toolkit",
+      "web performance",
+      "storybook",
+      "graphql",
+      "jest"
+    ],
+    "minYearsExperience": 1,
+    "education": "B.Tech/B.E.",
+    "roleTitle": "Frontend Developer"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "jd_16",
+  "roleTitle": "Android Native Developer",
+  "text": "Title: Android Native Developer\nRequirements:\n- B.Tech, B.E., or MCA in Computer Science\n- At least 2 years of native Android application development experience\n- Must have solid expertise in Kotlin, Android Development, Jetpack Compose, Retrofit, and SQLite\n- Understanding of Android architecture components (MVVM)\nNice to have:\n- Experience with Coroutines, Dagger Hilt, and Room Database is a plus\n- Experience with Unit Testing (JUnit/Espresso) is preferred",
+  "expected": {
+    "requiredSkills": [
+      "kotlin",
+      "android development",
+      "jetpack compose",
+      "retrofit",
+      "sqlite"
+    ],
+    "preferredSkills": [
+      "dagger hilt",
+      "room database",
+      "junit",
+      "espresso"
+    ],
+    "minYearsExperience": 2,
+    "education": "B.Tech",
+    "roleTitle": "Android Native Developer"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "jd_01",
+  "roleTitle": "Senior Full Stack Engineer",
+  "text": "Role: Senior Full Stack Engineer\nRequirements:\n- Bachelor's degree in Computer Science or related engineering field\n- Minimum 3 years of software engineering experience\n- Strong proficiency in React, Node.js, JavaScript, TypeScript, and MongoDB\n- Solid grasp of REST API architecture and database query optimization\nNice to have:\n- Experience with Docker, AWS cloud services, and GraphQL is a plus\n- Familiarity with CI/CD pipelines and microservices\n- Excellent communication and problem solving skills",
+  "expected": {
+    "requiredSkills": [
+      "react",
+      "nodejs",
+      "javascript",
+      "typescript",
+      "mongodb",
+      "rest api"
+    ],
+    "preferredSkills": [
+      "docker",
+      "aws",
+      "graphql",
+      "ci/cd",
+      "microservices"
+    ],
+    "minYearsExperience": 3,
+    "education": "Bachelor's degree",
+    "roleTitle": "Senior Full Stack Engineer"
+  }
+}

@@ -190,6 +190,30 @@ const ResumeAi = () => {
       const isReanalyze = profile?.status === 'parsed';
       const res = await api.post('/students/me/resume/parse', { force: isReanalyze });
       if (res.data.success) {
+        if (res.data.status === 'queued' && res.data.jobId) {
+          toast('Resume parsing queued. Processing in background...', { icon: '⏳' });
+          const pollTimer = setInterval(async () => {
+            try {
+              const pollRes = await api.get(`/students/me/ai-jobs/${res.data.jobId}`);
+              if (pollRes.data.status === 'completed') {
+                clearInterval(pollTimer);
+                setParsing(false);
+                fetchResumeProfile();
+                fetchEligibleDrives();
+                toast.success('Resume parsed and skills extracted successfully!');
+              } else if (pollRes.data.status === 'failed') {
+                clearInterval(pollTimer);
+                setParsing(false);
+                toast.error(pollRes.data.error || 'Parsing task failed.');
+              }
+            } catch {
+              clearInterval(pollTimer);
+              setParsing(false);
+            }
+          }, 1500);
+          return;
+        }
+
         setProfile(res.data.resumeProfile);
         setSkills(res.data.resumeProfile?.skills || []);
         if (res.data.dailyUsage) {
@@ -376,6 +400,29 @@ Requirements:
 
       const res = await api.post('/students/me/resume/analyze', payload);
       if (res.data.success) {
+        if (res.data.status === 'queued' && res.data.jobId) {
+          toast('ATS analysis queued. Processing in background...', { icon: '⏳' });
+          const pollTimer = setInterval(async () => {
+            try {
+              const pollRes = await api.get(`/students/me/ai-jobs/${res.data.jobId}`);
+              if (pollRes.data.status === 'completed') {
+                clearInterval(pollTimer);
+                setAnalyzingTarget(false);
+                setTargetAnalysis(pollRes.data.result);
+                toast.success('ATS readiness estimate complete!');
+              } else if (pollRes.data.status === 'failed') {
+                clearInterval(pollTimer);
+                setAnalyzingTarget(false);
+                toast.error(pollRes.data.error || 'ATS analysis task failed.');
+              }
+            } catch {
+              clearInterval(pollTimer);
+              setAnalyzingTarget(false);
+            }
+          }, 1500);
+          return;
+        }
+
         setTargetAnalysis(res.data);
         if (res.data.dailyUsage) {
           setDailyUsage(res.data.dailyUsage);
@@ -820,25 +867,25 @@ Requirements:
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-400 mt-2 max-w-[200px] leading-tight mx-auto italic">
-                    Note: Real ATS systems differ. This estimate is a deterministic guideline.
+                    Note: The ATS score is an automated algorithmic estimate based on resume-to-job description textual alignment. It is designed as an optimization guide and does not guarantee employer hiring outcomes.
                   </p>
                 </div>
               </div>
 
-              {/* 5-Part Breakdown Bars (8 cols) */}
+              {/* 7-Part Breakdown Bars (8 cols) */}
               <div className="md:col-span-8 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider pb-1 border-b border-slate-100">
-                  ATS Score Breakdown (Deterministic)
+                  ATS Score Breakdown (Deterministic • 100 pts)
                 </h3>
 
                 <div className="space-y-3">
-                  {/* Keywords Match (40 pts) */}
+                  {/* Keywords Match (35 pts) */}
                   <div>
                     <div className="flex items-center justify-between text-xs font-semibold mb-1">
                       <span className="text-slate-700">Keywords & Evidence Match</span>
                       <span className="text-slate-900 font-bold">
                         {targetAnalysis.breakdown?.keywordMatch !== null && targetAnalysis.breakdown?.keywordMatch !== undefined
-                          ? `${targetAnalysis.breakdown.keywordMatch} / 40 pts`
+                          ? `${targetAnalysis.breakdown.keywordMatch} / 35 pts`
                           : 'No Requirements'}
                       </span>
                     </div>
@@ -846,25 +893,75 @@ Requirements:
                       <div
                         className="h-full bg-emerald-500 rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, ((targetAnalysis.breakdown?.keywordMatch || 0) / 40) * 100)}%`,
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.keywordMatch || 0) / 35) * 100)}%`,
                         }}
                       />
                     </div>
                   </div>
 
-                  {/* Structure (20 pts) */}
+                  {/* Experience Match (10 pts) */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-700">Experience Match</span>
+                        {targetAnalysis.experienceDetails?.details && (
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            ({targetAnalysis.experienceDetails.details})
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-slate-900 font-bold">
+                        {targetAnalysis.breakdown?.experienceMatch || 0} / 10 pts
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-cyan-500 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.experienceMatch || 0) / 10) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Education Fit (5 pts) */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-700">Education Fit</span>
+                        {targetAnalysis.educationDetails?.details && (
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            ({targetAnalysis.educationDetails.details})
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-slate-900 font-bold">
+                        {targetAnalysis.breakdown?.educationMatch || 0} / 5 pts
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-amber-500 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.educationMatch || 0) / 5) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Structure (15 pts) */}
                   <div>
                     <div className="flex items-center justify-between text-xs font-semibold mb-1">
                       <span className="text-slate-700">Structure & Standard Sections</span>
                       <span className="text-slate-900 font-bold">
-                        {targetAnalysis.breakdown?.structure || 0} / 20 pts
+                        {targetAnalysis.breakdown?.structure || 0} / 15 pts
                       </span>
                     </div>
                     <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                       <div
                         className="h-full bg-indigo-500 rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, ((targetAnalysis.breakdown?.structure || 0) / 20) * 100)}%`,
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.structure || 0) / 15) * 100)}%`,
                         }}
                       />
                     </div>
@@ -906,19 +1003,19 @@ Requirements:
                     </div>
                   </div>
 
-                  {/* Formatting (15 pts) */}
+                  {/* Formatting (10 pts) */}
                   <div>
                     <div className="flex items-center justify-between text-xs font-semibold mb-1">
                       <span className="text-slate-700">Formatting, Length & Density</span>
                       <span className="text-slate-900 font-bold">
-                        {targetAnalysis.breakdown?.formatting || 0} / 15 pts
+                        {targetAnalysis.breakdown?.formatting || 0} / 10 pts
                       </span>
                     </div>
                     <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                       <div
                         className="h-full bg-teal-500 rounded-full transition-all duration-500"
                         style={{
-                          width: `${Math.min(100, ((targetAnalysis.breakdown?.formatting || 0) / 15) * 100)}%`,
+                          width: `${Math.min(100, ((targetAnalysis.breakdown?.formatting || 0) / 10) * 100)}%`,
                         }}
                       />
                     </div>
