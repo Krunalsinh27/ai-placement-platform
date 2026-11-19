@@ -1,0 +1,24 @@
+AMIT KUMAR
+amit.kumar@example.com | +91-0000000000 | Hyderabad, India
+
+SUMMARY
+Data Engineer with 3 years of experience engineering big data ETL pipelines with Apache Spark, Python, SQL, Kafka, and Airflow.
+
+EXPERIENCE
+Data Engineer | BigMetrics Analytics | Hyderabad
+2021 - Present
+- Architected distributed data pipelines using Apache Spark, PySpark, and Kafka processing 50M events daily.
+- Automated pipeline orchestration using Apache Airflow, eliminating manual intervention and reducing pipeline failures by 80%.
+- Designed dimensional star-schema data models in Snowflake and Databricks.
+- Decreased daily query compute cost by $18k annually through dbt transformations.
+
+Associate Data Analyst | InfoTech Corp | Hyderabad
+2020 - 2021
+- Wrote complex SQL queries and built ETL pipelines for business reporting.
+
+EDUCATION
+Master of Technology in Data Science (2018 - 2020)
+IIT Hyderabad | CGPA: 9.1/10
+
+SKILLS
+Apache Spark, PySpark, Python, SQL, Kafka, Apache Airflow, Snowflake, Databricks, dbt, AWS S3, Git

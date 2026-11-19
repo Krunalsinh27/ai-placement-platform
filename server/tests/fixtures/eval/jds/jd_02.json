@@ -1,0 +1,22 @@
+{
+  "id": "jd_02",
+  "roleTitle": "Backend Python Engineer",
+  "text": "Position: Backend Python Engineer\nJob Description:\nWe are seeking an experienced Backend Developer with at least 3 years of hands-on experience.\nMust have:\n- Bachelor's degree in CS, IT or equivalent\n- Strong expertise in Python, Django, PostgreSQL, and REST API design\n- Experience building scalable backend web services\nPreferred qualifications:\n- Knowledge of Redis, Celery, and Docker is preferred\n- Experience with AWS deployment is a bonus\n- Good teamwork and agile collaboration",
+  "expected": {
+    "requiredSkills": [
+      "python",
+      "django",
+      "postgresql",
+      "rest api"
+    ],
+    "preferredSkills": [
+      "redis",
+      "celery",
+      "docker",
+      "aws"
+    ],
+    "minYearsExperience": 3,
+    "education": "Bachelor's degree",
+    "roleTitle": "Backend Python Engineer"
+  }
+}

@@ -42,6 +42,9 @@ const {
   computeAtsScore,
   validateBulletRewrite,
   analyzeResumeAgainstTarget,
+  analyzeJobDescription,
+  METRICS_REGEX,
+  getSkillSimilaritySync,
 } = require('../services/ai');
 const { getTestDbUri } = require('./testHelper');
 
@@ -1688,15 +1691,15 @@ async function runAiFeatureTests() {
     assert(scoreResult1.atsScore >= 0 && scoreResult1.atsScore <= 100, 'Score must be 0-100');
 
     // Breakdown sums strictly to total
-    const { keywordMatch, structure, impact, actionVerbs, formatting } = scoreResult1.breakdown;
+    const { keywordMatch, experienceMatch, educationMatch, structure, impact, actionVerbs, formatting } = scoreResult1.breakdown;
     assert.strictEqual(
       scoreResult1.atsScore,
-      keywordMatch + structure + impact + actionVerbs + formatting,
+      keywordMatch + (experienceMatch || 0) + (educationMatch || 0) + structure + impact + actionVerbs + formatting,
       'Breakdown values must sum strictly to atsScore'
     );
 
-    // Structure is 20/20 (contact: 5, education: 5, skills: 5, projects/exp: 5)
-    assert.strictEqual(structure, 20, 'Structure should be 20 for complete profile');
+    // Structure is 15/15 (contact: 3.75, education: 3.75, skills: 3.75, projects/exp: 3.75)
+    assert.strictEqual(structure, 15, 'Structure should be 15 for complete profile');
 
     // Impact: all 4 bullets have numbers (5000+, 45%, 99.9%, 10 hours) -> 15/15
     assert.strictEqual(impact, 15, 'All bullets have metrics, impact should be 15');
@@ -1796,7 +1799,7 @@ async function runAiFeatureTests() {
       resumeSampleText
     );
     assert(maliciousScore.atsScore !== 100, 'Score must be computed deterministically without obeying injection prompts');
-    assert.strictEqual(maliciousScore.breakdown.keywordMatch, 40, 'Python & React match 40/40 deterministically');
+    assert.strictEqual(maliciousScore.breakdown.keywordMatch, 35, 'Python & React match 35/35 deterministically');
     console.log('✓ Prompt injection text is strictly treated as untrusted data and cannot alter scores\n');
 
     // =================================================================
@@ -1898,6 +1901,8 @@ async function runAiFeatureTests() {
     assert.strictEqual(
       analyzeData.atsScore,
       analyzeData.breakdown.keywordMatch +
+        analyzeData.breakdown.experienceMatch +
+        analyzeData.breakdown.educationMatch +
         analyzeData.breakdown.structure +
         analyzeData.breakdown.impact +
         analyzeData.breakdown.actionVerbs +
@@ -2068,7 +2073,7 @@ async function runAiFeatureTests() {
     // TEST 29: Hard-coded Fixture Asserting atsScore === Sum of Breakdown Values (JD & Drive Targets)
     // =================================================================
     console.log('TEST 29: Hard-coded fixture asserting atsScore === sum of breakdown values for both JD and Drive targets...');
-    
+
     // Case A: Hard-coded JD Target Fixture
     const fixedCandidate = {
       phone: '9876543210',
@@ -2130,19 +2135,21 @@ async function runAiFeatureTests() {
     const jdScoreResult = computeAtsScore(fixedCandidate, jdTarget, fixedResumeText);
     assert(jdScoreResult.atsScore !== null, 'atsScore must not be null');
     const jdBd = jdScoreResult.breakdown;
-    
-    // Explicit assertion: atsScore === sum of all 5 breakdown components
-    const jdBkSum = jdBd.keywordMatch + jdBd.structure + jdBd.impact + jdBd.actionVerbs + jdBd.formatting;
+
+    // Explicit assertion: atsScore === sum of all 7 breakdown components
+    const jdBkSum = jdBd.keywordMatch + jdBd.experienceMatch + jdBd.educationMatch + jdBd.structure + jdBd.impact + jdBd.actionVerbs + jdBd.formatting;
     assert.strictEqual(
       jdScoreResult.atsScore,
       jdBkSum,
       `JD Target: atsScore (${jdScoreResult.atsScore}) must strictly equal sum of breakdown values (${jdBkSum})`
     );
-    assert.strictEqual(jdBd.structure, 20, 'Structure should be 20');
+    assert.strictEqual(jdBd.structure, 15, 'Structure should be 15');
     assert.strictEqual(jdBd.impact, 15, 'Impact should be 15 (all 4 bullets contain metrics)');
     assert.strictEqual(jdBd.actionVerbs, 10, 'Action verbs should be 10 (all 4 bullets start with action verbs)');
-    assert(jdBd.formatting >= 10, 'Formatting should be >= 10');
-    assert.strictEqual(jdScoreResult.atsScore, jdBd.keywordMatch + 20 + 15 + 10 + jdBd.formatting);
+    assert(jdBd.formatting >= 5, 'Formatting should be >= 5');
+    assert.strictEqual(jdBd.experienceMatch, 10, 'Experience match should be 10');
+    assert.strictEqual(jdBd.educationMatch, 5, 'Education fit should be 5');
+    assert.strictEqual(jdScoreResult.atsScore, jdBd.keywordMatch + 10 + 5 + 15 + 15 + 10 + jdBd.formatting);
 
     // Case B: Hard-coded Drive Target Fixture
     const driveTargetFixture = {
@@ -2153,22 +2160,22 @@ async function runAiFeatureTests() {
     const driveScoreResult = computeAtsScore(fixedCandidate, driveTargetFixture, fixedResumeText);
     assert(driveScoreResult.atsScore !== null, 'Drive target atsScore must not be null');
     const driveBd = driveScoreResult.breakdown;
-    const driveBkSum = driveBd.keywordMatch + driveBd.structure + driveBd.impact + driveBd.actionVerbs + driveBd.formatting;
+    const driveBkSum = driveBd.keywordMatch + driveBd.experienceMatch + driveBd.educationMatch + driveBd.structure + driveBd.impact + driveBd.actionVerbs + driveBd.formatting;
     assert.strictEqual(
       driveScoreResult.atsScore,
       driveBkSum,
       `Drive Target: atsScore (${driveScoreResult.atsScore}) must strictly equal sum of breakdown values (${driveBkSum})`
     );
-    // Required (react: 1.0, python: 1.0, docker: 0.7 = 2.7/3 * 30 = 27) + Preferred (sql: 0.7/1 * 10 = 7) = 34 keywordMatch
-    assert.strictEqual(driveBd.keywordMatch, 34, 'Matched skills with evidence weights = 34');
-    assert.strictEqual(driveScoreResult.atsScore, 34 + driveBd.structure + driveBd.impact + driveBd.actionVerbs + driveBd.formatting);
+    // Required (react: 1.0, python: 1.0, docker: 0.7 = 2.7/3 * 25 = 22.5) + Preferred (sql: 0.7/1 * 10 = 7) = 30 keywordMatch
+    assert.strictEqual(driveBd.keywordMatch, 30, 'Matched skills with evidence weights = 30');
+    assert.strictEqual(driveScoreResult.atsScore, 30 + driveBd.experienceMatch + driveBd.educationMatch + driveBd.structure + driveBd.impact + driveBd.actionVerbs + driveBd.formatting);
     console.log(`✓ Confirmed atsScore strictly equals breakdown sum for both JD (${jdScoreResult.atsScore} === ${jdBkSum}) and Drive (${driveScoreResult.atsScore} === ${driveBkSum})\n`);
 
     // =================================================================
     // TEST 30: Separate Daily Per-User Analyze Cap (AI_USER_DAILY_ANALYZE_CAP)
     // =================================================================
     console.log('TEST 30: Separate daily per-user analyze cap (AI_USER_DAILY_ANALYZE_CAP)...');
-    
+
     // Clear today's AI usage for clean deterministic testing
     const todayKey = AiUsage.getTodayKey();
     await AiUsage.deleteMany({ date: todayKey });
@@ -2189,7 +2196,7 @@ async function runAiFeatureTests() {
 
     // 2. An analyze call increments userAnalyzeCounts and globalCount, NOT userCounts (parse cap)
     await AiUsage.recordCall(testStudentId, 'analyze');
-    
+
     const usageAfterAnalyze = await AiUsage.getUserDailyUsage(testStudentId);
     assert.strictEqual(usageAfterAnalyze.used, 0, 'Parse count must remain 0 after analyze call');
     assert.strictEqual(usageAfterAnalyze.remaining, 5, 'Parse remaining must remain 5 after analyze call');
@@ -2231,6 +2238,141 @@ async function runAiFeatureTests() {
     }
 
     console.log('✓ Separate AI_USER_DAILY_ANALYZE_CAP strictly tracked, returned in dailyUsage, independent of parse cap, and enforced\n');
+
+    // =================================================================
+    // TEST 31: React.js Does Not Produce False Positive "javascript"
+    // =================================================================
+    console.log('TEST 31: React.js does not trigger false positive "javascript" skill...');
+    const reactText = 'Strong experience in React.js and modern frontend architecture.';
+    const reactExtracted = extractSkillsFromText(reactText);
+    assert(reactExtracted.includes('react'), 'Must extract "react" from "React.js"');
+    assert(!reactExtracted.includes('javascript'), '"React.js" must NOT produce false positive "javascript"');
+
+    // Standalone "JS" or "JavaScript" should still extract javascript
+    const jsText = 'Proficiency in JS and Node.js';
+    const jsExtracted = extractSkillsFromText(jsText);
+    assert(jsExtracted.includes('javascript'), 'Standalone "JS" must extract "javascript"');
+    console.log('✓ Verified "React.js" extraction precision: matches react without false-positive javascript\n');
+
+    // =================================================================
+    // TEST 32: Expanded Skills Dictionary Coverage (600+ skills)
+    // =================================================================
+    console.log('TEST 32: Expanded skills dictionary detects cloud, mobile, BI, and ERP skills...');
+    const multiDomainJd = `
+    Looking for an Engineer skilled in Terraform, Tableau, Power BI, Selenium,
+    Salesforce, SAP, Flutter, Kotlin, and Swift.
+    `;
+    const extractedDomainSkills = extractSkillsFromText(multiDomainJd);
+    const expectedDomainSkills = [
+      'terraform',
+      'tableau',
+      'power bi',
+      'selenium',
+      'salesforce',
+      'sap',
+      'flutter',
+      'kotlin',
+      'swift'
+    ];
+    for (const expSkill of expectedDomainSkills) {
+      assert(
+        extractedDomainSkills.includes(expSkill),
+        `Must detect "${expSkill}" from JD (found: ${extractedDomainSkills.join(', ')})`
+      );
+    }
+    console.log(`✓ Detected all ${expectedDomainSkills.length} modern multi-domain skills accurately\n`);
+
+    // =================================================================
+    // TEST 33: Hardened METRICS_REGEX Impact Scoring (Real Metrics Only)
+    // =================================================================
+    console.log('TEST 33: Hardened METRICS_REGEX rejects bare numbers and recognizes real metrics...');
+    const validMetricBullets = [
+      'Engineered automated microservice endpoints deployed across 4 container clusters',
+      'Streamlined ETL pipeline decreasing batch calculation duration by 35%',
+      'Developed real-time monitoring dashboard supporting 15000+ active users with 99.95% uptime',
+      'Delivered 40% latency reduction across 12 services',
+      'Generated $50k in revenue with 2.5x growth',
+      'Secured 14 LPA package offer',
+      'Cut database query time by 60%',
+      'Processed 5000 req/s with 10ms latency',
+      'Saved 10 hours per week by automating reports',
+      'Processed 50 GB of log data daily',
+    ];
+    for (const bullet of validMetricBullets) {
+      assert(METRICS_REGEX.test(bullet), `Must recognize real metric in: "${bullet}"`);
+    }
+
+    const bareNumberBullets = [
+      'Worked on 3 projects during college',
+      'Graduated in 2024 from university',
+      'Team of 5 developers',
+      'Scored grade 8.5 in semester 4',
+      'Built 2 web applications',
+      'Version 2.0 release',
+      'Experience of 2 years',
+    ];
+    for (const bullet of bareNumberBullets) {
+      assert(!METRICS_REGEX.test(bullet), `Must reject bare number in: "${bullet}"`);
+    }
+    console.log(`✓ Validated ${validMetricBullets.length} real metrics and rejected ${bareNumberBullets.length} non-metric bullets\n`);
+
+    // =================================================================
+    // TEST 34: LLM-Based JD Analysis with Zod Validation & Fallback
+    // =================================================================
+    console.log('TEST 34: JD Analysis extracts required vs preferred skills, years of exp, and education...');
+    const testJd = `
+    Role: Senior Backend Engineer
+    Requirements:
+    - 3+ years of professional backend development experience
+    - Bachelor's or Master's degree in Computer Science or related field
+    - Must have: Python, Docker, PostgreSQL, Redis
+    Nice to have:
+    - Experience with Kubernetes and Terraform is a plus
+    - Strong problem solving and communication skills
+    `;
+
+    const jdAnalysis = await analyzeJobDescription(testJd, { userId: testStudentId });
+    assert(jdAnalysis, 'jdAnalysis result must be returned');
+    assert(jdAnalysis.requiredSkills.includes('python'), 'python must be in requiredSkills');
+    assert(jdAnalysis.requiredSkills.includes('docker'), 'docker must be in requiredSkills');
+    assert(jdAnalysis.preferredSkills.includes('kubernetes') || jdAnalysis.preferredSkills.includes('terraform'), 'nice-to-have skills must be in preferredSkills');
+    assert.strictEqual(jdAnalysis.minYearsExperience, 3, 'minYearsExperience must be extracted as 3');
+    assert(jdAnalysis.education.length > 0, 'education requirements must be extracted');
+    assert(jdAnalysis.roleTitle.toLowerCase().includes('backend'), 'roleTitle must be extracted');
+    console.log(`✓ JD Analysis successfully extracted required (${jdAnalysis.requiredSkills.length}), preferred (${jdAnalysis.preferredSkills.length}), exp (${jdAnalysis.minYearsExperience} yrs)\n`);
+
+    // =================================================================
+    // TEST 35: Semantic Similarity & Graceful Degradation
+    // =================================================================
+    console.log('TEST 35: Semantic skill similarity provides partial credit and fallback...');
+    // express and rest api should have high semantic similarity
+    const expressRestSim = getSkillSimilaritySync('express', 'rest api');
+    assert(expressRestSim > 0.7, `Express and REST API similarity (${expressRestSim}) should be > 0.7`);
+
+    // identical skills should be 1.0
+    const exactSim = getSkillSimilaritySync('python', 'python');
+    assert.strictEqual(exactSim, 1.0, 'Identical skills must have similarity 1.0');
+
+    // completely unrelated skills should be lower
+    const unrelatedSim = getSkillSimilaritySync('react', 'kubernetes');
+    assert(unrelatedSim < 0.6, `Unrelated skills similarity (${unrelatedSim}) should be < 0.6`);
+    console.log(`✓ Semantic similarity verified: exact=1.0, express/rest=${expressRestSim.toFixed(3)}, react/k8s=${unrelatedSim.toFixed(3)}\n`);
+
+    // =================================================================
+    // TEST 36: Scanned PDF Fallback with OCR (< 20 characters)
+    // =================================================================
+    console.log('TEST 36: Scanned PDF OCR fallback behaves correctly on short/empty text...');
+    // Valid PDF header "%PDF-"
+    const mockScannedPdfBuffer = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF');
+    const scannedResult = await extractResumeText(mockScannedPdfBuffer, { mimetype: 'application/pdf' });
+    assert(scannedResult.text, 'Must return extracted text');
+    assert.strictEqual(scannedResult.ocrUsed, true, 'OCR fallback must be marked as used');
+
+    // Invalid non-PDF magic bytes
+    const invalidRes = await extractResumeText(Buffer.from('not a pdf header at all'), { mimetype: 'application/pdf' });
+    assert.strictEqual(invalidRes.unreadable, true, 'Non-PDF buffer must be marked unreadable');
+    assert.strictEqual(invalidRes.code, 'INVALID_PDF', 'Error code must be INVALID_PDF');
+    console.log('✓ OCR fallback triggers correctly on scanned PDFs and validates magic bytes\n');
 
     console.log('=================================================================');
     console.log('            ALL AI & MATCHING TESTS PASSED (100%)                ');

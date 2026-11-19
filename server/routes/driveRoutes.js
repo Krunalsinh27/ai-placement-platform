@@ -32,6 +32,10 @@ router
 
 // Student eligible drives (must come before /:id)
 router.get('/eligible', protect, authorize('student'), getEligibleDrives);
+router.get('/recommended', protect, authorize('student'), (req, res, next) => {
+  req.query.sort = 'recommended';
+  return getEligibleDrives(req, res, next);
+});
 
 // TPO Daily clash detection report (must come before /:id)
 router.get('/clashes', protect, authorize('tpo', 'admin', 'superadmin'), getDailyClashes);

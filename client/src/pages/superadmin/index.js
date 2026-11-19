@@ -3,6 +3,7 @@ import SuperadminAnalysts from './SuperadminAnalysts';
 import SuperadminColleges from './SuperadminColleges';
 import SuperadminCompanies from './SuperadminCompanies';
 import SuperadminPendingAccounts from './SuperadminPendingAccounts';
+import AiDashboard from './AiDashboard';
 
 export {
   SuperadminDashboard,
@@ -10,5 +11,6 @@ export {
   SuperadminColleges,
   SuperadminCompanies,
   SuperadminPendingAccounts,
+  AiDashboard,
 };
 

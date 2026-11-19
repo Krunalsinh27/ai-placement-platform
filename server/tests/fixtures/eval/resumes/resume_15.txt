@@ -1,0 +1,24 @@
+AKASH BANERJEE
+akash.b@example.com | +91-0000000000 | Bengaluru, India
+
+SUMMARY
+Golang Backend Developer with 3.5 years of experience building high-concurrency microservices with Go, gRPC, PostgreSQL, and Docker.
+
+EXPERIENCE
+Backend Engineer | DistributedSystems Inc | Bengaluru
+2021 - Present
+- Architected asynchronous event-driven microservices using Go, gRPC, Protocol Buffers, and PostgreSQL.
+- Handled 150,000 concurrent network connections with sub-20ms latency utilizing Go goroutines and channels.
+- Deployed microservices into Kubernetes clusters using Docker, Helm, and GitHub Actions.
+- Scaled Redis caching layer to decrease primary database read queries by 65%.
+
+Software Developer | GoCloud Labs | Bengaluru
+2020 - 2021
+- Developed REST APIs and database migration scripts using Go and MySQL.
+
+EDUCATION
+Bachelor of Technology in Computer Science (2016 - 2020)
+IIT Guwahati | CGPA: 8.9/10
+
+SKILLS
+Go, gRPC, Microservices, PostgreSQL, Docker, Kubernetes, Redis, Apache Kafka, Distributed Systems, Multithreading, Git, Linux

@@ -1,0 +1,26 @@
+{
+  "id": "jd_15",
+  "roleTitle": "Golang Backend Engineer",
+  "text": "Role: Golang Backend Engineer\nRequirements:\n- B.Tech/B.E. in Computer Science or Software Engineering\n- Minimum 3 years of backend engineering experience\n- Must have strong experience in Go, gRPC, Microservices, PostgreSQL, and Docker\n- Deep understanding of concurrent programming and distributed systems\nPreferred:\n- Experience with Kubernetes, Redis, and Kafka is a plus\n- Familiarity with CI/CD and Prometheus monitoring is desirable",
+  "expected": {
+    "requiredSkills": [
+      "go",
+      "grpc",
+      "microservices",
+      "postgresql",
+      "docker",
+      "multithreading",
+      "distributed systems"
+    ],
+    "preferredSkills": [
+      "kubernetes",
+      "redis",
+      "kafka",
+      "ci/cd",
+      "prometheus"
+    ],
+    "minYearsExperience": 3,
+    "education": "B.Tech/B.E.",
+    "roleTitle": "Golang Backend Engineer"
+  }
+}

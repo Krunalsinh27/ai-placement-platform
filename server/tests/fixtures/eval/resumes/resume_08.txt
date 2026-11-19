@@ -1,0 +1,24 @@
+KAVITA REDDY
+kavita.reddy@example.com | +91-0000000000 | Hyderabad, India
+
+SUMMARY
+Frontend Engineer with 2 years of experience specializing in React, Next.js, TypeScript, and modern CSS frameworks.
+
+EXPERIENCE
+Frontend Developer | PixelWave Technologies | Hyderabad
+2022 - Present
+- Built scalable client-side web applications using React, Next.js, TypeScript, and Tailwind CSS.
+- Optimized Core Web Vitals resulting in 45% faster Largest Contentful Paint (LCP) and 98/100 Lighthouse score.
+- Managed complex global application state using Redux Toolkit and TanStack Query.
+- Built reusable atomic UI design system components documented with Storybook.
+
+Frontend Intern | WebMinds | Hyderabad
+2021 - 2022
+- Created interactive web pages using HTML5, CSS3, JavaScript, and Bootstrap.
+
+EDUCATION
+Bachelor of Technology in Computer Science (2018 - 2022)
+JNTU Hyderabad | CGPA: 8.7/10
+
+SKILLS
+React, Next.js, TypeScript, Tailwind CSS, HTML, CSS, JavaScript, Redux Toolkit, Responsive Design, Web Performance, Storybook, Git

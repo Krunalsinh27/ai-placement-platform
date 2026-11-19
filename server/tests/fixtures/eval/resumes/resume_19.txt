@@ -1,0 +1,24 @@
+KARTIK MEHTA
+kartik.mehta@example.com | +91-0000000000 | Vadodara, India
+
+SUMMARY
+Embedded Systems Engineer with 3 years of experience in low-level firmware and embedded Linux development using C, C++, and Git.
+
+EXPERIENCE
+Embedded Systems Engineer | IoT Hardware Tech | Ahmedabad
+2021 - Present
+- Developed real-time firmware for ARM Cortex microcontrollers using C and C++.
+- Integrated hardware communication drivers for I2C, SPI, and UART interfaces on Linux.
+- Reduced embedded firmware boot time by 300ms through kernel driver optimizations.
+- Managed source code and release branching using Git and Linux shell scripting.
+
+Firmware Intern | ElectroTech | Vadodara
+2020 - 2021
+- Programmed 8-bit and 32-bit microcontrollers in C for sensor data telemetry.
+
+EDUCATION
+Bachelor of Technology in Electronics & Communication (2016 - 2020)
+SVNIT Surat | CGPA: 8.5/10
+
+SKILLS
+C, C++, Linux, Git, Microcontrollers, Bash, Shell Scripting, Hardware Debugging

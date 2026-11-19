@@ -1,0 +1,19 @@
+{
+  "id": "jd_19",
+  "roleTitle": "Embedded Software Engineer",
+  "text": "Title: Embedded Software Engineer\nRequirements:\n- B.Tech/B.E. in Electrical Engineering, Electronics, or Computer Engineering\n- At least 2 years of embedded software development experience\n- Must have strong programming skills in C, C++, Linux, and Git\n- Hands-on experience with device drivers and low-level hardware debugging\nNice to have:\n- Experience with RTOS, ARM architecture, and hardware communication protocols is a plus\n- Python scripting knowledge is desirable",
+  "expected": {
+    "requiredSkills": [
+      "c",
+      "c++",
+      "linux",
+      "git"
+    ],
+    "preferredSkills": [
+      "python"
+    ],
+    "minYearsExperience": 2,
+    "education": "B.Tech/B.E.",
+    "roleTitle": "Embedded Software Engineer"
+  }
+}

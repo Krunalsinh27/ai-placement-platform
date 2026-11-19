@@ -7,7 +7,7 @@
 const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi;
 
 // Phone number regex (covers Indian 10-digit, +91, international, dashes, parentheses)
-const PHONE_REGEX = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}\b/g;
+const PHONE_REGEX = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3,5}\)?[-.\s]?\d{3,5}(?:[-.\s]?\d{3,5})?\b/g;
 
 // Aadhaar card pattern: 12 digits with or without spaces
 const AADHAAR_REGEX = /\b\d{4}\s\d{4}\s\d{4}\b/g;

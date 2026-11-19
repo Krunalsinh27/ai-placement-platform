@@ -7,3 +7,5 @@ export { default as MyPlacements } from './MyPlacements';
 export { default as StudentProfile } from './StudentProfile';
 export { default as StudentInterviewRoom } from './StudentInterviewRoom';
 export { default as StudentAptitudeTest } from './StudentAptitudeTest';
+export { default as MockInterview } from './MockInterview';
+export { default as ResumeBuilder } from './ResumeBuilder';

@@ -1,0 +1,20 @@
+{
+  "id": "jd_17",
+  "roleTitle": "iOS Native Developer",
+  "text": "Role: iOS Native Developer\nRequirements:\n- Bachelor's degree in Computer Science or related technical discipline\n- Minimum 2 years of native iOS app development experience\n- Must have mastery in Swift, iOS Development, SwiftUI, CoreData, and Xcode\n- Experience publishing applications to the Apple App Store\nBonus:\n- Familiarity with Combine Framework, UIKit, and CocoaPods is preferred\n- Experience with TestFlight and Fastlane is a plus",
+  "expected": {
+    "requiredSkills": [
+      "swift",
+      "ios development",
+      "swiftui",
+      "coredata"
+    ],
+    "preferredSkills": [
+      "combine framework",
+      "fastlane"
+    ],
+    "minYearsExperience": 2,
+    "education": "Bachelor's degree",
+    "roleTitle": "iOS Native Developer"
+  }
+}

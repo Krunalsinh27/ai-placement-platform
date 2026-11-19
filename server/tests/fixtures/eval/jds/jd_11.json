@@ -1,0 +1,22 @@
+{
+  "id": "jd_11",
+  "roleTitle": "Cybersecurity Analyst",
+  "text": "Title: Cybersecurity Analyst\nRequirements:\n- B.Tech in Computer Science or Information Security\n- Minimum 2 years of experience in security operations or vulnerability management\n- Must have practical knowledge of Cybersecurity, Network Security, Penetration Testing, Vulnerability Assessment, and OWASP\n- Experience testing web application security vulnerabilities\nBonus:\n- Hands-on experience with Burp Suite, Wireshark, and Linux is a plus\n- Security certifications like CEH or CompTIA Security+ are preferred",
+  "expected": {
+    "requiredSkills": [
+      "cybersecurity",
+      "network security",
+      "penetration testing",
+      "vulnerability assessment",
+      "owasp"
+    ],
+    "preferredSkills": [
+      "burp suite",
+      "wireshark",
+      "linux"
+    ],
+    "minYearsExperience": 2,
+    "education": "B.Tech",
+    "roleTitle": "Cybersecurity Analyst"
+  }
+}

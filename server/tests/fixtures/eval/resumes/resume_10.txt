@@ -1,0 +1,24 @@
+RICHA SEN
+richa.sen@example.com | +91-0000000000 | Kolkata, India
+
+SUMMARY
+UI/UX Product Designer with 3 years of experience crafting user-centric web and mobile interfaces using Figma, Adobe XD, and Design Systems.
+
+EXPERIENCE
+Product Designer | Innovate Digital | Kolkata
+2021 - Present
+- Designed end-to-end user journeys, wireframes, and high-fidelity interactive prototypes in Figma for 6 SaaS products.
+- Conducted 40+ user research sessions and usability testing interviews, driving a 28% increase in conversion rates.
+- Established scalable cross-platform Design Systems with 250+ reusable components adopted by 15 engineers.
+- Collaborated with frontend engineers to ensure pixel-perfect implementation with HTML and CSS.
+
+UI Designer | CreativePulse | Kolkata
+2020 - 2021
+- Created vector illustrations and responsive web designs using Adobe XD and Photoshop.
+
+EDUCATION
+Bachelor of Design (B.Des) in Interaction Design (2016 - 2020)
+National Institute of Design | CGPA: 8.8/10
+
+SKILLS
+Figma, UI Design, UX Design, Wireframing, Prototyping, Adobe XD, User Research, Design Systems, HTML, CSS, Canva

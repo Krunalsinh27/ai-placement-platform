@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
   Sparkles,
   FileText,
+  Bot,
 } from 'lucide-react';
 
 const Sidebar = ({ isOpen, onClose }) => {
@@ -105,8 +106,10 @@ const Sidebar = ({ isOpen, onClose }) => {
     { name: 'Eligible Drives', path: '/student/drives', icon: Briefcase },
     { name: 'My Applications', path: '/student/applications', icon: FileCheck2 },
     { name: 'My Tests', path: '/student/tests', icon: FileText, badge: openTestsCount },
+    { name: 'Mock Interview', path: '/student/mock-interview', icon: Bot },
     { name: 'Ask AI', path: '/student/assistant', icon: Sparkles },
     { name: 'Resume AI', path: '/student/resume-ai', icon: Sparkles },
+    { name: 'Resume Builder', path: '/student/resume-builder', icon: FileText },
     { name: 'My Placements', path: '/student/placements', icon: Award },
     { name: 'My Profile', path: '/student/profile', icon: UserCheck },
   ];

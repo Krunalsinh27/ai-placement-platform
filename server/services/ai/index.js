@@ -53,6 +53,19 @@ const {
   analyzeResumeAgainstTarget,
 } = require('./resumeAnalyzer');
 
+const {
+  analyzeJobDescription,
+  extractJdRequirementsWithRules,
+  JdAnalysisZodSchema,
+} = require('./jdAnalyzer');
+
+const {
+  getSkillEmbedding,
+  getSkillSimilarity,
+  getSkillSimilaritySync,
+  findBestSemanticMatch,
+} = require('./embeddingService');
+
 module.exports = {
   // Skills
   SYNONYMS,
@@ -99,5 +112,16 @@ module.exports = {
   validateBulletRewrite,
   generateRuleBasedAnalysis,
   analyzeResumeAgainstTarget,
+
+  // JD Analyzer
+  analyzeJobDescription,
+  extractJdRequirementsWithRules,
+  JdAnalysisZodSchema,
+
+  // Embeddings & Semantic Matching
+  getSkillEmbedding,
+  getSkillSimilarity,
+  getSkillSimilaritySync,
+  findBestSemanticMatch,
 };
 

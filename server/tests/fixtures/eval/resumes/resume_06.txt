@@ -1,0 +1,24 @@
+ANANYA IYER
+ananya.iyer@example.com | +91-0000000000 | Chennai, India
+
+SUMMARY
+QA Automation Engineer with 3 years of experience in test automation frameworks using Selenium, Java, JUnit, and Postman.
+
+EXPERIENCE
+SDET / QA Automation Engineer | TestMatrix Solutions | Chennai
+2021 - Present
+- Developed modular test automation suites using Selenium WebDriver, Java, TestNG, and Page Object Model.
+- Automated API testing of 150+ REST endpoints using Postman and Newman.
+- Increased test automation coverage from 40% to 88%, reducing manual regression cycle by 24 hours per sprint.
+- Integrated automated testing into Jenkins CI/CD pipelines.
+
+QA Engineer | QualitySoft | Chennai
+2020 - 2021
+- Performed manual testing and functional test case design for enterprise web platforms.
+
+EDUCATION
+Bachelor of Engineering in Computer Science (2016 - 2020)
+Anna University | CGPA: 8.5/10
+
+SKILLS
+Selenium, Java, JUnit, TestNG, Postman, API Testing, Automated Testing, Cypress, JMeter, CI/CD, Git

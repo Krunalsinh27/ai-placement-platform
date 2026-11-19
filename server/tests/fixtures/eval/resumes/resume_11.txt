@@ -1,0 +1,24 @@
+HARSHIT GUPTA
+harshit.g@example.com | +91-0000000000 | Chandigarh, India
+
+SUMMARY
+Cybersecurity Analyst with 2.5 years of experience in vulnerability assessments, penetration testing, and security auditing using Burp Suite and Wireshark.
+
+EXPERIENCE
+Cybersecurity Analyst | SecGuard Technologies | Chandigarh
+2022 - Present
+- Performed penetration testing and vulnerability assessments across 30+ web applications, identifying 8 critical OWASP Top 10 vulnerabilities.
+- Analyzed network traffic and suspicious packet captures using Wireshark and TCP/IP protocol inspection.
+- Automated vulnerability scanning using Python scripts and Nmap, reducing scanning time by 10 hours weekly.
+- Hardened Linux server configurations and implemented OAuth 2.0 and JWT security controls.
+
+Security Intern | CyberDefense | Mohali
+2021 - 2022
+- Monitored security alerts in SIEM dashboard and analyzed phishing attempts.
+
+EDUCATION
+Bachelor of Technology in Computer Science (2017 - 2021)
+Punjab Engineering College | CGPA: 8.3/10
+
+SKILLS
+Cybersecurity, Network Security, Penetration Testing, Vulnerability Assessment, OWASP, Burp Suite, Wireshark, Linux, Python, Git

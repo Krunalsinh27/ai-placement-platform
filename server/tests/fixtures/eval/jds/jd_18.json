@@ -1,0 +1,24 @@
+{
+  "id": "jd_18",
+  "roleTitle": "Data Scientist",
+  "text": "Position: Data Scientist\nRequirements:\n- Master's or Bachelor's degree in CS, Data Science, Statistics, or Applied Math\n- Minimum 1 year of experience in statistical modeling and machine learning\n- Must have strong skills in Python, Machine Learning, Pandas, NumPy, Scikit-learn, and Statistics\n- Strong exploratory data analysis and predictive modeling capabilities\nPreferred:\n- Experience with SQL, Deep Learning, and Tableau is desirable\n- Familiarity with big data tools like Spark is a bonus",
+  "expected": {
+    "requiredSkills": [
+      "python",
+      "machine learning",
+      "pandas",
+      "numpy",
+      "scikit-learn",
+      "statistics"
+    ],
+    "preferredSkills": [
+      "sql",
+      "deep learning",
+      "tableau",
+      "apache spark"
+    ],
+    "minYearsExperience": 1,
+    "education": "Master's or Bachelor's",
+    "roleTitle": "Data Scientist"
+  }
+}

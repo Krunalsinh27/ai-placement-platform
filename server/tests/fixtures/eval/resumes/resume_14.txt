@@ -1,0 +1,24 @@
+POOJA KULKARNI
+pooja.kulkarni@example.com | +91-0000000000 | Mumbai, India
+
+SUMMARY
+Business Intelligence Analyst with 3 years of experience designing interactive analytical dashboards using Power BI, Tableau, SQL, and Advanced Excel.
+
+EXPERIENCE
+BI Analyst | RetailAnalytics Corp | Mumbai
+2021 - Present
+- Designed 25+ automated executive performance dashboards in Power BI and Tableau used by 400+ business leaders.
+- Authored complex DAX measures, Power Query transformations, and optimized SQL queries across multi-million row datasets.
+- Reduced weekly financial reporting turnaround by 18 hours through automated Power BI dataflows.
+- Built dimensional data warehouse models in PostgreSQL and Snowflake.
+
+Data Analyst | MarketPulse | Mumbai
+2020 - 2021
+- Automated daily KPI tracking using Advanced Excel (VLOOKUP, Pivot Tables, Power Query) and SQL.
+
+EDUCATION
+Bachelor of Science in Statistics & Mathematics (2017 - 2020)
+St. Xavier's College Mumbai | CGPA: 9.0/10
+
+SKILLS
+Power BI, Tableau, SQL, Advanced Excel, Business Intelligence, DAX, Python, Data Warehousing, Data Modeling, PostgreSQL

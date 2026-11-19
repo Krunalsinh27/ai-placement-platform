@@ -1,0 +1,24 @@
+TANYA KAPOOR
+tanya.kapoor@example.com | +91-0000000000 | Gurugram, India
+
+SUMMARY
+iOS Native Engineer with 2.5 years of experience delivering high-quality Apple iOS applications using Swift, SwiftUI, and CoreData.
+
+EXPERIENCE
+iOS Developer | AppleDev Solutions | Gurugram
+2022 - Present
+- Developed and shipped 3 iOS mobile applications in Swift using SwiftUI and Combine framework.
+- Optimized CoreData local database caching, reducing application launch duration by 35%.
+- Integrated RESTful networking layer using URLSession and JSON parsing.
+- Published releases via TestFlight and managed App Store Connect deployment pipelines using Fastlane.
+
+iOS Intern | Appify Labs | Delhi
+2021 - 2022
+- Built custom UI animations and UIKit views in Swift.
+
+EDUCATION
+Bachelor of Technology in Computer Science (2017 - 2021)
+Indraprastha Institute of Information Technology Delhi (IIIT-D) | CGPA: 8.7/10
+
+SKILLS
+Swift, iOS Development, SwiftUI, CoreData, Xcode, Combine Framework, Fastlane, REST API, Git

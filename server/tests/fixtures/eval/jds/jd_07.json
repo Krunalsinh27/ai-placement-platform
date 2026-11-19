@@ -1,0 +1,21 @@
+{
+  "id": "jd_07",
+  "roleTitle": "Flutter Mobile Developer",
+  "text": "Role: Flutter Mobile Developer\nRequirements:\n- Bachelor's degree in Computer Science, BCA, or MCA\n- At least 2 years of mobile app development experience\n- Must have expertise in Flutter, Dart, REST API integration, and Firebase\n- Experience publishing mobile apps on Google Play Store and Apple App Store\nPreferred:\n- Native Android development or iOS development background is a bonus\n- Experience with State management (Bloc/Provider) and SQLite is preferred",
+  "expected": {
+    "requiredSkills": [
+      "flutter",
+      "dart",
+      "rest api",
+      "firebase"
+    ],
+    "preferredSkills": [
+      "android development",
+      "ios development",
+      "sqlite"
+    ],
+    "minYearsExperience": 2,
+    "education": "Bachelor's degree",
+    "roleTitle": "Flutter Mobile Developer"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "jd_20",
+  "roleTitle": "Associate Software Engineer",
+  "text": "Role: Associate Software Engineer (Campus Graduate Hiring)\nRequirements:\n- B.Tech/B.E. in Computer Science, Information Technology, or Circuit branches (2025/2026 Batch)\n- Entry-level / Fresher position (0 years of experience)\n- Strong foundation in Data Structures & Algorithms, Java, Python, SQL, and DBMS\n- Strong problem solving capabilities and academic fundamentals\nNice to have:\n- Familiarity with Git, Web Development, and Operating Systems is preferred\n- Good communication skills and eagerness to learn",
+  "expected": {
+    "requiredSkills": [
+      "data structures & algorithms",
+      "java",
+      "python",
+      "sql",
+      "dbms"
+    ],
+    "preferredSkills": [
+      "git",
+      "operating systems"
+    ],
+    "minYearsExperience": 0,
+    "education": "B.Tech/B.E.",
+    "roleTitle": "Associate Software Engineer"
+  }
+}

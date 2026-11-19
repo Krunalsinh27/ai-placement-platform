@@ -95,25 +95,132 @@ function computeBufferHash(buffer) {
 }
 
 /**
+ * Performs OCR fallback for scanned PDFs when text extraction yields < 20 characters.
+ * Supports Gemini Vision (multimodal PDF) and hermetic mock provider in test mode.
+ */
+async function performOcrFallback(buffer) {
+  if (!buffer || buffer.length === 0) return '';
+
+  const providerName = (process.env.AI_PROVIDER || 'none').toLowerCase().trim();
+  const apiKey = process.env.AI_API_KEY;
+
+  // 1. Mock / Test provider
+  if (providerName === 'mock' || process.env.NODE_ENV === 'test') {
+    const mockProvider = require('./providers/mockProvider');
+    if (mockProvider && mockProvider.mockOcrText) {
+      return mockProvider.mockOcrText;
+    }
+    return 'Scanned Resume: Full Stack Developer with experience in Python, React, and SQL. Built high performance services.';
+  }
+
+  // 2. Gemini Multimodal Vision API
+  if (providerName === 'gemini' && apiKey) {
+    try {
+      const model = process.env.AI_MODEL || 'gemini-1.5-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: 'application/pdf',
+                    data: buffer.toString('base64'),
+                  },
+                },
+                {
+                  text: 'Extract all readable text from this scanned resume PDF verbatim without summary or commentary.',
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const extracted = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        return extracted;
+      }
+    } catch (err) {
+      console.warn('[ResumeExtractor] Gemini OCR fallback failed:', err.message);
+    }
+  }
+
+  return '';
+}
+
+/**
  * Default text extraction pipeline: loads stream from storage, reads buffer, parses PDF/DOCX
  */
 async function defaultExtractor(resumeUrl, { maxBytes = MAX_RESUME_SIZE, maxPages = MAX_PDF_PAGES } = {}) {
-  const { stream, filename } = await getResumeStream(resumeUrl);
-  const buffer = await streamToBuffer(stream, maxBytes);
+  let buffer;
+  let filename = '';
+
+  if (Buffer.isBuffer(resumeUrl)) {
+    buffer = resumeUrl;
+    filename = 'resume.pdf';
+  } else {
+    const { stream, filename: origFilename } = await getResumeStream(resumeUrl);
+    buffer = await streamToBuffer(stream, maxBytes);
+    filename = origFilename || 'resume.pdf';
+  }
+
+  if (buffer.length > maxBytes) {
+    const err = new Error('Resume file size exceeds the 5MB limit for parsing.');
+    err.code = 'FILE_TOO_LARGE';
+    throw err;
+  }
+
   const hash = computeBufferHash(buffer);
 
   const lowerName = (filename || '').toLowerCase();
   const isDocx = lowerName.endsWith('.docx') || lowerName.endsWith('.doc');
 
-  let text = '';
-  if (isDocx) {
-    const result = await mammoth.extractRawText({ buffer });
-    text = result.value || '';
-  } else {
-    text = await parsePdfBuffer(buffer, maxPages);
+  // Strict %PDF magic bytes check for PDF documents
+  if (!isDocx) {
+    const hasPdfHeader = buffer.length >= 4 && buffer.slice(0, 4).toString('ascii').startsWith('%PDF');
+    if (!hasPdfHeader) {
+      const err = new Error('Invalid file format: PDF must start with %PDF magic header.');
+      err.code = 'INVALID_PDF';
+      throw err;
+    }
   }
 
-  const cleaned = text.trim();
+  let text = '';
+  let ocrUsed = false;
+
+  try {
+    if (isDocx) {
+      const result = await mammoth.extractRawText({ buffer });
+      text = result.value || '';
+    } else {
+      text = await parsePdfBuffer(buffer, maxPages);
+    }
+  } catch (parseErr) {
+    if (parseErr && parseErr.code === 'PAGE_LIMIT_EXCEEDED') {
+      throw parseErr;
+    }
+    // PDF parsing threw (e.g. image-only scanned PDF, missing text streams, or unreadable structure)
+    text = '';
+  }
+
+  let cleaned = text.trim();
+
+  // OCR Fallback: triggered only when text extraction returns < 20 characters
+  if (cleaned.length < 20 && !isDocx) {
+    const ocrText = await performOcrFallback(buffer);
+    if (ocrText && ocrText.trim().length >= 20) {
+      cleaned = ocrText.trim();
+      ocrUsed = true;
+    }
+  }
+
   if (cleaned.length < 20) {
     const err = new Error('Resume appears to be empty, scanned, or contains no extractable text.');
     err.code = 'NO_TEXT';
@@ -122,7 +229,7 @@ async function defaultExtractor(resumeUrl, { maxBytes = MAX_RESUME_SIZE, maxPage
 
   // Enforce character limit
   const truncated = cleaned.slice(0, MAX_CHARACTERS);
-  return { text: truncated, hash };
+  return { text: truncated, hash, ocrUsed };
 }
 
 /**
@@ -173,6 +280,7 @@ async function extractResumeText(resumeUrl, options = {}) {
       text: result.text,
       hash: result.hash || '',
       unreadable: false,
+      ocrUsed: Boolean(result.ocrUsed),
     };
   } catch (err) {
     return {

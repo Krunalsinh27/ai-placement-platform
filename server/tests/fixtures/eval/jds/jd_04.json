@@ -1,0 +1,27 @@
+{
+  "id": "jd_04",
+  "roleTitle": "Machine Learning Engineer",
+  "text": "Position: Machine Learning Engineer\nQualifications:\n- Master's or Bachelor's degree in Computer Science, AI, or Mathematics\n- Minimum 2 years of experience building and deploying machine learning models\n- Strong foundation in Python, Machine Learning, PyTorch, TensorFlow, and Scikit-learn\n- Hands-on experience with NLP and computer vision models\nBonus skills:\n- Experience with MLOps, MLflow, Docker, and Kubernetes is preferred\n- Familiarity with LLMs and prompt engineering is a plus",
+  "expected": {
+    "requiredSkills": [
+      "python",
+      "machine learning",
+      "pytorch",
+      "tensorflow",
+      "scikit-learn",
+      "nlp",
+      "computer vision"
+    ],
+    "preferredSkills": [
+      "mlops",
+      "mlflow",
+      "docker",
+      "kubernetes",
+      "large language models",
+      "prompt engineering"
+    ],
+    "minYearsExperience": 2,
+    "education": "Master's or Bachelor's",
+    "roleTitle": "Machine Learning Engineer"
+  }
+}

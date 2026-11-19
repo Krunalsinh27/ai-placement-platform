@@ -1,0 +1,25 @@
+{
+  "id": "jd_05",
+  "roleTitle": "Cloud DevOps Engineer",
+  "text": "Role: Cloud DevOps Engineer\nRequirements:\n- Bachelor's degree in Engineering or Technology\n- At least 4 years of experience in DevOps and cloud infrastructure management\n- Must have mastery in Terraform, Kubernetes, Docker, AWS, CI/CD, and Linux\n- Deep understanding of container orchestration, monitoring, and networking\nPreferred:\n- Experience with Ansible, Prometheus, and Grafana is a plus\n- Knowledge of Helm and ArgoCD is highly desirable",
+  "expected": {
+    "requiredSkills": [
+      "terraform",
+      "kubernetes",
+      "docker",
+      "aws",
+      "ci/cd",
+      "linux"
+    ],
+    "preferredSkills": [
+      "ansible",
+      "prometheus",
+      "grafana",
+      "helm",
+      "argocd"
+    ],
+    "minYearsExperience": 4,
+    "education": "Bachelor's degree",
+    "roleTitle": "Cloud DevOps Engineer"
+  }
+}

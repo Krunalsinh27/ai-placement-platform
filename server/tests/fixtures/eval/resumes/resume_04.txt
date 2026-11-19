@@ -1,0 +1,24 @@
+SNEHA PATEL
+sneha.patel@example.com | +91-0000000000 | Mumbai, India
+
+SUMMARY
+Machine Learning Engineer with 2.5 years of experience building, evaluating, and deploying NLP and computer vision models using PyTorch, TensorFlow, and Scikit-learn.
+
+EXPERIENCE
+Machine Learning Engineer | VisionAI Labs | Mumbai
+2022 - Present
+- Developed deep learning classification models using PyTorch and Hugging Face Transformers achieving 94.5% accuracy.
+- Decreased model inference latency by 60ms through TensorRT optimization.
+- Built MLOps tracking pipelines using MLflow and Docker.
+- Spearheaded prompt engineering and RAG pipeline integration using LangChain.
+
+AI Research Intern | DataCorp | Mumbai
+2021 - 2022
+- Conducted exploratory data analysis on 2M medical records using Pandas, NumPy, and Scikit-learn.
+
+EDUCATION
+Bachelor of Technology in Computer Science (2017 - 2021)
+VJTI Mumbai | CGPA: 8.9/10
+
+TECHNICAL SKILLS
+Python, Machine Learning, Deep Learning, PyTorch, TensorFlow, Scikit-learn, NLP, Computer Vision, MLflow, Docker, Pandas, NumPy

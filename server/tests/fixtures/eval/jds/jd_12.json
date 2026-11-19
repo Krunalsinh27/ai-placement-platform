@@ -1,0 +1,21 @@
+{
+  "id": "jd_12",
+  "roleTitle": "Salesforce Developer",
+  "text": "Role: Salesforce Developer\nRequirements:\n- Bachelor's degree in Computer Science, IT or related field\n- At least 3 years of hands-on Salesforce development experience\n- Must have strong proficiency in Salesforce, Apex, Visualforce, Lightning Web Components, and SOQL\n- Experience developing custom Salesforce CRM applications\nPreferred:\n- Salesforce Administrator or Platform Developer certifications are preferred\n- Experience integrating external REST APIs is a plus",
+  "expected": {
+    "requiredSkills": [
+      "salesforce",
+      "apex",
+      "visualforce",
+      "lightning web components",
+      "soql"
+    ],
+    "preferredSkills": [
+      "salesforce admin",
+      "rest api"
+    ],
+    "minYearsExperience": 3,
+    "education": "Bachelor's degree",
+    "roleTitle": "Salesforce Developer"
+  }
+}

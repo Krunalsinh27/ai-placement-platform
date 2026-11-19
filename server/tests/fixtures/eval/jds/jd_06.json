@@ -1,0 +1,25 @@
+{
+  "id": "jd_06",
+  "roleTitle": "QA Automation Engineer",
+  "text": "Job Title: QA Automation Engineer\nRequirements:\n- B.Tech/B.E. in Computer Science or related stream\n- Minimum 2 years of experience in automated software testing\n- Strong proficiency in Selenium, Java, automated testing, JUnit, and Postman\n- Experience in API testing and regression suites\nNice to have:\n- Cypress, JMeter, and CI/CD integration knowledge is a plus\n- Experience with Playwright or Appium is preferred",
+  "expected": {
+    "requiredSkills": [
+      "selenium",
+      "java",
+      "unit testing",
+      "junit",
+      "postman",
+      "api testing"
+    ],
+    "preferredSkills": [
+      "cypress",
+      "jmeter",
+      "ci/cd",
+      "playwright",
+      "appium"
+    ],
+    "minYearsExperience": 2,
+    "education": "B.Tech/B.E.",
+    "roleTitle": "QA Automation Engineer"
+  }
+}

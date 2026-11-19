@@ -9,6 +9,7 @@ const { executeCronJob } = require('./cronJobs');
 let emailWorker = null;
 let notificationWorker = null;
 let cronWorker = null;
+let aiWorker = null;
 
 /**
  * Start BullMQ background queue workers
@@ -155,17 +156,44 @@ const startQueueWorkers = () => {
     });
   }
 
-  return { emailWorker, notificationWorker, cronWorker };
+  // 4. Heavy AI Jobs Worker
+  if (!aiWorker) {
+    aiWorker = new Worker(
+      'ai-jobs',
+      async (job) => {
+        const { type, payload, userId } = job.data;
+        const { processAiJobDirectly } = require('../services/ai/aiQueue');
+        await job.updateProgress(25);
+        const result = await processAiJobDirectly(type, payload, userId);
+        await job.updateProgress(100);
+        return result;
+      },
+      {
+        connection: createRedisClient(),
+        prefix: getBullPrefix(),
+        concurrency: 2,
+      }
+    );
+
+    aiWorker.on('error', (err) => {
+      if (process.env.NODE_ENV !== 'test') {
+        console.error('[AiWorker] Worker error:', err.message);
+      }
+    });
+  }
+
+  return { emailWorker, notificationWorker, cronWorker, aiWorker };
 };
 
 /**
  * Gracefully close all active queue workers, waiting for in-flight jobs to complete
  */
 const closeQueueWorkers = async () => {
-  const workers = [emailWorker, notificationWorker, cronWorker].filter(Boolean);
+  const workers = [emailWorker, notificationWorker, cronWorker, aiWorker].filter(Boolean);
   emailWorker = null;
   notificationWorker = null;
   cronWorker = null;
+  aiWorker = null;
 
   await Promise.allSettled(workers.map((w) => w.close()));
 };
@@ -174,6 +202,7 @@ const getQueueWorkers = () => ({
   emailWorker,
   notificationWorker,
   cronWorker,
+  aiWorker,
 });
 
 module.exports = {

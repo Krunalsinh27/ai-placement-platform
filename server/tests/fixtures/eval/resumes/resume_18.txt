@@ -1,0 +1,24 @@
+RAHUL JOSHI
+rahul.joshi@example.com | +91-0000000000 | Pune, India
+
+SUMMARY
+Data Scientist with 2 years of experience analyzing large-scale datasets, statistical modeling, and machine learning in Python, Pandas, NumPy, and Scikit-learn.
+
+EXPERIENCE
+Data Scientist | PredictiveAI Corp | Pune
+2022 - Present
+- Built customer churn predictive models in Python using XGBoost and Scikit-learn, yielding 88% precision and saving $120k annually.
+- Executed exploratory data analysis and hypothesis testing across 10M consumer purchase transactions using Pandas and NumPy.
+- Built interactive analytics dashboards in Tableau and Streamlit for executive leadership.
+- Engineered automated data transformation pipelines using SQL and PostgreSQL.
+
+Data Science Intern | AnalyticsHub | Pune
+2021 - 2022
+- Built regression and clustering models using Scikit-learn and Matplotlib.
+
+EDUCATION
+Master of Science in Data Science & Statistics (2019 - 2021)
+Pune University | CGPA: 9.0/10
+
+SKILLS
+Python, Machine Learning, Pandas, NumPy, Scikit-learn, Statistics, SQL, Tableau, PostgreSQL, XGBoost, Git
