@@ -6,6 +6,9 @@
 
 const {
   compileBaseResume,
+  loadResumeSource,
+  analyzeResumeTarget,
+  generateMatchReport,
   tailorResume,
   generateCoverLetter,
   saveResumeVersion,
@@ -16,6 +19,89 @@ const {
 } = require('../services/resumeBuilder/resumeBuilderService');
 const { generateResumePdf } = require('../services/resumeBuilder/pdfGenerator');
 const { AiUsage } = require('../models');
+
+/**
+ * @desc    Load and normalize resume data from selected source (profile, upload, text)
+ * @route   POST /api/resume-builder/source
+ * @access  Private (Student only)
+ */
+const loadSourceHandler = async (req, res, next) => {
+  try {
+    const { type, text } = req.body || {};
+    if (!type || typeof type !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: "Source 'type' is required ('profile', 'upload', or 'text')",
+      });
+    }
+
+    const result = await loadResumeSource({
+      studentUserId: req.user._id,
+      type,
+      text,
+    });
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Analyze target role & requirements from Drive, JD, or General mode
+ * @route   POST /api/resume-builder/analyze-target
+ * @access  Private (Student only)
+ */
+const analyzeTargetHandler = async (req, res, next) => {
+  try {
+    const { driveId, jobDescription } = req.body || {};
+    const result = await analyzeResumeTarget({
+      studentUserId: req.user._id,
+      driveId,
+      jobDescription,
+    });
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Generate match and ATS report between candidate resume and target
+ * @route   POST /api/resume-builder/match-report
+ * @access  Private (Student only)
+ */
+const generateMatchReportHandler = async (req, res, next) => {
+  try {
+    const { resumeData, target } = req.body || {};
+    if (!resumeData || typeof resumeData !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid resumeData object is required for match report',
+      });
+    }
+
+    const result = generateMatchReport({
+      resumeData,
+      target,
+    });
+
+    res.status(200).json({
+      success: true,
+      matchReport: result,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * @desc    Get baseline compiled resume from student profile
@@ -221,6 +307,9 @@ const getQuotaHandler = async (req, res, next) => {
 
 module.exports = {
   getBaseResume,
+  loadSourceHandler,
+  analyzeTargetHandler,
+  generateMatchReportHandler,
   tailorResumeHandler,
   generateCoverLetterHandler,
   exportPdfHandler,
