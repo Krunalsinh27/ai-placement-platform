@@ -11,6 +11,7 @@ const {
   getPendingAccounts,
   approvePendingAccount,
   rejectPendingAccount,
+  getAiAnalytics,
 } = require('../controllers/superadminController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -18,8 +19,9 @@ const { protect, authorize } = require('../middleware/authMiddleware');
 router.use(protect);
 router.use(authorize('superadmin'));
 
-// Platform Overview
+// Platform Overview & AI Telemetry
 router.get('/overview', getPlatformOverview);
+router.get('/ai-analytics', getAiAnalytics);
 
 // Analyst Management
 router.get('/analysts', getAnalysts);

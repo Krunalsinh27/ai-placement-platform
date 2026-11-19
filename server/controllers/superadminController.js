@@ -577,6 +577,109 @@ const rejectPendingAccount = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Get AI subsystem production analytics and telemetry for Superadmin
+ * @route   GET /api/superadmin/ai-analytics
+ * @access  Private (Superadmin only)
+ */
+const getAiAnalytics = async (req, res, next) => {
+  try {
+    const { AiCallLog, AiUsage } = require('../models');
+    const { getCircuitBreakerStatus } = require('../services/ai/aiClient');
+    const { getAllAiFeatureFlags } = require('../utils/featureFlags');
+
+    const days = Math.min(30, Math.max(1, parseInt(req.query.days || '7', 10)));
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const logs = await AiCallLog.find({ timestamp: { $gte: sinceDate } }).lean();
+
+    const totalCalls = logs.length;
+    let successfulCalls = 0;
+    let fallbackCalls = 0;
+    let failedCalls = 0;
+    let rateLimitedCalls = 0;
+    let totalTokens = 0;
+    let totalCostUsd = 0;
+    let totalLatencyMs = 0;
+
+    const featureStats = {};
+    const providerStats = {};
+
+    for (const log of logs) {
+      if (log.status === 'success') successfulCalls++;
+      else if (log.status === 'fallback') fallbackCalls++;
+      else if (log.status === 'failed') failedCalls++;
+      else if (log.status === 'rate_limited') rateLimitedCalls++;
+
+      totalTokens += (log.promptTokensEstimated || 0) + (log.completionTokensEstimated || 0);
+      totalCostUsd += log.costEstimateUsd || 0;
+      totalLatencyMs += log.latencyMs || 0;
+
+      // Feature breakdown
+      const feat = log.feature || 'other';
+      if (!featureStats[feat]) {
+        featureStats[feat] = { calls: 0, totalLatency: 0, errors: 0, costUsd: 0 };
+      }
+      featureStats[feat].calls += 1;
+      featureStats[feat].totalLatency += log.latencyMs || 0;
+      featureStats[feat].costUsd += log.costEstimateUsd || 0;
+      if (log.status === 'failed') featureStats[feat].errors += 1;
+
+      // Provider breakdown
+      const prov = log.provider || 'unknown';
+      if (!providerStats[prov]) {
+        providerStats[prov] = { calls: 0, errors: 0, fallbacks: 0 };
+      }
+      providerStats[prov].calls += 1;
+      if (log.status === 'failed') providerStats[prov].errors += 1;
+      if (log.status === 'fallback') providerStats[prov].fallbacks += 1;
+    }
+
+    const featureBreakdown = Object.entries(featureStats).map(([feature, s]) => ({
+      feature,
+      calls: s.calls,
+      avgLatencyMs: s.calls > 0 ? Math.round(s.totalLatency / s.calls) : 0,
+      failureRate: s.calls > 0 ? Number(((s.errors / s.calls) * 100).toFixed(1)) : 0,
+      costEstimateUsd: Number(s.costUsd.toFixed(4)),
+    }));
+
+    // Today's quota usage
+    const todayKey = AiUsage.getTodayKey();
+    const todayUsage = await AiUsage.findOne({ date: todayKey }).lean();
+    const globalCap = parseInt(process.env.AI_DAILY_CALL_CAP || '400', 10);
+    const globalUsageCount = todayUsage?.globalCount || 0;
+
+    res.status(200).json({
+      success: true,
+      timeWindowDays: days,
+      overview: {
+        totalCalls,
+        successfulCalls,
+        fallbackCalls,
+        failedCalls,
+        rateLimitedCalls,
+        successRate: totalCalls > 0 ? Number(((successfulCalls / totalCalls) * 100).toFixed(1)) : 100,
+        failureRate: totalCalls > 0 ? Number(((failedCalls / totalCalls) * 100).toFixed(1)) : 0,
+        fallbackRate: totalCalls > 0 ? Number(((fallbackCalls / totalCalls) * 100).toFixed(1)) : 0,
+        totalTokensEstimated: totalTokens,
+        totalCostEstimateUsd: Number(totalCostUsd.toFixed(4)),
+        avgLatencyMs: totalCalls > 0 ? Math.round(totalLatencyMs / totalCalls) : 0,
+      },
+      quota: {
+        todayCalls: globalUsageCount,
+        dailyCap: globalCap,
+        utilizationPercentage: globalCap > 0 ? Number(((globalUsageCount / globalCap) * 100).toFixed(1)) : 0,
+      },
+      featureBreakdown,
+      providerStats,
+      circuitBreakers: getCircuitBreakerStatus(),
+      featureFlags: getAllAiFeatureFlags(),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getPlatformOverview,
   getAnalysts,
@@ -588,5 +691,6 @@ module.exports = {
   getPendingAccounts,
   approvePendingAccount,
   rejectPendingAccount,
+  getAiAnalytics,
 };
 
