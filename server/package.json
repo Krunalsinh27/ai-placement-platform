@@ -38,6 +38,7 @@
     "test:security": "node tests/testSecurityHardening.js",
     "test:seedguard": "node tests/testSeedGuard.js",
     "test:redis": "node tests/testRedisDurable.js",
+    "test:ratelimit": "node tests/testRedisRateLimitResilience.js",
     "test:all": "node tests/runAllTests.js",
     "test:fresh": "node tests/dropTestDb.js && node tests/runAllTests.js",
     "ai:check": "node scripts/aiCheck.js",

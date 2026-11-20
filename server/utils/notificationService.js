@@ -587,15 +587,22 @@ const notifyDrivePublished = (drive) => {
       try {
         const queue = getNotificationQueue();
         if (queue) {
-          await queue.add(
-            'drive-published',
-            { driveId },
-            {
-              jobId: `drive-pub-${driveId}-${Date.now()}`,
-              attempts: 3,
-              removeOnComplete: true,
-            }
-          );
+          let timer;
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('BullMQ add timed out after 1500ms')), 1500);
+          });
+          await Promise.race([
+            queue.add(
+              'drive-published',
+              { driveId },
+              {
+                jobId: `drive-pub-${driveId}-${Date.now()}`,
+                attempts: 3,
+                removeOnComplete: true,
+              }
+            ),
+            timeoutPromise,
+          ]).finally(() => clearTimeout(timer));
           return;
         }
       } catch (err) {
@@ -620,7 +627,15 @@ const getNotificationJobCounts = async () => {
     const queue = getNotificationQueue();
     if (queue) {
       try {
-        const counts = await queue.getJobCounts('waiting', 'active', 'failed');
+        let timer;
+        const timeoutPromise = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('BullMQ getJobCounts timed out after 800ms')), 800);
+        });
+        const counts = await Promise.race([
+          queue.getJobCounts('waiting', 'active', 'failed'),
+          timeoutPromise,
+        ]).finally(() => clearTimeout(timer));
+
         return {
           waiting: counts.waiting || 0,
           active: counts.active || 0,

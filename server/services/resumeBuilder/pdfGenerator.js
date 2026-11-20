@@ -99,7 +99,12 @@ function generateResumePdf(resumeData, templateId = 'modern', outputStream) {
     },
   });
 
-  doc.pipe(outputStream);
+  const chunks = [];
+  if (outputStream && typeof outputStream.write === 'function') {
+    doc.pipe(outputStream);
+  } else {
+    doc.on('data', (c) => chunks.push(c));
+  }
 
   const contentWidth = doc.page.width - config.margin * 2;
 
@@ -137,25 +142,67 @@ function generateResumePdf(resumeData, templateId = 'modern', outputStream) {
 
   doc.moveDown(0.2);
 
-  const contactItems = [
-    contact.email,
-    contact.phone,
-    contact.location,
-    contact.linkedin,
-    contact.github,
-    contact.portfolio,
-  ].filter(Boolean);
+  const contactParts = [];
+  if (contact.email) {
+    contactParts.push({ text: contact.email, link: `mailto:${contact.email}` });
+  }
+  if (contact.phone) {
+    contactParts.push({ text: contact.phone, link: `tel:${contact.phone.replace(/[^\d+]/g, '')}` });
+  }
+  if (contact.location) {
+    contactParts.push({ text: contact.location, link: null });
+  }
+  if (contact.linkedin) {
+    const label = contact.linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//i, 'linkedin.com/in/').replace(/\/+$/, '') || 'LinkedIn';
+    contactParts.push({ text: label, link: contact.linkedin });
+  }
+  if (contact.github) {
+    const label = contact.github.replace(/^https?:\/\/(www\.)?github\.com\//i, 'github.com/').replace(/\/+$/, '') || 'GitHub';
+    contactParts.push({ text: label, link: contact.github });
+  }
+  if (contact.portfolio) {
+    const label = contact.portfolio.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/+$/, '') || 'Portfolio';
+    contactParts.push({ text: label, link: contact.portfolio });
+  }
 
   const contactSeparator = template === 'classic' ? '  |  ' : '  •  ';
 
-  doc
-    .font(config.fontBody)
-    .fontSize(template === 'compact' ? 8.5 : 9)
-    .fillColor(config.secondaryColor)
-    .text(contactItems.join(contactSeparator), {
-      align: config.headerAlign,
-      lineGap: 2,
-    });
+  if (contactParts.length > 0) {
+    doc.font(config.fontBody).fontSize(template === 'compact' ? 8.5 : 9);
+    for (let i = 0; i < contactParts.length; i++) {
+      const part = contactParts[i];
+      const isLast = i === contactParts.length - 1;
+
+      if (part.link) {
+        doc
+          .fillColor(config.accentColor)
+          .text(part.text, {
+            link: part.link,
+            underline: true,
+            continued: !isLast,
+            align: config.headerAlign,
+          });
+      } else {
+        doc
+          .fillColor(config.secondaryColor)
+          .text(part.text, {
+            continued: !isLast,
+            align: config.headerAlign,
+          });
+      }
+
+      if (!isLast) {
+        doc
+          .fillColor(config.secondaryColor)
+          .text(contactSeparator, {
+            underline: false,
+            link: null,
+            continued: true,
+          });
+      }
+    }
+    doc.text('', { continued: false }); // newline
+  }
 
   // =========================================================================
   // 2. SUMMARY (IF PRESENT)
@@ -261,20 +308,36 @@ function generateResumePdf(resumeData, templateId = 'modern', outputStream) {
         ? ` (${proj.technologies.join(', ')})`
         : '';
 
+      const hasTechs = Boolean(techs);
       doc
         .font(config.fontItalic)
         .fontSize(template === 'compact' ? 8.5 : 9)
         .fillColor(config.secondaryColor)
         .text(techs, { continued: Boolean(proj.duration || proj.link) });
 
-      const linkOrDate = [proj.duration, proj.link].filter(Boolean).join('  |  ');
-      if (linkOrDate) {
+      if (proj.link) {
         doc
           .font(config.fontBody)
           .fontSize(template === 'compact' ? 8.5 : 9)
+          .fillColor(config.accentColor)
+          .text(proj.duration ? `  |  ` : '  ', { continued: true, underline: false })
+          .text('[Link]', {
+            link: proj.link,
+            underline: true,
+            continued: Boolean(proj.duration),
+          });
+      }
+
+      if (proj.duration) {
+        doc
+          .font(config.fontItalic)
+          .fontSize(template === 'compact' ? 8.5 : 9)
           .fillColor(config.secondaryColor)
-          .text(`  |  ${linkOrDate}`, { align: 'right' });
-      } else {
+          .text(proj.link ? ` (${proj.duration})` : `  |  ${proj.duration}`, {
+            align: 'right',
+            underline: false,
+          });
+      } else if (!proj.link && !hasTechs) {
         doc.text('');
       }
 
@@ -337,10 +400,10 @@ function generateResumePdf(resumeData, templateId = 'modern', outputStream) {
   }
 
   // =========================================================================
-  // 7. CERTIFICATIONS & ACHIEVEMENTS (IF PRESENT)
+  // 7. CERTIFICATIONS (IF PRESENT)
   // =========================================================================
   if (Array.isArray(resumeData.certifications) && resumeData.certifications.length > 0) {
-    drawSectionHeading('Certifications & Achievements');
+    drawSectionHeading('Certifications');
     resumeData.certifications.forEach((cert) => {
       if (!cert || !cert.trim()) return;
       doc
@@ -354,8 +417,109 @@ function generateResumePdf(resumeData, templateId = 'modern', outputStream) {
     });
   }
 
+  // =========================================================================
+  // 8. ACHIEVEMENTS & AWARDS (IF PRESENT)
+  // =========================================================================
+  const allAchievements = [
+    ...(Array.isArray(resumeData.achievements) ? resumeData.achievements : []),
+    ...(Array.isArray(resumeData.awards) ? resumeData.awards : []),
+  ].filter(Boolean);
+
+  if (allAchievements.length > 0) {
+    drawSectionHeading('Achievements & Awards');
+    allAchievements.forEach((ach) => {
+      const textStr = typeof ach === 'string' ? ach : ach.title || ach.text || '';
+      if (!textStr || !textStr.trim()) return;
+      doc
+        .font(config.fontBody)
+        .fontSize(config.bulletTextSize)
+        .fillColor(config.primaryColor)
+        .text(`•  ${textStr.trim()}`, {
+          indent: config.bulletIndent,
+          lineGap: 1.5,
+        });
+    });
+  }
+
+  // =========================================================================
+  // 9. POSITIONS OF RESPONSIBILITY / LEADERSHIP (IF PRESENT)
+  // =========================================================================
+  if (
+    Array.isArray(resumeData.positionsOfResponsibility) &&
+    resumeData.positionsOfResponsibility.length > 0
+  ) {
+    drawSectionHeading('Positions of Responsibility');
+    resumeData.positionsOfResponsibility.forEach((pos) => {
+      const textStr = typeof pos === 'string' ? pos : pos.title || pos.text || '';
+      if (!textStr || !textStr.trim()) return;
+      doc
+        .font(config.fontBody)
+        .fontSize(config.bulletTextSize)
+        .fillColor(config.primaryColor)
+        .text(`•  ${textStr.trim()}`, {
+          indent: config.bulletIndent,
+          lineGap: 1.5,
+        });
+    });
+  }
+
+  // =========================================================================
+  // 10. LANGUAGES & INTERESTS (IF PRESENT)
+  // =========================================================================
+  const extraItems = [];
+  if (Array.isArray(resumeData.languages) && resumeData.languages.length > 0) {
+    extraItems.push({ label: 'Languages', value: resumeData.languages.join(', ') });
+  }
+  if (Array.isArray(resumeData.interests) && resumeData.interests.length > 0) {
+    extraItems.push({ label: 'Interests', value: resumeData.interests.join(', ') });
+  }
+
+  if (extraItems.length > 0) {
+    drawSectionHeading('Languages & Interests');
+    extraItems.forEach((item) => {
+      doc
+        .font(config.fontHead)
+        .fontSize(template === 'compact' ? 8.5 : 9.5)
+        .fillColor(config.primaryColor)
+        .text(`${item.label}: `, { continued: true })
+        .font(config.fontBody)
+        .text(item.value, { lineGap: 2 });
+    });
+  }
+
+  // =========================================================================
+  // 11. ADDITIONAL SECTIONS (IF PRESENT)
+  // =========================================================================
+  if (Array.isArray(resumeData.additionalSections) && resumeData.additionalSections.length > 0) {
+    resumeData.additionalSections.forEach((sec) => {
+      if (!sec || !sec.title) return;
+      const lines = Array.isArray(sec.lines) ? sec.lines : [];
+      if (lines.length === 0) return;
+
+      drawSectionHeading(sec.title);
+      lines.forEach((line) => {
+        if (!line || !line.trim()) return;
+        doc
+          .font(config.fontBody)
+          .fontSize(config.bulletTextSize)
+          .fillColor(config.primaryColor)
+          .text(`•  ${line.trim()}`, {
+            indent: config.bulletIndent,
+            lineGap: 1.5,
+          });
+      });
+    });
+  }
+
   doc.end();
-  return doc;
+
+  if (outputStream && typeof outputStream.write === 'function') {
+    return doc;
+  }
+
+  return new Promise((resolve) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+  });
 }
 
 module.exports = {

@@ -1,7 +1,9 @@
 const Redis = require('ioredis');
 
 let sharedClient = null;
+let rateLimitClient = null;
 let lastErrorLogTs = 0;
+let lastRateLimitErrorLogTs = 0;
 const activeClients = new Set();
 
 /**
@@ -38,7 +40,7 @@ const checkMaxMemoryPolicy = async (client) => {
 };
 
 /**
- * Build connection options for ioredis
+ * Build connection options for BullMQ ioredis clients.
  * BullMQ requires maxRetriesPerRequest: null
  */
 const getRedisOptions = (rawUrl) => {
@@ -50,6 +52,35 @@ const getRedisOptions = (rawUrl) => {
     retryStrategy(times) {
       if (process.env.NODE_ENV === 'test') {
         // In test mode, fail fast if Redis is unreachable
+        return null;
+      }
+      return Math.min(times * 200, 3000);
+    },
+  };
+
+  if (url.startsWith('rediss://')) {
+    options.tls = {
+      rejectUnauthorized: process.env.REDIS_REJECT_UNAUTHORIZED === 'true',
+    };
+  }
+
+  return options;
+};
+
+/**
+ * Build connection options for rate-limiting ioredis client.
+ * Uses enableOfflineQueue: false, maxRetriesPerRequest: 1, commandTimeout: 800, connectTimeout: 800
+ */
+const getRateLimitRedisOptions = (rawUrl) => {
+  const url = (rawUrl || process.env.REDIS_URL || '').trim();
+  const options = {
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 1,
+    commandTimeout: 800,
+    connectTimeout: 800,
+    enableReadyCheck: false,
+    retryStrategy(times) {
+      if (process.env.NODE_ENV === 'test') {
         return null;
       }
       return Math.min(times * 200, 3000);
@@ -101,7 +132,39 @@ const createRedisClient = (extraOptions = {}) => {
 };
 
 /**
- * Get or create the shared Redis client instance
+ * Create a dedicated Redis client for rate limiting.
+ * Configured with enableOfflineQueue: false, maxRetriesPerRequest: 1, commandTimeout: 800ms
+ */
+const createRateLimitRedisClient = (extraOptions = {}) => {
+  if (!isRedisConfigured()) {
+    return null;
+  }
+  const url = process.env.REDIS_URL.trim();
+  const baseOptions = getRateLimitRedisOptions(url);
+  const client = new Redis(url, {
+    ...baseOptions,
+    ...extraOptions,
+  });
+
+  client.on('error', (err) => {
+    // SECURITY: NEVER log REDIS_URL
+    const now = Date.now();
+    if (process.env.NODE_ENV !== 'test' && now - lastRateLimitErrorLogTs >= 60000) {
+      lastRateLimitErrorLogTs = now;
+      console.warn('[Redis] Rate-limit client connection error:', err.message);
+    }
+  });
+
+  activeClients.add(client);
+  client.on('end', () => {
+    activeClients.delete(client);
+  });
+
+  return client;
+};
+
+/**
+ * Get or create the shared Redis client instance (for BullMQ queues/workers)
  */
 const getRedisClient = () => {
   if (!isRedisConfigured()) {
@@ -111,6 +174,19 @@ const getRedisClient = () => {
     sharedClient = createRedisClient();
   }
   return sharedClient;
+};
+
+/**
+ * Get or create the dedicated rate-limit Redis client instance
+ */
+const getRateLimitRedisClient = () => {
+  if (!isRedisConfigured()) {
+    return null;
+  }
+  if (!rateLimitClient || rateLimitClient.status === 'end') {
+    rateLimitClient = createRateLimitRedisClient();
+  }
+  return rateLimitClient;
 };
 
 /**
@@ -146,6 +222,7 @@ const closeRedisConnections = async () => {
   const clients = Array.from(activeClients);
   activeClients.clear();
   sharedClient = null;
+  rateLimitClient = null;
   await Promise.allSettled(
     clients.map(async (client) => {
       try {
@@ -176,7 +253,10 @@ const getBullPrefix = () => {
 module.exports = {
   isRedisConfigured,
   createRedisClient,
+  createRateLimitRedisClient,
   getRedisClient,
+  getRateLimitRedisClient,
+  getRateLimitRedisOptions,
   getRedisStatus,
   getBullPrefix,
   checkMaxMemoryPolicy,

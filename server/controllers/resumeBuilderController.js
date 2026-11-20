@@ -8,7 +8,6 @@ const {
   compileBaseResume,
   loadResumeSource,
   analyzeResumeTarget,
-  generateMatchReport,
   tailorResume,
   generateCoverLetter,
   saveResumeVersion,
@@ -21,7 +20,7 @@ const { generateResumePdf } = require('../services/resumeBuilder/pdfGenerator');
 const { AiUsage } = require('../models');
 
 /**
- * @desc    Load and normalize resume data from selected source (profile, upload, text)
+ * @desc    Load and normalize resume data from selected source (profile, upload, resume_ai_file, text)
  * @route   POST /api/resume-builder/source
  * @access  Private (Student only)
  */
@@ -31,7 +30,7 @@ const loadSourceHandler = async (req, res, next) => {
     if (!type || typeof type !== 'string') {
       return res.status(400).json({
         success: false,
-        message: "Source 'type' is required ('profile', 'upload', or 'text')",
+        message: "Source 'type' is required ('profile', 'upload', 'resume_ai_file', or 'text')",
       });
     }
 
@@ -39,6 +38,7 @@ const loadSourceHandler = async (req, res, next) => {
       studentUserId: req.user._id,
       type,
       text,
+      file: req.file || null,
     });
 
     res.status(200).json({
@@ -66,38 +66,6 @@ const analyzeTargetHandler = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      ...result,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * @desc    Generate match and ATS report between candidate resume and target
- * @route   POST /api/resume-builder/match-report
- * @access  Private (Student only)
- */
-const generateMatchReportHandler = async (req, res, next) => {
-  try {
-    const { resumeData, target, sourceType } = req.body || {};
-    if (!resumeData || typeof resumeData !== 'object') {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid resumeData object is required for match report',
-      });
-    }
-
-    const result = await generateMatchReport({
-      studentUserId: req.user?._id,
-      resumeData,
-      target,
-      sourceType: sourceType || 'profile',
-    });
-
-    res.status(200).json({
-      success: true,
-      matchReport: result,
       ...result,
     });
   } catch (error) {
@@ -138,13 +106,18 @@ const tailorResumeHandler = async (req, res, next) => {
       driveId,
       jobDescription,
       sourceType: sourceType || 'profile',
+      signal: req.abortSignal,
+      isAborted: req.isAborted,
     });
+
+    if (res.headersSent || req.timedOut) return;
 
     res.status(200).json({
       success: true,
       ...result,
     });
   } catch (error) {
+    if (res.headersSent || req.timedOut) return;
     next(error);
   }
 };
@@ -164,13 +137,18 @@ const generateCoverLetterHandler = async (req, res, next) => {
       company,
       driveId,
       jobDescription,
+      signal: req.abortSignal,
+      isAborted: req.isAborted,
     });
+
+    if (res.headersSent || req.timedOut) return;
 
     res.status(200).json({
       success: true,
       ...result,
     });
   } catch (error) {
+    if (res.headersSent || req.timedOut) return;
     next(error);
   }
 };
@@ -312,7 +290,6 @@ module.exports = {
   getBaseResume,
   loadSourceHandler,
   analyzeTargetHandler,
-  generateMatchReportHandler,
   tailorResumeHandler,
   generateCoverLetterHandler,
   exportPdfHandler,

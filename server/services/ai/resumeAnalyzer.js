@@ -1146,6 +1146,8 @@ ${redactedJd}
       userPrompt,
       mode: 'analyze',
       userId: student.user._id || student.user,
+      abortSignal: options.signal,
+      isAborted: options.isAborted,
       validateFn: (data) => {
         if (data && typeof data === 'object') {
           if (Array.isArray(data.suggestions) && data.suggestions.length > 8) {

@@ -1,12 +1,21 @@
 const rateLimit = require('express-rate-limit');
 const { MemoryStore } = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
-const { isRedisConfigured, getRedisClient } = require('../config/redis');
+const { isRedisConfigured, getRedisClient, getRateLimitRedisClient } = require('../config/redis');
 
-const isTestEnv = () => process.env.NODE_ENV === 'test';
+const isTestEnv = () => process.env.NODE_ENV === 'test' && process.env.ENFORCE_RATE_LIMIT !== 'true';
 
 let lastGeneralWarningTs = 0;
 let lastFallbackWarningTs = 0;
+
+let sharedConsecutiveFailures = 0;
+let sharedCircuitOpenUntil = 0;
+
+const resetRateLimitCircuit = () => {
+  sharedConsecutiveFailures = 0;
+  sharedCircuitOpenUntil = 0;
+  lastFallbackWarningTs = 0;
+};
 
 /**
  * Throttled logger for general limiters: logs at most 1 warning per minute without the URL
@@ -16,7 +25,7 @@ const throttledGeneralStoreLogger = {
     const now = Date.now();
     if (now - lastGeneralWarningTs >= 60000) {
       lastGeneralWarningTs = now;
-      console.warn('[RateLimit] Warning: Redis store unreachable, failing open without rate limiting.');
+      console.warn('[RateLimit] Redis unavailable, using in-memory rate limits');
     }
   },
   warn: () => {},
@@ -25,29 +34,34 @@ const throttledGeneralStoreLogger = {
 };
 
 /**
- * Throttled warning for auth limiters falling back to in-memory counters
+ * Throttled warning: logs at most 1 warning per minute without the URL
+ * Exact message: "Redis unavailable, using in-memory rate limits"
  */
 const logFallbackWarning = () => {
   const now = Date.now();
   if (now - lastFallbackWarningTs >= 60000) {
     lastFallbackWarningTs = now;
-    console.warn('[RateLimit] Warning: Redis store unreachable for authentication limiter, falling back to in-memory counter.');
+    console.warn('[RateLimit] Redis unavailable, using in-memory rate limits');
   }
 };
 
 /**
  * Fallback store that routes increments to Redis when available,
- * and seamlessly falls back to MemoryStore when Redis errors or is unreachable.
- * This guarantees brute-force protection never disappears.
+ * and seamlessly falls back to MemoryStore when Redis errors, times out, or is unreachable.
+ * Includes an 800ms timeout per call and a circuit breaker (trips for 30s after 3 consecutive failures).
  */
 class FallbackRedisStore {
   constructor(prefix, customClient = null) {
     this.prefix = prefix;
     this.memStore = new MemoryStore();
     this.redisStore = null;
+    this.customClient = customClient;
+    this.consecutiveFailures = 0;
+    this.circuitOpenUntil = 0;
 
-    const client = customClient || (isRedisConfigured() ? getRedisClient() : null);
+    const client = customClient || (isRedisConfigured() ? getRateLimitRedisClient() : null);
     if (client) {
+      this.client = client;
       this.redisStore = new RedisStore({
         sendCommand: (...args) => client.call(...args),
         prefix,
@@ -55,93 +69,174 @@ class FallbackRedisStore {
     }
   }
 
+  _isCircuitOpen() {
+    const now = Date.now();
+    if (this.customClient) {
+      return now < this.circuitOpenUntil;
+    }
+    return now < sharedCircuitOpenUntil;
+  }
+
+  _recordFailure() {
+    const now = Date.now();
+    if (this.customClient) {
+      this.consecutiveFailures += 1;
+      if (this.consecutiveFailures >= 3) {
+        this.circuitOpenUntil = now + 30000;
+      }
+    } else {
+      sharedConsecutiveFailures += 1;
+      if (sharedConsecutiveFailures >= 3) {
+        sharedCircuitOpenUntil = now + 30000;
+      }
+    }
+    logFallbackWarning();
+  }
+
+  _recordSuccess() {
+    if (this.customClient) {
+      this.consecutiveFailures = 0;
+      this.circuitOpenUntil = 0;
+    } else {
+      sharedConsecutiveFailures = 0;
+      sharedCircuitOpenUntil = 0;
+    }
+  }
+
+  resetCircuit() {
+    this.consecutiveFailures = 0;
+    this.circuitOpenUntil = 0;
+    if (!this.customClient) {
+      resetRateLimitCircuit();
+    }
+  }
+
+  _getRedisStore() {
+    if (this.redisStore) return this.redisStore;
+    if (!this.customClient && isRedisConfigured()) {
+      const client = getRateLimitRedisClient();
+      if (client) {
+        this.client = client;
+        this.redisStore = new RedisStore({
+          sendCommand: (...args) => client.call(...args),
+          prefix: this.prefix,
+        });
+        if (this.options && typeof this.redisStore.init === 'function') {
+          try {
+            this.redisStore.init(this.options);
+          } catch (_) {}
+        }
+      }
+    }
+    return this.redisStore;
+  }
+
   init(options) {
     this.options = options;
     if (typeof this.memStore.init === 'function') {
       this.memStore.init(options);
     }
-    if (this.redisStore && typeof this.redisStore.init === 'function') {
+    const store = this._getRedisStore();
+    if (store && typeof store.init === 'function') {
       try {
-        const res = this.redisStore.init(options);
-        if (res && typeof res.catch === 'function') {
-          res.catch(() => logFallbackWarning());
-        }
+        let timer;
+        const timeoutPromise = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('init timed out after 800ms')), 800);
+        });
+        Promise.race([
+          Promise.resolve(store.init(options)),
+          timeoutPromise,
+        ])
+          .then(() => clearTimeout(timer))
+          .catch(() => {
+            clearTimeout(timer);
+            this._recordFailure();
+          });
       } catch (_) {
-        logFallbackWarning();
+        this._recordFailure();
       }
+    }
+  }
+
+  async _executeWithTimeout(fnName, ...args) {
+    const store = this._getRedisStore();
+    const isCircuitOpen = this._isCircuitOpen();
+
+    if (store && !isCircuitOpen) {
+      let timer;
+      try {
+        const fn = store[fnName];
+        if (typeof fn === 'function') {
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Redis ${fnName} timed out after 800ms`)), 800);
+          });
+          const result = await Promise.race([
+            fn.apply(store, args),
+            timeoutPromise,
+          ]);
+          clearTimeout(timer);
+          this._recordSuccess();
+          return result;
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        this._recordFailure();
+      }
+    }
+
+    // Fallback to in-memory store
+    const memFn = this.memStore[fnName];
+    if (typeof memFn === 'function') {
+      return await memFn.apply(this.memStore, args);
     }
   }
 
   async get(key) {
-    if (this.redisStore) {
-      try {
-        return await this.redisStore.get(key);
-      } catch (_) {
-        logFallbackWarning();
-      }
-    }
-    return await this.memStore.get(key);
+    return await this._executeWithTimeout('get', key);
   }
 
   async increment(key) {
-    if (this.redisStore) {
-      try {
-        return await this.redisStore.increment(key);
-      } catch (_) {
-        logFallbackWarning();
-      }
-    }
-    return await this.memStore.increment(key);
+    return await this._executeWithTimeout('increment', key);
   }
 
   async decrement(key) {
-    if (this.redisStore) {
-      try {
-        return await this.redisStore.decrement(key);
-      } catch (_) {
-        logFallbackWarning();
-      }
-    }
-    return await this.memStore.decrement(key);
+    return await this._executeWithTimeout('decrement', key);
   }
 
   async resetKey(key) {
-    if (this.redisStore) {
-      try {
-        await this.redisStore.resetKey(key);
-      } catch (_) {
-        logFallbackWarning();
-      }
-    }
-    return await this.memStore.resetKey(key);
+    return await this._executeWithTimeout('resetKey', key);
   }
 
   async resetAll() {
-    if (this.redisStore) {
-      try {
-        await this.redisStore.resetAll();
-      } catch (_) {
-        logFallbackWarning();
-      }
-    }
-    return await this.memStore.resetAll();
+    return await this._executeWithTimeout('resetAll');
   }
 }
 
 /**
  * Build Redis store for general rate limiters.
  * Falls back to undefined (MemoryStore) when Redis is unset.
+ * Wrapped in 800ms timeout.
  */
 const createRedisStore = (prefix, customClient = null) => {
   if (!customClient && !isRedisConfigured()) {
     return undefined;
   }
-  const client = customClient || getRedisClient();
+  const client = customClient || getRateLimitRedisClient();
   if (!client) {
     return undefined;
   }
   return new RedisStore({
-    sendCommand: (...args) => client.call(...args),
+    sendCommand: async (...args) => {
+      let timer;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Redis command timed out after 800ms')), 800);
+      });
+      try {
+        return await Promise.race([client.call(...args), timeoutPromise]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     prefix,
   });
 };
@@ -311,13 +406,12 @@ const reportLimiter = rateLimit({
 });
 
 // AI endpoints rate limiter: 40 requests per 15 minutes per user (falls back to IP if unauthenticated)
+// Uses FallbackRedisStore to maintain rate limiting with in-memory fallback even when Redis is down
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 40,
   skip: isTestEnv,
-  store: createRedisStore('rl:ai:'),
-  passOnStoreError: true,
-  logger: throttledGeneralStoreLogger,
+  store: createFallbackStore('rl:ai:'),
   validate: { keyGeneratorIpFallback: false },
   keyGenerator: (req) => normalizeUserKey('ai', req),
   message: {
@@ -332,6 +426,7 @@ module.exports = {
   createRedisStore,
   createFallbackStore,
   FallbackRedisStore,
+  resetRateLimitCircuit,
   throttledGeneralStoreLogger,
   normalizeAccountKey,
   normalizeUserKey,

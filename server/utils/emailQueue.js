@@ -132,33 +132,58 @@ class EmailQueue {
           const bullQueue = this.getBullQueue();
           if (bullQueue) {
             const jobId = `email-${log._id.toString()}`;
-            await bullQueue.add(
-              'send-email',
-              {
-                logId: log._id.toString(),
-                user: user.toString(),
-                recipientEmail,
-                recipientName,
-                type,
-                subject,
-                htmlBody,
-                textBody,
-                attachments,
-                replyTo,
-              },
-              {
-                jobId,
-                attempts: this.maxRetries,
-                backoff: {
-                  type: 'emailBackoff',
+            let timer;
+            const timeoutPromise = new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error('BullMQ add timed out after 1500ms')), 1500);
+            });
+            await Promise.race([
+              bullQueue.add(
+                'send-email',
+                {
+                  logId: log._id.toString(),
+                  user: user.toString(),
+                  recipientEmail,
+                  recipientName,
+                  type,
+                  subject,
+                  htmlBody,
+                  textBody,
+                  attachments,
+                  replyTo,
                 },
-                removeOnComplete: true,
-              }
-            );
+                {
+                  jobId,
+                  attempts: this.maxRetries,
+                  backoff: {
+                    type: 'emailBackoff',
+                  },
+                  removeOnComplete: true,
+                }
+              ),
+              timeoutPromise,
+            ]).finally(() => clearTimeout(timer));
           }
         } catch (queueErr) {
-          // SECURITY: Never log REDIS_URL. Leave EmailLog as 'queued' in MongoDB.
-          console.error('[EmailQueue] Error enqueuing email to BullMQ, left as queued:', queueErr.message);
+          // SECURITY: Never log REDIS_URL. Fall back to in-memory queue so email delivery doesn't stall.
+          console.warn('[EmailQueue] Redis/BullMQ unavailable, falling back to in-memory delivery:', queueErr.message || queueErr.name || 'Queue offline');
+          this.queue.push({
+            logId: log._id,
+            user,
+            recipientEmail,
+            recipientName,
+            type,
+            subject,
+            htmlBody,
+            textBody,
+            attachments,
+            replyTo,
+            attempts: 0,
+          });
+          setImmediate(() => {
+            this.processQueue().catch((err) =>
+              console.error('[EmailQueue] Error processing queue:', err)
+            );
+          });
         }
       } else {
         // In-memory queue
@@ -208,36 +233,65 @@ class EmailQueue {
         if (bullQueue) {
           const originalJobId = `email-${log._id.toString()}`;
           try {
-            await bullQueue.remove(originalJobId);
+            await Promise.race([
+              bullQueue.remove(originalJobId),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('BullMQ remove timed out')), 800)),
+            ]);
           } catch (_) {}
 
           const jobId = `email-${log._id.toString()}-resend-${Date.now()}`;
-          await bullQueue.add(
-            'send-email',
-            {
-              logId: log._id.toString(),
-              user: log.user?.toString(),
-              recipientEmail: log.recipientEmail,
-              recipientName: log.recipientName,
-              type: log.type,
-              subject: log.subject,
-              htmlBody: log.htmlBody,
-              textBody: log.textBody,
-              attachments: log.metadata?.attachments || [],
-              replyTo: log.replyTo,
-            },
-            {
-              jobId,
-              attempts: this.maxRetries,
-              backoff: {
-                type: 'emailBackoff',
+          let timer;
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('BullMQ add timed out after 1500ms')), 1500);
+          });
+          await Promise.race([
+            bullQueue.add(
+              'send-email',
+              {
+                logId: log._id.toString(),
+                user: log.user?.toString(),
+                recipientEmail: log.recipientEmail,
+                recipientName: log.recipientName,
+                type: log.type,
+                subject: log.subject,
+                htmlBody: log.htmlBody,
+                textBody: log.textBody,
+                attachments: log.metadata?.attachments || [],
+                replyTo: log.replyTo,
               },
-              removeOnComplete: true,
-            }
-          );
+              {
+                jobId,
+                attempts: this.maxRetries,
+                backoff: {
+                  type: 'emailBackoff',
+                },
+                removeOnComplete: true,
+              }
+            ),
+            timeoutPromise,
+          ]).finally(() => clearTimeout(timer));
         }
       } catch (queueErr) {
-        console.error('[EmailQueue] Error re-enqueuing email to BullMQ, left as queued:', queueErr.message);
+        console.warn('[EmailQueue] Redis/BullMQ unavailable for re-send, falling back to in-memory delivery:', queueErr.message || queueErr.name || 'Queue offline');
+        this.queue.push({
+          logId: log._id,
+          user: log.user,
+          recipientEmail: log.recipientEmail,
+          recipientName: log.recipientName,
+          type: log.type,
+          subject: log.subject,
+          htmlBody: log.htmlBody,
+          textBody: log.textBody,
+          attachments: log.metadata?.attachments || [],
+          replyTo: log.replyTo,
+          attempts: 0,
+        });
+
+        setImmediate(() => {
+          this.processQueue().catch((err) =>
+            console.error('[EmailQueue] Error in resend processing loop:', err)
+          );
+        });
       }
     } else {
       this.queue.push({
@@ -288,31 +342,44 @@ class EmailQueue {
             const bullQueue = this.getBullQueue();
             if (bullQueue) {
               const jobId = `email-${log._id.toString()}`;
-              const existingJob = await bullQueue.getJob(jobId);
+              let getJobTimer;
+              const existingJob = await Promise.race([
+                bullQueue.getJob(jobId),
+                new Promise((_, reject) => {
+                  getJobTimer = setTimeout(() => reject(new Error('BullMQ getJob timed out')), 800);
+                }),
+              ]).finally(() => clearTimeout(getJobTimer));
+
               if (!existingJob) {
-                await bullQueue.add(
-                  'send-email',
-                  {
-                    logId: log._id.toString(),
-                    user: log.user?.toString(),
-                    recipientEmail: log.recipientEmail,
-                    recipientName: log.recipientName,
-                    type: log.type,
-                    subject: log.subject,
-                    htmlBody: log.htmlBody,
-                    textBody: log.textBody,
-                    attachments: log.metadata?.attachments || [],
-                    replyTo: log.replyTo,
-                  },
-                  {
-                    jobId,
-                    attempts: this.maxRetries,
-                    backoff: {
-                      type: 'emailBackoff',
+                let addTimer;
+                await Promise.race([
+                  bullQueue.add(
+                    'send-email',
+                    {
+                      logId: log._id.toString(),
+                      user: log.user?.toString(),
+                      recipientEmail: log.recipientEmail,
+                      recipientName: log.recipientName,
+                      type: log.type,
+                      subject: log.subject,
+                      htmlBody: log.htmlBody,
+                      textBody: log.textBody,
+                      attachments: log.metadata?.attachments || [],
+                      replyTo: log.replyTo,
                     },
-                    removeOnComplete: true,
-                  }
-                );
+                    {
+                      jobId,
+                      attempts: this.maxRetries,
+                      backoff: {
+                        type: 'emailBackoff',
+                      },
+                      removeOnComplete: true,
+                    }
+                  ),
+                  new Promise((_, reject) => {
+                    addTimer = setTimeout(() => reject(new Error('BullMQ add timed out')), 1500);
+                  }),
+                ]).finally(() => clearTimeout(addTimer));
                 recoveredCount++;
               }
             }
@@ -389,7 +456,15 @@ class EmailQueue {
       const bullQueue = this.getBullQueue();
       if (bullQueue) {
         try {
-          const counts = await bullQueue.getJobCounts('waiting', 'active', 'failed');
+          let timer;
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('BullMQ getJobCounts timed out after 800ms')), 800);
+          });
+          const counts = await Promise.race([
+            bullQueue.getJobCounts('waiting', 'active', 'failed'),
+            timeoutPromise,
+          ]).finally(() => clearTimeout(timer));
+
           return {
             waiting: counts.waiting || 0,
             active: counts.active || 0,

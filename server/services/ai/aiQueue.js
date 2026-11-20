@@ -92,12 +92,19 @@ async function dispatchAiJob(type, payload = {}, userId = null) {
 
   if (queue && isRedisConfigured()) {
     try {
-      const job = await queue.add(type, {
-        type,
-        payload,
-        userId: userId ? String(userId) : null,
-        createdAt: new Date().toISOString(),
+      let timer;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('BullMQ add timed out after 1500ms')), 1500);
       });
+      const job = await Promise.race([
+        queue.add(type, {
+          type,
+          payload,
+          userId: userId ? String(userId) : null,
+          createdAt: new Date().toISOString(),
+        }),
+        timeoutPromise,
+      ]).finally(() => clearTimeout(timer));
 
       return {
         queued: true,
@@ -172,12 +179,23 @@ async function getAiJobStatus(jobId) {
   }
 
   try {
-    const job = await queue.getJob(jobId);
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('BullMQ getJob timed out after 1500ms')), 1500);
+    });
+    const job = await Promise.race([
+      queue.getJob(jobId),
+      timeoutPromise,
+    ]).finally(() => clearTimeout(timer));
+
     if (!job) {
       return { status: 'not_found', progress: 0, error: 'Job not found in queue' };
     }
 
-    const state = await job.getState();
+    const state = await Promise.race([
+      job.getState(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('BullMQ getState timed out after 1000ms')), 1000)),
+    ]);
     const isCompleted = state === 'completed';
     const isFailed = state === 'failed';
 

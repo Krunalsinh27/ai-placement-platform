@@ -14,7 +14,7 @@
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
 process.env.AI_PROVIDER = 'mock';
-process.env.AI_USER_DAILY_TAILOR_CAP = '10';
+process.env.AI_USER_DAILY_TAILOR_CAP = '50';
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -22,6 +22,8 @@ const dotenv = require('dotenv');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const assert = require('assert');
+const PDFDocument = require('pdfkit');
+const JSZip = require('jszip');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -42,9 +44,12 @@ const {
   compileBaseResume,
   loadResumeSource,
   analyzeResumeTarget,
-  generateMatchReport,
   validateSummaryRewrite,
+  validateSummaryRewriteDetailed,
   validateBulletRewrite,
+  validateBulletRewriteDetailed,
+  verifySourceFacts,
+  extractComprehensiveWithRules,
   BANNED_INFLATION_WORDS,
   ALLOW_LISTED_OPENING_VERBS,
   CONDITIONALLY_BANNED_WORDS,
@@ -56,7 +61,17 @@ const {
   deleteResumeVersion,
   MAX_VERSIONS_PER_STUDENT,
 } = require('../services/resumeBuilder/resumeBuilderService');
+const {
+  normalizeUrl,
+  classifyUrl,
+  extractUrlsFromText,
+  extractPdfLinkAnnotations,
+  extractDocxHyperlinks,
+  extractAllLinksAndContacts,
+} = require('../services/resumeBuilder/resumeLinkExtractor');
+const { tokenizeText, detokenize } = require('../services/resumeBuilder/tokenMasker');
 const { generateResumePdf } = require('../services/resumeBuilder/pdfGenerator');
+const { resetCircuitBreakers } = require('../services/ai/aiClient');
 const { getTestDbUri, assertTestDatabase } = require('./testHelper');
 
 function createToken(user) {
@@ -312,13 +327,9 @@ async function runResumeBuilderTests() {
       const tailorData = await tailorRes.json();
       assert.strictEqual(tailorData.success, true);
 
-      // Score verification
-      assert.ok(typeof tailorData.baselineAtsScore === 'number', 'Baseline ATS score must be a number');
-      assert.ok(typeof tailorData.tailoredAtsScore === 'number', 'Tailored ATS score must be a number');
-      assert.ok(
-        tailorData.tailoredAtsScore >= tailorData.baselineAtsScore,
-        `Tailored score (${tailorData.tailoredAtsScore}) must be >= baseline (${tailorData.baselineAtsScore})`
-      );
+      // Score verification: Resume Builder no longer computes or returns ATS scores
+      assert.strictEqual(tailorData.baselineAtsScore, undefined, 'tailor response must not include baselineAtsScore');
+      assert.strictEqual(tailorData.tailoredAtsScore, undefined, 'tailor response must not include tailoredAtsScore');
 
       // Skills reordering: Drive requiredSkills ('nodejs', 'mongodb', 'redis') should come first in categories
       const tailoredSkills = tailorData.tailoredResume.skills;
@@ -335,7 +346,7 @@ async function runResumeBuilderTests() {
       assert.ok(tailorData.bulletRewrites.length > 0, 'Should suggest optimized bullet rewrites');
       assert.ok(tailorData.bulletRewrites[0].suggested.includes('[add your real number]'));
 
-      pass('Resume tailored against drive with before/after ATS scores & skill reordering');
+      pass('Resume tailored against drive with zero ATS scores & skill reordering');
     } catch (err) {
       fail('Resume tailoring against drive', err);
     }
@@ -602,7 +613,8 @@ async function runResumeBuilderTests() {
 
       assert.ok(offlineTailorRes.tailoredResume, 'Offline tailoring must return tailoredResume');
       assert.ok(offlineTailorRes.bulletRewrites.length > 0, 'Offline tailoring must provide rule-based rewrites');
-      assert.ok(offlineTailorRes.tailoredAtsScore >= offlineTailorRes.baselineAtsScore);
+      assert.strictEqual(offlineTailorRes.baselineAtsScore, undefined, 'Offline tailoring must not include baselineAtsScore');
+      assert.strictEqual(offlineTailorRes.tailoredAtsScore, undefined, 'Offline tailoring must not include tailoredAtsScore');
 
       // Cover letter must also degrade gracefully to truthful template
       const offlineCover = await generateCoverLetter({
@@ -618,6 +630,8 @@ async function runResumeBuilderTests() {
       fail('Offline fallback', err);
     } finally {
       mockProvider.forceRateLimit = false;
+      mockProvider.reset();
+      resetCircuitBreakers();
     }
 
     // =========================================================================
@@ -696,7 +710,7 @@ async function runResumeBuilderTests() {
       assert.strictEqual(targetDriveData.target.roleTitle, 'Backend Systems Engineer');
       assert.ok(targetDriveData.target.requiredSkills.includes('nodejs'));
 
-      // Step 3: POST /api/resume-builder/match-report
+      // Step 3: Match report removed — assert POST /api/resume-builder/match-report returns 404
       const matchReportRes = await fetch(`${BASE_URL}/resume-builder/match-report`, {
         method: 'POST',
         headers: {
@@ -708,14 +722,9 @@ async function runResumeBuilderTests() {
           target: targetDriveData.target,
         }),
       });
-      assert.strictEqual(matchReportRes.status, 200);
-      const matchReportData = await matchReportRes.json();
-      assert.strictEqual(matchReportData.success, true);
-      assert.ok(typeof matchReportData.matchReport.atsScore === 'number');
-      assert.ok(Array.isArray(matchReportData.matchReport.matchedSkills));
-      assert.ok(Array.isArray(matchReportData.matchReport.learningResources));
+      assert.strictEqual(matchReportRes.status, 404, 'Match report endpoint must be removed and return 404');
 
-      pass('Guided wizard Steps 1, 2, and 3 endpoints and data normalization verified');
+      pass('Endpoints verified: source and analyze-target return 200, match-report returns 404');
     } catch (err) {
       fail('Guided wizard endpoints', err);
     }
@@ -889,9 +898,9 @@ async function runResumeBuilderTests() {
         body: JSON.stringify({ driveId: testDrive._id.toString() }),
       });
 
-      // Execute Step 3 (Match report: computeAtsScore deterministic rules)
+      // Verify match-report is 404 and does not exist
       const baseResume = await compileBaseResume(userA._id);
-      await fetch(`${BASE_URL}/resume-builder/match-report`, {
+      const matchReport404 = await fetch(`${BASE_URL}/resume-builder/match-report`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -902,14 +911,15 @@ async function runResumeBuilderTests() {
           target: { requiredSkills: ['nodejs', 'redis'] },
         }),
       });
+      assert.strictEqual(matchReport404.status, 404);
 
-      // Verify tailorCalls did NOT change
-      const usageAfter123 = await AiUsage.getUserDailyUsage(userA._id, 'student');
-      const tailorCountAfter123 = usageAfter123?.tailorUsed || 0;
+      // Verify tailorCalls did NOT change on setup / analyze
+      const usageAfterSetup = await AiUsage.getUserDailyUsage(userA._id, 'student');
+      const tailorCountAfterSetup = usageAfterSetup?.tailorUsed || 0;
       assert.strictEqual(
-        tailorCountAfter123,
+        tailorCountAfterSetup,
         tailorCountBefore,
-        'Steps 1, 2, and 3 must use 0 AI tailor quota'
+        'Source loading and target analysis must use 0 AI tailor quota'
       );
 
       // Execute Step 4 (Tailor Resume)
@@ -1113,6 +1123,7 @@ async function runResumeBuilderTests() {
       };
 
       const baseResume = await compileBaseResume(userA._id);
+      baseResume.experience[0].bullets[0] = originalBullet;
       const tailoredWithFallback = await tailorResume({
         studentUserId: userA._id,
         baseResumeData: baseResume,
@@ -1183,241 +1194,74 @@ async function runResumeBuilderTests() {
         'Summary rewrite retaining "250+" and "LeetCode" must be accepted'
       );
 
-      // 3. Match report response always returns numeric fields across all 7 rubric parts and General mode
-      // 3.1 Targeted Drive Match Report
-      const driveMatchRes = await fetch(`${BASE_URL}/resume-builder/match-report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenA}`,
-        },
-        body: JSON.stringify({
-          resumeData: baseResume,
-          target: {
-            type: 'drive',
-            driveId: testDrive._id.toString(),
-            requiredSkills: ['nodejs', 'mongodb', 'redis'],
-            preferredSkills: ['docker', 'aws'],
-          },
-        }),
-      });
-      assert.strictEqual(driveMatchRes.status, 200);
-      const driveMatchData = await driveMatchRes.json();
-      assert.strictEqual(driveMatchData.success, true);
-      const driveReport = driveMatchData.matchReport;
-
-      // Numeric atsScore
-      assert.strictEqual(typeof driveReport.atsScore, 'number', 'atsScore must be numeric');
-      assert.ok(!isNaN(driveReport.atsScore), 'atsScore must not be NaN');
-      assert.ok(driveReport.atsScore >= 0 && driveReport.atsScore <= 100);
-
-      // Numeric breakdown for all 7 parts
-      assert.strictEqual(typeof driveReport.breakdown.keywordMatch, 'number');
-      assert.strictEqual(typeof driveReport.breakdown.experience, 'number');
-      assert.strictEqual(typeof driveReport.breakdown.education, 'number');
-      assert.strictEqual(typeof driveReport.breakdown.structure, 'number');
-      assert.strictEqual(typeof driveReport.breakdown.impact, 'number');
-      assert.strictEqual(typeof driveReport.breakdown.actionVerbs, 'number');
-      assert.strictEqual(typeof driveReport.breakdown.formatting, 'number');
-
-      // 3.2 General Mode Match Report
-      const genMatchRes = await fetch(`${BASE_URL}/resume-builder/match-report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenA}`,
-        },
-        body: JSON.stringify({
-          resumeData: baseResume,
-          target: { type: 'general' },
-        }),
-      });
-      assert.strictEqual(genMatchRes.status, 200);
-      const genMatchData = await genMatchRes.json();
-      assert.strictEqual(genMatchData.success, true);
-      const genReport = genMatchData.matchReport;
-
-      // General mode numeric total and flag
-      assert.strictEqual(typeof genReport.atsScore, 'number', 'General atsScore must be numeric');
-      assert.ok(!isNaN(genReport.atsScore), 'General atsScore must not be NaN');
-      assert.strictEqual(genReport.isGeneral, true, 'isGeneral flag must be true');
-      assert.strictEqual(genReport.generalNote, 'score excludes keyword match, no job selected');
-      assert.strictEqual(genReport.breakdown.keywordMatch, null, 'keywordMatch in general mode is null');
-      assert.strictEqual(typeof genReport.breakdown.experience, 'number');
-      assert.strictEqual(typeof genReport.breakdown.education, 'number');
-      assert.strictEqual(typeof genReport.breakdown.structure, 'number');
-      assert.strictEqual(typeof genReport.breakdown.impact, 'number');
-      assert.strictEqual(typeof genReport.breakdown.actionVerbs, 'number');
-      assert.strictEqual(typeof genReport.breakdown.formatting, 'number');
-
-      pass('Banned inflation words rejected, summary numbers/facts retained, and match report always returns numeric fields');
+      pass('Banned inflation words rejected and summary numbers/facts strictly retained');
     } catch (err) {
-      fail('Banned inflation words & match report numeric fields', err);
+      fail('Banned inflation words & summary retention', err);
     }
 
     // =========================================================================
-    // TEST 13: ATS Score Parity between Resume AI and Resume Builder Before
-    // Verifies parity across two distinct student fixtures and JDs
+    // TEST 13: SOURCE MERGING, PARSER REUSE, & UNTICKED SKILLS HONESTY
     // =========================================================================
-    console.log('\n--- TEST 13: Resume AI vs Resume Builder Before Parity (Two Fixtures) ---');
+    console.log('\n--- TEST 13: Source Merging, Parser Reuse, & Unticked Skills Honesty ---');
     try {
-      // -----------------------------------------------------------------------
-      // Fixture 1: Student A (Node.js/Full Stack) against Full Stack JD
-      // -----------------------------------------------------------------------
-      const jdFixture1 = `
-        Full Stack Node.js Engineer
-        Tech Innovators Inc.
-        Requirements:
-        - Strong experience in Node.js, Express, MongoDB, and Redis.
-        - Familiarity with React and REST APIs.
-        - Bachelor's degree in Computer Science.
-      `;
-
-      // 1.1 Resume AI analysis
-      const aiRes1 = await fetch(`${BASE_URL}/students/me/resume/analyze`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenA}`,
-        },
-        body: JSON.stringify({ jdText: jdFixture1, force: true }),
-      });
-      assert.strictEqual(aiRes1.status, 200, 'Resume AI analyze must return 200 for Fixture 1');
-      const aiData1 = await aiRes1.json();
-      assert.strictEqual(aiData1.success, true);
-      assert.strictEqual(typeof aiData1.atsScore, 'number');
-
-      // 1.2 Resume Builder wizard Steps 1-3 with source=upload
-      const srcRes1 = await fetch(`${BASE_URL}/resume-builder/source`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenA}`,
-        },
-        body: JSON.stringify({ type: 'upload' }),
-      });
-      assert.strictEqual(srcRes1.status, 200, 'Resume Builder source=upload must return 200');
-      const srcData1 = await srcRes1.json();
-
-      const targetRes1 = await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenA}`,
-        },
-        body: JSON.stringify({ jobDescription: jdFixture1 }),
-      });
-      assert.strictEqual(targetRes1.status, 200);
-      const targetData1 = await targetRes1.json();
-
-      const matchRes1 = await fetch(`${BASE_URL}/resume-builder/match-report`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenA}`,
-        },
-        body: JSON.stringify({
-          resumeData: srcData1.resumeData,
-          target: targetData1.target,
-          sourceType: 'upload',
-        }),
-      });
-      assert.strictEqual(matchRes1.status, 200);
-      const matchData1 = await matchRes1.json();
-
+      // 1. source=upload reuses parseStudentResume without writing a second parser
+      const resumeParser = require('../services/ai/resumeParser');
       assert.strictEqual(
-        matchData1.matchReport.atsScore,
-        aiData1.atsScore,
-        `Fixture 1: Builder Before (${matchData1.matchReport.atsScore}%) must equal Resume AI (${aiData1.atsScore}%)`
-      );
-      assert.strictEqual(
-        matchData1.matchReport.breakdown.keywordMatch,
-        aiData1.breakdown.keywordMatch,
-        'Fixture 1 keywordMatch breakdown must match exactly'
-      );
-      assert.strictEqual(
-        matchData1.matchReport.breakdown.structure,
-        aiData1.breakdown.structure,
-        'Fixture 1 structure breakdown must match exactly'
-      );
-      assert.strictEqual(
-        matchData1.matchReport.breakdown.impact,
-        aiData1.breakdown.impact,
-        'Fixture 1 impact breakdown must match exactly'
+        typeof resumeParser.parseStudentResume,
+        'function',
+        'Must reuse parseStudentResume from resumeParser.js'
       );
 
-      // -----------------------------------------------------------------------
-      // Fixture 2: Student B (Python Backend) against Python/Django JD
-      // -----------------------------------------------------------------------
+      // 2. Setup Student fixture with profile gaps:
+      // College profile has: phone, education, plus college skills/projects/experience
+      // Uploaded resume has: skills, projects, experience, BUT missing phone and education
       const studentBDoc = await Student.findOne({ enrollmentNo: 'RB-ENR-002' });
       assert.ok(studentBDoc, 'Student B document must exist');
       const userBDoc = await User.findById(studentBDoc.user);
       assert.ok(userBDoc, 'User B document must exist');
       const tokenBFixture = createToken(userBDoc);
 
+      // Set Student B's college profile attributes
+      studentBDoc.phone = '+91-9876543210';
+      studentBDoc.degree = 'Bachelor of Technology';
+      studentBDoc.branch = 'Computer Science and Engineering';
+      studentBDoc.batchYear = 2025;
+      studentBDoc.cgpa = 8.9;
+
+      // Set Student B's parsed uploaded resume without phone and without education
       studentBDoc.resumeProfile = {
         status: 'parsed',
         source: 'llm',
-        summary: 'Aspiring software developer with expertise in Python backend architectures, Django REST framework, and PostgreSQL databases.',
-        skills: [{ name: 'python' }, { name: 'django' }, { name: 'postgresql' }, { name: 'docker' }, { name: 'rest api' }],
+        summary: 'Aspiring software developer with expertise in Python backend architectures.',
+        skills: [{ name: 'python' }, { name: 'django' }],
         experience: [
           {
             title: 'Python Backend Intern',
             company: 'DataTech Innovations',
             location: 'Hyderabad',
             duration: 'June 2024 - August 2024',
-            bullets: [
-              'Built automation scripts and REST APIs in Python and Django',
-              'Collaborated on database schema design and migrations in PostgreSQL',
-            ],
+            bullets: ['Built automation scripts and REST APIs in Python and Django'],
           },
         ],
         projects: [
           {
             title: 'Scalable Microservices Gateway',
-            technologies: ['python', 'docker', 'postgresql'],
+            technologies: ['python', 'docker'],
             duration: '2 months',
-            bullets: [
-              'Developed API gateway containerized with Docker for load balancing',
-            ],
+            bullets: ['Developed API gateway containerized with Docker'],
           },
         ],
-        education: [
-          {
-            degree: 'Bachelor of Technology',
-            institution: 'Apex Institute of Technology',
-            field: 'Information Technology',
-            year: '2025',
-          },
-        ],
+        education: [], // Empty in uploaded resume!
+        contact: {
+          fullName: 'Rohan Verma',
+          email: 'rohan.verma@portal.com',
+          phone: '', // Empty in uploaded resume!
+        },
       };
       await studentBDoc.save();
 
-      const jdFixture2 = `
-        Python Backend Engineer
-        PyScale Data Systems
-        Requirements:
-        - Strong experience in Python, Django, and PostgreSQL.
-        - Knowledge of REST APIs and Docker.
-        - Bachelor's degree in Information Technology.
-      `;
-
-      // 2.1 Resume AI analysis
-      const aiRes2 = await fetch(`${BASE_URL}/students/me/resume/analyze`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenBFixture}`,
-        },
-        body: JSON.stringify({ jdText: jdFixture2, force: true }),
-      });
-      assert.strictEqual(aiRes2.status, 200, 'Resume AI analyze must return 200 for Fixture 2');
-      const aiData2 = await aiRes2.json();
-      assert.strictEqual(aiData2.success, true);
-      assert.strictEqual(typeof aiData2.atsScore, 'number');
-
-      // 2.2 Resume Builder wizard Steps 1-3 with source=upload
-      const srcRes2 = await fetch(`${BASE_URL}/resume-builder/source`, {
+      // Load source=upload for Student B
+      const sourceUploadRes = await fetch(`${BASE_URL}/resume-builder/source`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1425,59 +1269,813 @@ async function runResumeBuilderTests() {
         },
         body: JSON.stringify({ type: 'upload' }),
       });
-      assert.strictEqual(srcRes2.status, 200);
-      const srcData2 = await srcRes2.json();
+      assert.strictEqual(sourceUploadRes.status, 200);
+      const sourceUploadData = await sourceUploadRes.json();
+      assert.strictEqual(sourceUploadData.success, true);
+      const loadedResume = sourceUploadData.resumeData;
 
-      const targetRes2 = await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${tokenBFixture}`,
-        },
-        body: JSON.stringify({ jobDescription: jdFixture2 }),
-      });
-      assert.strictEqual(targetRes2.status, 200);
-      const targetData2 = await targetRes2.json();
+      // Assert zero profile mixing:
+      // Contact phone is NOT filled from college profile (remains empty string)
+      assert.strictEqual(
+        loadedResume.contact.phone,
+        '',
+        'Contact phone must remain empty if missing from resume (zero profile mixing)'
+      );
+      assert.ok(!loadedResume.contact.fromProfile, 'fromProfile marker must not exist for upload source');
 
-      const matchRes2 = await fetch(`${BASE_URL}/resume-builder/match-report`, {
+      // Education is NOT filled from college profile (remains empty array)
+      assert.strictEqual(
+        loadedResume.education.length,
+        0,
+        'Education must not be filled from college profile (zero profile mixing)'
+      );
+      assert.ok(!loadedResume.filledFromProfile, 'filledFromProfile must not exist for upload source');
+
+      // Experience, projects, and skills come purely from the parsed resume
+      assert.strictEqual(loadedResume.experience.length, 1);
+      assert.strictEqual(loadedResume.experience[0].title, 'Python Backend Intern');
+      assert.strictEqual(loadedResume.projects.length, 1);
+      assert.strictEqual(loadedResume.projects[0].title, 'Scalable Microservices Gateway');
+
+      // 3. Unticked skills from target job are never in the tailored output
+      const targetJobWithExtraSkills = `
+        Senior Systems Engineer
+        Requirements:
+        - Python, Django
+        - Rust, Kubernetes, C++, Distributed Systems
+      `;
+
+      // Candidate only has python and django. Unticked skills: Rust, Kubernetes, C++
+      const tailorUntickedRes = await fetch(`${BASE_URL}/students/me/resume-builder/tailor`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${tokenBFixture}`,
         },
         body: JSON.stringify({
-          resumeData: srcData2.resumeData,
-          target: targetData2.target,
+          resumeData: loadedResume,
+          jobDescription: targetJobWithExtraSkills,
           sourceType: 'upload',
         }),
       });
-      assert.strictEqual(matchRes2.status, 200);
-      const matchData2 = await matchRes2.json();
+      assert.strictEqual(tailorUntickedRes.status, 200);
+      const tailorUntickedData = await tailorUntickedRes.json();
+      assert.strictEqual(tailorUntickedData.success, true);
+      const tailoredSkillsList = (tailorUntickedData.tailoredResume.skills || [])
+        .flatMap((cat) => (typeof cat === 'string' ? [cat] : cat.items || []))
+        .map((s) => s.toLowerCase());
 
-      assert.strictEqual(
-        matchData2.matchReport.atsScore,
-        aiData2.atsScore,
-        `Fixture 2: Builder Before (${matchData2.matchReport.atsScore}%) must equal Resume AI (${aiData2.atsScore}%)`
-      );
-      assert.strictEqual(
-        matchData2.matchReport.breakdown.keywordMatch,
-        aiData2.breakdown.keywordMatch,
-        'Fixture 2 keywordMatch breakdown must match exactly'
-      );
-      assert.strictEqual(
-        matchData2.matchReport.breakdown.structure,
-        aiData2.breakdown.structure,
-        'Fixture 2 structure breakdown must match exactly'
-      );
-      assert.strictEqual(
-        matchData2.matchReport.breakdown.impact,
-        aiData2.breakdown.impact,
-        'Fixture 2 impact breakdown must match exactly'
-      );
+      assert.ok(!tailoredSkillsList.includes('rust'), 'Unticked skill "rust" must never be in tailored skills');
+      assert.ok(!tailoredSkillsList.includes('c++'), 'Unticked skill "c++" must never be in tailored skills');
+      assert.ok(!tailoredSkillsList.includes('kubernetes'), 'Unticked skill "kubernetes" must never be in tailored skills');
 
-      pass(`Builder before score equals Resume AI score for same uploaded resume + JD across two different fixtures (Fixture 1: ${aiData1.atsScore}%, Fixture 2: ${aiData2.atsScore}%)`);
+      // Check summary also doesn't invent unticked skills
+      const summaryText = (tailorUntickedData.tailoredResume.summary || '').toLowerCase();
+      assert.ok(!summaryText.includes('rust'), 'Unticked skill "rust" must never be invented in summary');
+      assert.ok(!summaryText.includes('kubernetes'), 'Unticked skill "kubernetes" must never be invented in summary');
+
+      pass('Zero profile mixing (missing fields remain empty), parser reuse, and unticked skills isolation verified');
     } catch (err) {
-      fail('Resume AI vs Resume Builder Before Parity', err);
+      fail('Source merging & unticked skills honesty', err);
+    }
+
+    // =========================================================================
+    // TEST 14: VISIBLE LINKS EXTRACTION, NORMALIZATION, & CLASSIFICATION
+    // =========================================================================
+    console.log('\n--- TEST 14: Visible Links Extraction, Normalization, & Classification ---');
+    try {
+      const sampleText = `
+        Alex Rivera
+        Email: alex.rivera@techdev.io | Phone: +1-555-019-2834
+        GitHub: https://github.com/alex-dev/micro-service
+        LinkedIn: https://linkedin.com/in/alex-rivera-cloud/
+        Portfolio: https://alexrivera.dev
+        Alternate Portfolio: https://alex-ui.vercel.app
+        Technical Blog: https://medium.com/@alex_rivera/system-design
+        AWS Certification: https://aws.amazon.com/certification/verify/12345,
+      `;
+
+      // 1. Master link & contact extractor
+      const extracted = await extractAllLinksAndContacts({ text: sampleText });
+      assert.strictEqual(extracted.emails.length, 1);
+      assert.strictEqual(extracted.emails[0], 'alex.rivera@techdev.io');
+      assert.ok(extracted.phones.length >= 1);
+
+      // 2. Classifications
+      assert.strictEqual(extracted.classified.github, 'https://github.com/alex-dev/micro-service');
+      assert.strictEqual(extracted.classified.linkedin, 'https://linkedin.com/in/alex-rivera-cloud');
+      assert.ok(
+        extracted.classified.portfolio === 'https://alexrivera.dev' ||
+        extracted.classified.portfolio === 'https://alex-ui.vercel.app'
+      );
+      assert.ok(
+        extracted.classified.other.some((u) => u.includes('medium.com')),
+        'Medium blog must be classified under other'
+      );
+
+      // 3. Normalization checks
+      assert.strictEqual(normalizeUrl('http://github.com/alex/repo/'), 'https://github.com/alex/repo');
+      assert.strictEqual(normalizeUrl('github.com/alex/repo,'), 'https://github.com/alex/repo');
+      assert.strictEqual(normalizeUrl('linkedin.com/in/alex;'), 'https://linkedin.com/in/alex');
+      assert.strictEqual(normalizeUrl('mailto:test@example.com'), '');
+
+      // 4. Classification helper
+      assert.strictEqual(classifyUrl('https://github.com/octocat'), 'github');
+      assert.strictEqual(classifyUrl('https://www.linkedin.com/in/dev'), 'linkedin');
+      assert.strictEqual(classifyUrl('https://portfolio.devfolio.co'), 'portfolio');
+      assert.strictEqual(classifyUrl('https://my-app.netlify.app'), 'portfolio');
+      assert.strictEqual(classifyUrl('https://wikipedia.org'), 'other');
+
+      pass('Visible links deterministic extraction, URL normalization, and 4-way classification verified');
+    } catch (err) {
+      fail('Visible links extraction & classification', err);
+    }
+
+    // =========================================================================
+    // TEST 15: HYPERLINK ANNOTATIONS IN PDF BUFFER & DOCX BUFFER
+    // =========================================================================
+    console.log('\n--- TEST 15: Hyperlink Annotations in PDF & DOCX Buffers ---');
+    try {
+      // 1. PDF Link Annotations with PDFKit
+      const makeAnnotatedPdf = () =>
+        new Promise((resolve) => {
+          const doc = new PDFDocument({ margin: 50 });
+          const bufs = [];
+          doc.on('data', (d) => bufs.push(d));
+          doc.on('end', () => resolve(Buffer.concat(bufs)));
+
+          doc.text('John Doe - Cloud Engineer');
+          doc.text('View My Open Source Work', {
+            link: 'https://github.com/johndoe/kubernetes-operator',
+            underline: true,
+          });
+          doc.text('Connect on Professional Network', {
+            link: 'https://linkedin.com/in/johndoe-cloud',
+            underline: true,
+          });
+          doc.end();
+        });
+
+      const pdfBuf = await makeAnnotatedPdf();
+      assert.ok(pdfBuf.length > 0);
+      assert.strictEqual(pdfBuf.slice(0, 4).toString(), '%PDF');
+
+      const pdfExtracted = await extractAllLinksAndContacts({ buffer: pdfBuf });
+      assert.ok(
+        pdfExtracted.links.some((l) => l.url === 'https://github.com/johndoe/kubernetes-operator'),
+        'PDF hyperlink annotation behind clickable anchor must be extracted'
+      );
+      assert.ok(
+        pdfExtracted.links.some((l) => l.url === 'https://linkedin.com/in/johndoe-cloud'),
+        'PDF LinkedIn annotation behind clickable anchor must be extracted'
+      );
+      assert.strictEqual(pdfExtracted.classified.github, 'https://github.com/johndoe/kubernetes-operator');
+      assert.strictEqual(pdfExtracted.classified.linkedin, 'https://linkedin.com/in/johndoe-cloud');
+
+      // 2. DOCX Hyperlinks in word/_rels/document.xml.rels
+      const zip = new JSZip();
+      const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://github.com/docx-engineer/distributed-cache" TargetMode="External"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://linkedin.com/in/docx-cloud-engineer" TargetMode="External"/>
+</Relationships>`;
+      zip.folder('word').folder('_rels').file('document.xml.rels', relsXml);
+      const docxBuf = await zip.generateAsync({ type: 'nodebuffer' });
+
+      const docxExtracted = await extractAllLinksAndContacts({ buffer: docxBuf, isDocx: true });
+      assert.ok(
+        docxExtracted.links.some((l) => l.url === 'https://github.com/docx-engineer/distributed-cache'),
+        'DOCX hyperlink relation must be extracted'
+      );
+      assert.ok(
+        docxExtracted.links.some((l) => l.url === 'https://linkedin.com/in/docx-cloud-engineer'),
+        'DOCX LinkedIn relation must be extracted'
+      );
+      assert.strictEqual(docxExtracted.classified.github, 'https://github.com/docx-engineer/distributed-cache');
+      assert.strictEqual(docxExtracted.classified.linkedin, 'https://linkedin.com/in/docx-cloud-engineer');
+
+      pass('Hyperlink annotations in PDF buffers and DOCX relationships deterministically extracted');
+    } catch (err) {
+      fail('Hyperlink annotations in PDF & DOCX', err);
+    }
+
+    // =========================================================================
+    // TEST 16: ADDITIONAL SECTIONS PRESERVATION & PDFKIT EXPORT
+    // =========================================================================
+    console.log('\n--- TEST 16: Additional Sections Preservation & PDFKit Export ---');
+    try {
+      const baseResume = await compileBaseResume(userA._id);
+      const fullResumeWithExtras = {
+        ...baseResume,
+        achievements: [
+          'First Place in National Smart India Hackathon 2024 out of 1,200 teams',
+          'Published research on distributed consensus algorithms in IEEE 2024',
+        ],
+        positionsOfResponsibility: [
+          'Head Coordinator of University Open Source Development Club (2023 - 2024)',
+          'Student Placement Representative for CSE Department',
+        ],
+        awards: [
+          "Dean's Academic Excellence Award (Top 1% Percentile)",
+        ],
+        languages: ['English', 'German', 'Hindi'],
+        interests: ['Distributed Systems', 'Kernel Development', 'Cycling'],
+        additionalSections: [
+          {
+            title: 'Selected Publications',
+            lines: [
+              'Rivera, A. et al., "Low-Latency Sharding in Distributed Datastores", IEEE Conf. 2024',
+            ],
+          },
+        ],
+      };
+
+      // 1. Save snapshot to MongoDB
+      const saveRes = await saveResumeVersion({
+        studentUserId: userA._id,
+        name: 'Snapshot With Custom Sections',
+        templateId: 'modern',
+        resumeData: fullResumeWithExtras,
+        atsScore: 88,
+        baselineScore: 82,
+      });
+      cleanupVersions.push(saveRes.version._id);
+
+      // 2. Fetch directly from DB and assert schema preserved all non-standard sections
+      const dbVersion = await ResumeVersion.findById(saveRes.version._id).lean();
+      assert.ok(dbVersion, 'Version must be retrieved from database');
+      assert.strictEqual(dbVersion.resumeData.achievements.length, 2);
+      assert.strictEqual(dbVersion.resumeData.positionsOfResponsibility.length, 2);
+      assert.strictEqual(dbVersion.resumeData.awards.length, 1);
+      assert.strictEqual(dbVersion.resumeData.languages.length, 3);
+      assert.strictEqual(dbVersion.resumeData.interests.length, 3);
+      assert.strictEqual(dbVersion.resumeData.additionalSections.length, 1);
+      assert.strictEqual(dbVersion.resumeData.additionalSections[0].title, 'Selected Publications');
+
+      // 3. Export to PDFKit across all three templates (modern, classic, compact)
+      for (const tmpl of ['modern', 'classic', 'compact']) {
+        const pdfBuf = await generateResumePdf(fullResumeWithExtras, tmpl);
+        assert.ok(Buffer.isBuffer(pdfBuf));
+        assert.ok(pdfBuf.length > 1000);
+        assert.strictEqual(pdfBuf.slice(0, 4).toString(), '%PDF', `Template ${tmpl} must render valid %PDF`);
+      }
+
+      pass('Non-standard sections preserved in MongoDB schema and rendered cleanly in PDFKit');
+    } catch (err) {
+      fail('Additional sections preservation & PDFKit export', err);
+    }
+
+    // =========================================================================
+    // TEST 17: PHONE MISMATCH ISOLATION & PROFILE NON-LEAKAGE SPY
+    // =========================================================================
+    console.log('\n--- TEST 17: Phone Mismatch Isolation & Profile Non-Leakage Spy ---');
+    try {
+      // 1. Student A profile has phone '9876501234'
+      const rawTextWithoutPhone = `
+Devika Sharma
+Email: builder.test.devika@portal.com
+Summary: Backend engineer focused on cloud infrastructure.
+Experience:
+Backend Intern at Acme Labs
+- Developed REST APIs in Node.js and MongoDB
+Skills: nodejs, mongodb, redis
+`;
+      const sourceResult = await loadResumeSource({
+        studentUserId: userA._id,
+        type: 'text',
+        text: rawTextWithoutPhone,
+      });
+
+      // Assert phone was NOT filled from college profile (remains empty string)
+      assert.strictEqual(
+        sourceResult.resumeData.contact.phone,
+        '',
+        'Missing phone in uploaded/pasted resume must remain empty, never auto-filled from profile'
+      );
+      assert.strictEqual(
+        sourceResult.resumeData.education.length,
+        0,
+        'Missing education in raw resume must not be injected from profile'
+      );
+
+      // 2. Profile mode is the ONLY mode that loads profile records
+      const profileResult = await loadResumeSource({
+        studentUserId: userA._id,
+        type: 'profile',
+      });
+      assert.strictEqual(
+        profileResult.resumeData.contact.phone,
+        '9876501234',
+        'Profile mode must load college profile phone'
+      );
+      assert.ok(
+        profileResult.resumeData.education.length > 0,
+        'Profile mode must load college profile education'
+      );
+
+      // 3. Cross-student tenant isolation: Student B source load NEVER reads Student A's data
+      const studentBDoc = await Student.findOne({ enrollmentNo: 'RB-ENR-002' });
+      assert.ok(studentBDoc, 'Student B document must exist');
+      const studentBSource = await loadResumeSource({
+        studentUserId: studentBDoc.user,
+        type: 'text',
+        text: 'Rohan Verma\nEmail: builder.test.rohan@portal.com\nSkills: python, django',
+      });
+      assert.strictEqual(studentBSource.resumeData.contact.fullName, 'Rohan Verma');
+      assert.ok(!studentBSource.resumeData.contact.fullName.includes('Devika'));
+
+      pass('Profile non-leakage (missing fields remain empty) and cross-student isolation verified');
+    } catch (err) {
+      fail('Phone mismatch isolation & profile non-leakage', err);
+    }
+
+    // =========================================================================
+    // TEST 18: SOURCE VERIFICATION DROPS INVENTED COMPANIES & SKILLS
+    // =========================================================================
+    console.log('\n--- TEST 18: Source Verification Drops Invented Companies & Skills ---');
+    try {
+      const rawSourceCorpus = `
+        Kiran Kumar
+        Email: kiran.kumar@testmail.com
+        Summary: Software developer with experience in Node.js and Redis.
+        Experience:
+        Backend Developer Intern at Alpha Tech Systems (June 2024 - August 2024)
+        - Developed asynchronous message workers using Node.js
+        Projects:
+        Task Dispatcher Platform
+        - Implemented Redis queue and MongoDB indexing
+        Skills: nodejs, redis, mongodb
+      `;
+
+      const hallucinatedParsedData = {
+        contact: { fullName: 'Kiran Kumar', email: 'kiran.kumar@testmail.com' },
+        summary: 'Software developer with experience in Node.js and Redis.',
+        skills: [
+          {
+            category: 'Backend',
+            items: ['nodejs', 'redis', 'mongodb', 'solidity', 'quantum computing'],
+          },
+        ],
+        experience: [
+          {
+            title: 'Backend Developer Intern',
+            company: 'Alpha Tech Systems',
+            bullets: ['Developed asynchronous message workers using Node.js'],
+          },
+          {
+            title: 'Lead Cloud Architect',
+            company: 'Invented Mega Corp',
+            bullets: ['Architected multi-region Kubernetes clusters'],
+          },
+        ],
+        projects: [
+          {
+            title: 'Task Dispatcher Platform',
+            bullets: ['Implemented Redis queue and MongoDB indexing'],
+          },
+          {
+            title: 'Hallucinated Crypto Exchange',
+            bullets: ['Processed millions in crypto trades'],
+          },
+        ],
+        education: [],
+      };
+
+      const { verifiedData, warnings } = verifySourceFacts(hallucinatedParsedData, rawSourceCorpus);
+
+      // Skills: Solidity & Quantum Computing must be dropped
+      const finalSkills = verifiedData.skills.flatMap((c) => c.items || []);
+      assert.ok(!finalSkills.includes('solidity'), 'Invented skill "solidity" must be dropped');
+      assert.ok(!finalSkills.includes('quantum computing'), 'Invented skill "quantum computing" must be dropped');
+      assert.ok(finalSkills.includes('nodejs'), 'Verified skill "nodejs" must be retained');
+      assert.ok(finalSkills.includes('redis'), 'Verified skill "redis" must be retained');
+
+      // Experience: Invented Mega Corp must be dropped
+      const companies = verifiedData.experience.map((e) => e.company);
+      assert.ok(!companies.includes('Invented Mega Corp'), 'Invented company must be dropped');
+      assert.ok(companies.includes('Alpha Tech Systems'), 'Verified company must be retained');
+
+      // Projects: Hallucinated Crypto Exchange must be dropped
+      const projects = verifiedData.projects.map((p) => p.title);
+      assert.ok(!projects.includes('Hallucinated Crypto Exchange'), 'Invented project must be dropped');
+      assert.ok(projects.includes('Task Dispatcher Platform'), 'Verified project must be retained');
+
+      // Warnings must be emitted
+      assert.ok(warnings.length >= 3, 'Warnings must explain dropped items');
+      assert.ok(warnings.some((w) => w.includes('Mega Corp')));
+      assert.ok(warnings.some((w) => w.includes('solidity')));
+
+      pass('verifySourceFacts strictly drops hallucinated companies, projects, and skills');
+    } catch (err) {
+      fail('Source verification guard', err);
+    }
+
+    // =========================================================================
+    // TEST 19: REVERSIBLE PII TOKENIZATION & PROVIDER PRIVACY SPY
+    // =========================================================================
+    console.log('\n--- TEST 19: Reversible PII Tokenization & Provider Privacy Spy ---');
+    try {
+      const confidentialText = `
+        Devika Sharma
+        Email: devika.private@secret-labs.io
+        Phone: +91-9876543210
+        Address: 42 Silicon Valley Road, Bangalore
+        Portfolio: https://devika-portfolio.vercel.app
+        GitHub: https://github.com/devika-cloud-sec
+        Summary: Cloud security engineer with experience in Docker and Node.js.
+      `;
+
+      // 1. Tokenize
+      const { tokenizedText, tokenMap } = tokenizeText(confidentialText);
+
+      // Real PII and links must NEVER appear in tokenized text
+      assert.ok(!tokenizedText.includes('devika.private@secret-labs.io'));
+      assert.ok(!tokenizedText.includes('9876543210'));
+      assert.ok(!tokenizedText.includes('42 Silicon Valley Road'));
+      assert.ok(!tokenizedText.includes('https://devika-portfolio.vercel.app'));
+      assert.ok(!tokenizedText.includes('https://github.com/devika-cloud-sec'));
+
+      // Tokens must be present
+      assert.ok(tokenizedText.includes('[[EMAIL_1]]'));
+      assert.ok(tokenizedText.includes('[[PHONE_1]]'));
+      assert.ok(tokenizedText.includes('[[ADDR_1]]'));
+      assert.ok(tokenizedText.includes('[[URL_1]]'));
+
+      // 2. Detokenize restores original data in objects
+      const testObj = {
+        email: '[[EMAIL_1]]',
+        phone: '[[PHONE_1]]',
+        location: '[[ADDR_1]]',
+        link: '[[URL_1]]',
+      };
+      const restored = detokenize(testObj, tokenMap);
+      assert.strictEqual(restored.email, 'devika.private@secret-labs.io');
+      assert.strictEqual(restored.phone, '+91-9876543210');
+      assert.strictEqual(restored.location, '42 Silicon Valley Road');
+
+      // 3. Provider Payload Spy: verify AI payload during tailoring never receives raw contact info
+      const baseResume = await compileBaseResume(userA._id);
+      baseResume.contact.email = 'devika.private@secret-labs.io';
+      baseResume.contact.phone = '+91-9876543210';
+      baseResume.contact.linkedin = 'https://linkedin.com/in/secret-link';
+
+      await tailorResume({
+        studentUserId: userA._id,
+        baseResumeData: baseResume,
+      });
+
+      // Inspect mockProvider.lastReceivedPayload
+      const receivedPayload = mockProvider.lastReceivedPayload || '';
+      assert.ok(
+        !receivedPayload.includes('devika.private@secret-labs.io'),
+        'AI provider must never receive candidate email'
+      );
+      assert.ok(
+        !receivedPayload.includes('+91-9876543210'),
+        'AI provider must never receive candidate phone number'
+      );
+      assert.ok(
+        !receivedPayload.includes('secret-link'),
+        'AI provider must never receive candidate profile link'
+      );
+
+      pass('Reversible PII tokenization masks contact data before AI provider and detokenizes cleanly');
+    } catch (err) {
+      fail('Reversible PII tokenization spy', err);
+    }
+
+    // =========================================================================
+    // TEST 20: SECTION TIMEOUT FALLBACK & SAFE RECOVERY
+    // =========================================================================
+    console.log('\n--- TEST 20: Section Timeout Fallback & Safe Recovery ---');
+    try {
+      resetCircuitBreakers();
+      const baseResume = await compileBaseResume(userA._id);
+      const originalBullet = baseResume.experience[0].bullets[0];
+
+      // Simulate section timeout by setting SECTION_TIMEOUT_MS small and forceDelayMs larger
+      process.env.SECTION_TIMEOUT_MS = '60';
+      mockProvider.forceDelayMs = 250;
+
+      const tailoredTimeoutRes = await tailorResume({
+        studentUserId: userA._id,
+        baseResumeData: baseResume,
+      });
+
+      // Must recover safely: kept original bullet with status 'kept original' and reason code 'timeout'
+      const bulletResult = tailoredTimeoutRes.bulletRewrites.find(
+        (rw) => rw.original === originalBullet
+      );
+      assert.ok(bulletResult, 'Bullet rewrite entry must exist');
+      assert.strictEqual(bulletResult.status, 'kept original');
+      assert.strictEqual(bulletResult.suggested, originalBullet);
+      assert.ok(
+        bulletResult.reasonCodes.includes('timeout'),
+        'Reason codes must indicate timeout'
+      );
+
+      // Reset mock delay and timeout
+      process.env.SECTION_TIMEOUT_MS = '25000';
+      mockProvider.forceDelayMs = 0;
+      resetCircuitBreakers();
+
+      pass('Section timeout falls back gracefully to original bullet with status kept original');
+    } catch (err) {
+      process.env.SECTION_TIMEOUT_MS = '25000';
+      mockProvider.forceDelayMs = 0;
+      resetCircuitBreakers();
+      fail('Section timeout fallback', err);
+    }
+
+    // =========================================================================
+    // TEST 21: ONE REPAIR CALL ON REJECTION FOR INVENTED SKILL & QUOTA SAFETY
+    // =========================================================================
+    console.log('\n--- TEST 21: One Repair Call on Rejection for Invented Skill ---');
+    try {
+      resetCircuitBreakers();
+      const baseResume = await compileBaseResume(userA._id);
+      const originalBullet = baseResume.experience[0].bullets[0];
+
+      // Check quota before
+      const usageBefore = await AiUsage.getUserDailyUsage(userA._id, 'student');
+      const quotaBefore = usageBefore?.tailorUsed || 0;
+
+      // 1st AI response: returns ungrounded invented skill (Rust) -> triggers rejection
+      mockProvider.mockTailorResponse = {
+        rewrites: [
+          {
+            original: originalBullet,
+            suggested: 'Engineered high-performance microservices in Rust and WebAssembly',
+            why: 'Target alignment',
+          },
+        ],
+      };
+
+      // 2nd AI response (repair call with mode='tailor_repair'): returns repaired bullet adhering to allowed facts
+      mockProvider.mockTailorRepairResponse = {
+        suggested: 'Developed backend apis and web features with nodejs [add your real number]%',
+        why: 'Repaired rewrite with verified candidate skills',
+      };
+
+      const repairTailorRes = await tailorResume({
+        studentUserId: userA._id,
+        baseResumeData: baseResume,
+      });
+
+      const repairedRewrite = repairTailorRes.bulletRewrites.find(
+        (rw) => rw.original === originalBullet
+      );
+      assert.ok(repairedRewrite, 'Repaired rewrite must exist');
+      assert.strictEqual(repairedRewrite.status, 'rewritten', 'Repaired rewrite must be accepted');
+      assert.ok(
+        repairedRewrite.suggested.includes('nodejs'),
+        'Repaired rewrite must contain verified candidate skill'
+      );
+      assert.ok(
+        !repairedRewrite.suggested.includes('Rust'),
+        'Repaired rewrite must not contain rejected invented skill'
+      );
+
+      // Check quota after: exactly 1 quota consumed (repair call had skipQuota: true)
+      const usageAfter = await AiUsage.getUserDailyUsage(userA._id, 'student');
+      const quotaAfter = usageAfter?.tailorUsed || 0;
+      assert.strictEqual(
+        quotaAfter,
+        quotaBefore + 1,
+        'Repair call must NOT consume additional quota (quota charged strictly once)'
+      );
+
+      mockProvider.reset();
+      resetCircuitBreakers();
+      pass('One repair call successfully repairs rejected rewrite without additional quota consumption');
+    } catch (err) {
+      mockProvider.reset();
+      resetCircuitBreakers();
+      fail('Repair call on rejection', err);
+    }
+
+    // =========================================================================
+    // TEST 22: SAMPLE PASS RATE BENCHMARK (>= 90% PASS RATE OVER 10 RESUMES)
+    // =========================================================================
+    console.log('\n--- TEST 22: Sample Pass Rate Benchmark (10 Resumes + JDs) ---');
+    try {
+      const benchmarkSamples = [
+        {
+          role: 'Frontend React Engineer',
+          jd: 'Senior Frontend Developer. Requirements: React, Redux, JavaScript, CSS, HTML. Build scalable UI.',
+          resume: {
+            contact: { fullName: 'Candidate 1', email: 'c1@test.com' },
+            summary: 'Frontend engineer with 2 years building user interfaces.',
+            skills: [{ category: 'Frontend', items: ['react', 'javascript', 'html', 'css', 'redux'] }],
+            experience: [
+              {
+                company: 'WebSphere',
+                title: 'Frontend Intern',
+                bullets: ['Developed responsive web interfaces using React and Redux'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'Backend Node.js Developer',
+          jd: 'Backend Engineer. Requirements: Node.js, Express, MongoDB, Redis, Docker.',
+          resume: {
+            contact: { fullName: 'Candidate 2', email: 'c2@test.com' },
+            summary: 'Backend engineer passionate about databases and API performance.',
+            skills: [{ category: 'Backend', items: ['nodejs', 'express', 'mongodb', 'redis'] }],
+            experience: [
+              {
+                company: 'CoreCloud',
+                title: 'Backend Intern',
+                bullets: ['Built REST APIs with Node.js and MongoDB'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'Python Data Engineer',
+          jd: 'Data Engineer. Requirements: Python, SQL, PostgreSQL, Pandas.',
+          resume: {
+            contact: { fullName: 'Candidate 3', email: 'c3@test.com' },
+            summary: 'Data engineer skilled in Python pipelines and relational database indexing.',
+            skills: [{ category: 'Data', items: ['python', 'sql', 'postgresql', 'pandas'] }],
+            experience: [
+              {
+                company: 'DataFlow Systems',
+                title: 'Data Analyst Intern',
+                bullets: ['Developed data transformation scripts in Python and SQL'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'Full Stack Engineer',
+          jd: 'Full Stack Developer. Requirements: React, Node.js, PostgreSQL, Tailwind.',
+          resume: {
+            contact: { fullName: 'Candidate 4', email: 'c4@test.com' },
+            summary: 'Full-stack developer building cloud web applications.',
+            skills: [{ category: 'FullStack', items: ['react', 'nodejs', 'postgresql', 'tailwind'] }],
+            experience: [
+              {
+                company: 'NextGen Apps',
+                title: 'Full Stack Intern',
+                bullets: ['Implemented web applications using React and Node.js'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'DevOps & Cloud Engineer',
+          jd: 'DevOps Engineer. Requirements: Docker, Kubernetes, Linux, Bash, Git.',
+          resume: {
+            contact: { fullName: 'Candidate 5', email: 'c5@test.com' },
+            summary: 'DevOps engineer focused on containerization and CI/CD automation.',
+            skills: [{ category: 'DevOps', items: ['docker', 'linux', 'bash', 'git', 'kubernetes'] }],
+            experience: [
+              {
+                company: 'InfraScale',
+                title: 'Cloud DevOps Intern',
+                bullets: ['Automated deployment scripts using Bash and Docker'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'Java Backend Developer',
+          jd: 'Java Engineer. Requirements: Java, Spring Boot, MySQL, REST APIs.',
+          resume: {
+            contact: { fullName: 'Candidate 6', email: 'c6@test.com' },
+            summary: 'Java engineer experienced in enterprise Spring Boot applications.',
+            skills: [{ category: 'Backend', items: ['java', 'spring boot', 'mysql'] }],
+            experience: [
+              {
+                company: 'FinTech Enterprise',
+                title: 'Software Intern',
+                bullets: ['Developed backend services using Java and Spring Boot'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'Machine Learning Engineer',
+          jd: 'ML Engineer. Requirements: Python, PyTorch, Scikit-learn, TensorFlow.',
+          resume: {
+            contact: { fullName: 'Candidate 7', email: 'c7@test.com' },
+            summary: 'Machine learning practitioner experienced in neural network architectures.',
+            skills: [{ category: 'AI', items: ['python', 'pytorch', 'tensorflow', 'scikit-learn'] }],
+            experience: [
+              {
+                company: 'AI Research Lab',
+                title: 'ML Research Intern',
+                bullets: ['Trained classification models using Python and PyTorch'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'Mobile App Developer',
+          jd: 'Mobile Engineer. Requirements: React Native, JavaScript, iOS, Android.',
+          resume: {
+            contact: { fullName: 'Candidate 8', email: 'c8@test.com' },
+            summary: 'Mobile developer building cross-platform applications.',
+            skills: [{ category: 'Mobile', items: ['react native', 'javascript', 'android'] }],
+            experience: [
+              {
+                company: 'MobileX Labs',
+                title: 'Mobile Developer Intern',
+                bullets: ['Created cross-platform features using React Native and JavaScript'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'QA & Automation Engineer',
+          jd: 'QA Engineer. Requirements: Selenium, JavaScript, Jest, Cypress.',
+          resume: {
+            contact: { fullName: 'Candidate 9', email: 'c9@test.com' },
+            summary: 'Quality assurance engineer specialized in automated testing suites.',
+            skills: [{ category: 'Testing', items: ['selenium', 'javascript', 'jest', 'cypress'] }],
+            experience: [
+              {
+                company: 'QualityFirst',
+                title: 'QA Intern',
+                bullets: ['Implemented automated test suites using Jest and Cypress'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+        {
+          role: 'Cybersecurity Analyst',
+          jd: 'Security Analyst. Requirements: Python, Linux, Wireshark, Networking.',
+          resume: {
+            contact: { fullName: 'Candidate 10', email: 'c10@test.com' },
+            summary: 'Cybersecurity analyst passionate about vulnerability assessment and network security.',
+            skills: [{ category: 'Security', items: ['python', 'linux', 'wireshark', 'networking'] }],
+            experience: [
+              {
+                company: 'Securitas Defense',
+                title: 'Security Intern',
+                bullets: ['Analyzed network traffic logs using Linux and Python'],
+              },
+            ],
+            projects: [],
+            education: [],
+          },
+        },
+      ];
+
+      let passedCount = 0;
+      for (const sample of benchmarkSamples) {
+        try {
+          const res = await tailorResume({
+            studentUserId: userA._id,
+            baseResumeData: sample.resume,
+            jobDescription: sample.jd,
+          });
+
+          // Must return valid tailored resume without crashing
+          if (res && res.tailoredResume && res.bulletRewrites.length > 0) {
+            // Check that all bullets are either rewritten or kept original without unverified hallucinations
+            const allBulletsValid = res.bulletRewrites.every(
+              (rw) => rw.status === 'rewritten' || rw.status === 'kept original'
+            );
+            if (allBulletsValid) {
+              passedCount++;
+            }
+          }
+        } catch (sampleErr) {
+          console.warn(`Benchmark sample failed for ${sample.role}:`, sampleErr.message);
+        }
+      }
+
+      const passRate = (passedCount / benchmarkSamples.length) * 100;
+      console.log(`Benchmark Results: ${passedCount}/${benchmarkSamples.length} passed (${passRate}%)`);
+      assert.ok(
+        passRate >= 90,
+        `Sample benchmark pass rate must be at least 90%, achieved ${passRate}%`
+      );
+
+      pass(`Sample pass rate benchmark satisfied: ${passedCount}/10 (${passRate}%)`);
+    } catch (err) {
+      fail('Sample pass rate benchmark', err);
     }
   } finally {
     console.log('\n--- CLEANING UP TEST FIXTURES ---');

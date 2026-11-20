@@ -31,6 +31,7 @@ const {
 const { protect, authorize } = require('../middleware/authMiddleware');
 const uploadResume = require('../middleware/uploadMiddleware');
 const { aiLimiter, userApiLimiter } = require('../middleware/rateLimitMiddleware');
+const { aiRequestBudget } = require('../middleware/aiTimeoutMiddleware');
 
 // Student profile routes
 router
@@ -40,7 +41,7 @@ router
 
 // AI Resume parsing & insight routes (must come before /:id or /:studentId)
 router.post('/me/resume/parse', protect, authorize('student'), aiLimiter, parseResume);
-router.post('/me/resume/analyze', protect, authorize('student'), aiLimiter, analyzeResumeHandler);
+router.post('/me/resume/analyze', protect, authorize('student'), aiLimiter, aiRequestBudget(60000), analyzeResumeHandler);
 router
   .route('/me/resume-profile')
   .get(protect, authorize('student'), getResumeProfile)

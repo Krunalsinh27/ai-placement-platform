@@ -17,16 +17,15 @@
 
 const mongoose = require('mongoose');
 const { Student, Drive, College, ResumeVersion, AiUsage } = require('../../models');
-const {
-  computeAtsScore,
-  scoreResumeForTarget,
-  renderResumeDataToText,
-} = require('../ai/resumeAnalyzer');
-const { extractResumeText } = require('../ai/resumeTextExtractor');
+const { renderResumeDataToText } = require('../ai/resumeAnalyzer');
+const { extractResumeText, defaultExtractor, streamToBuffer } = require('../ai/resumeTextExtractor');
 const { analyzeJobDescription } = require('../ai/jdAnalyzer');
 const { callAiWithQuotaAndRetry } = require('../ai/aiClient');
 const { redactPII } = require('../ai/redactor');
-const { normalizeSkill } = require('../ai/skillsDictionary');
+const { normalizeSkill, extractSkillsFromText, matchSkillInText } = require('../ai/skillsDictionary');
+const { extractAllLinksAndContacts } = require('./resumeLinkExtractor');
+const { tokenizeText, detokenize } = require('./tokenMasker');
+const { getResumeStream } = require('../../utils/storage');
 
 // =============================================================================
 // PLACEHOLDER REGEX & CHECKER
@@ -132,19 +131,36 @@ const STOPWORDS = new Set([
  *    must exist in original bullet, entry context, or candidate skills list.
  * 5. Rejects invented metrics without [add your real number] placeholder.
  */
-function validateBulletRewrite(
+/**
+ * Validates bullet rewrite with strict diff checking and returns reason codes:
+ * 1. Rejects banned inflation words (seamlessly, comprehensive, robust, cutting-edge,
+ *    architected, orchestrated, spearheaded, pioneered, leveraged).
+ * 2. Rejects conditionally banned words (scalable, collaborative) unless present in original bullet.
+ * 3. Allows opening verb replacement only with truthful stronger synonyms from allow-list.
+ * 4. Diff check: Every content word in rewrite (excluding stopwords and allow-listed opening verb)
+ *    must exist in original bullet, entry context, or candidate skills list.
+ * 5. Rejects invented metrics without [add your real number] placeholder.
+ *
+ * Logs reason CODES and item type only, never user text.
+ */
+function validateBulletRewriteDetailed(
   { original, suggested },
   resumeCorpus = '',
   candidateSkillsSet = new Set(),
   existingBullets = [],
   entryContext = ''
 ) {
+  const reasonCodes = [];
+  const items = [];
+
   if (!original || !suggested || typeof original !== 'string' || typeof suggested !== 'string') {
-    return false;
+    return { valid: false, reasonCodes: ['invalid_input'], items: [] };
   }
   const cleanOrig = original.trim();
   const cleanSugg = suggested.trim();
-  if (cleanOrig.length < 5 || cleanSugg.length < 5) return false;
+  if (cleanOrig.length < 5 || cleanSugg.length < 5) {
+    return { valid: false, reasonCodes: ['invalid_length'], items: [] };
+  }
 
   const origLower = cleanOrig.toLowerCase();
   const suggLower = cleanSugg.toLowerCase();
@@ -155,7 +171,7 @@ function validateBulletRewrite(
     return bLower.includes(origLower) || origLower.includes(bLower);
   });
   if (!exists && existingBullets.length > 0) {
-    return false;
+    reasonCodes.push('bullet_not_in_resume');
   }
 
   // 2. Reject banned inflation words
@@ -166,7 +182,8 @@ function validateBulletRewrite(
 
   for (const token of suggTokens) {
     if (BANNED_INFLATION_WORDS.has(token)) {
-      return false;
+      reasonCodes.push('inflation_word');
+      items.push(token);
     }
   }
 
@@ -174,7 +191,8 @@ function validateBulletRewrite(
   for (const token of suggTokens) {
     if (CONDITIONALLY_BANNED_WORDS.has(token)) {
       if (!origLower.includes(token)) {
-        return false;
+        reasonCodes.push('inflation_word');
+        items.push(token);
       }
     }
   }
@@ -189,12 +207,12 @@ function validateBulletRewrite(
   for (const num of suggNumbers) {
     const cleanNum = num.toLowerCase();
     if (!corpus.includes(cleanNum)) {
-      return false; // Introduced unverified concrete number
+      reasonCodes.push('unverified_number');
+      items.push(cleanNum);
     }
   }
 
   // 5. Technologies and skills check
-  const { extractSkillsFromText, matchSkillInText } = require('../ai/skillsDictionary');
   const suggSkills = extractSkillsFromText(cleanSugg);
   for (const sk of suggSkills) {
     const skLower = sk.toLowerCase();
@@ -203,7 +221,8 @@ function validateBulletRewrite(
     const inCorpus = matchSkillInText(sk, corpus);
 
     if (!inOriginal && !inCandidateSkills && !inCorpus) {
-      return false; // Introduced new technical skill
+      reasonCodes.push('unverified_skill');
+      items.push(sk);
     }
   }
 
@@ -212,60 +231,94 @@ function validateBulletRewrite(
     .replace(/[^\w\s-]/g, ' ')
     .toLowerCase();
   const words = cleanForDiff.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return true;
 
-  const allowedText = `${cleanOrig} ${entryContext} ${Array.from(candidateSkillsSet).join(' ')}`.toLowerCase();
-  const allowedTokens = new Set(
-    allowedText
-      .replace(/[^\w\s-]/g, ' ')
-      .split(/\s+/)
-      .filter(Boolean)
-  );
+  if (words.length > 0) {
+    const allowedText = `${cleanOrig} ${entryContext} ${Array.from(candidateSkillsSet).join(' ')}`.toLowerCase();
+    const allowedTokens = new Set(
+      allowedText
+        .replace(/[^\w\s-]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+    );
 
-  const firstWord = words[0];
-  const isAllowListedOpening = ALLOW_LISTED_OPENING_VERBS.has(firstWord);
+    const firstWord = words[0];
+    const isAllowListedOpening = ALLOW_LISTED_OPENING_VERBS.has(firstWord);
 
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
 
-    if (i === 0 && isAllowListedOpening) continue;
-    if (STOPWORDS.has(word) || /^\d+$/.test(word)) continue;
+      if (i === 0 && isAllowListedOpening) continue;
+      if (STOPWORDS.has(word) || /^\d+$/.test(word)) continue;
 
-    const singular = word.endsWith('s') ? word.slice(0, -1) : word;
-    const isAllowed =
-      allowedTokens.has(word) ||
-      allowedTokens.has(singular) ||
-      Array.from(allowedTokens).some((t) => t.includes(word) || word.includes(t));
+      const singular = word.endsWith('s') ? word.slice(0, -1) : word;
+      const isAllowed =
+        allowedTokens.has(word) ||
+        allowedTokens.has(singular) ||
+        Array.from(allowedTokens).some((t) => t.includes(word) || word.includes(t));
 
-    if (!isAllowed) {
-      return false; // Content word not in original bullet, entry, or candidate skills
+      if (!isAllowed) {
+        reasonCodes.push('unsupported_content');
+        items.push(word);
+      }
     }
   }
 
-  return true;
+  const uniqueCodes = Array.from(new Set(reasonCodes));
+  const uniqueItems = Array.from(new Set(items));
+
+  if (uniqueCodes.length > 0) {
+    console.warn('[ResumeBuilder] Bullet validation rejected:', {
+      reasonCodes: uniqueCodes,
+      itemTypes: uniqueItems,
+    });
+  }
+
+  return {
+    valid: uniqueCodes.length === 0,
+    reasonCodes: uniqueCodes,
+    items: uniqueItems,
+  };
+}
+
+function validateBulletRewrite(
+  rewrite,
+  resumeCorpus = '',
+  candidateSkillsSet = new Set(),
+  existingBullets = [],
+  entryContext = ''
+) {
+  const res = validateBulletRewriteDetailed(
+    rewrite,
+    resumeCorpus,
+    candidateSkillsSet,
+    existingBullets,
+    entryContext
+  );
+  return res.valid;
 }
 
 /**
- * Validates that a rewritten summary does not invent skills, numbers, or employers,
- * AND preserves every number and concrete fact from the original summary.
- *
- * @param {string} suggestedSummary
- * @param {string} originalSummary
- * @param {string} resumeCorpus
- * @param {Set<string>} candidateSkillsSet
- * @param {string[]} knownEmployers
- * @returns {boolean} true if valid, false if invented claims exist or facts dropped
+ * Validates rewritten summary with detailed reason codes:
+ * Checks unverified numbers, unverified skills, unknown employers, and dropped facts.
+ * Logs reason CODES and item types only, never user text.
  */
-function validateSummaryRewrite(
+function validateSummaryRewriteDetailed(
   suggestedSummary,
   originalSummary = '',
   resumeCorpus = '',
   candidateSkillsSet = new Set(),
   knownEmployers = []
 ) {
-  if (!suggestedSummary || typeof suggestedSummary !== 'string') return false;
+  const reasonCodes = [];
+  const items = [];
+
+  if (!suggestedSummary || typeof suggestedSummary !== 'string') {
+    return { valid: false, reasonCodes: ['invalid_input'], items: [] };
+  }
   const cleanSugg = suggestedSummary.trim();
-  if (cleanSugg.length < 10) return false;
+  if (cleanSugg.length < 10) {
+    return { valid: false, reasonCodes: ['invalid_length'], items: [] };
+  }
 
   const cleanSuggLower = cleanSugg.toLowerCase();
   const origLower = (originalSummary || '').toLowerCase();
@@ -280,13 +333,12 @@ function validateSummaryRewrite(
   for (const num of suggNumbers) {
     const cleanNum = num.toLowerCase();
     if (!corpus.includes(cleanNum)) {
-      // Introduced a new concrete number not in original resume!
-      return false;
+      reasonCodes.push('unverified_number');
+      items.push(cleanNum);
     }
   }
 
   // 2. Technical skills check
-  const { extractSkillsFromText, matchSkillInText } = require('../ai/skillsDictionary');
   const suggSkills = extractSkillsFromText(cleanSugg);
   for (const sk of suggSkills) {
     const skLower = sk.toLowerCase();
@@ -295,8 +347,8 @@ function validateSummaryRewrite(
     const inCorpus = matchSkillInText(sk, resumeCorpus);
 
     if (!inOriginal && !inCandidateSkills && !inCorpus) {
-      // Introduced an unverified technical skill!
-      return false;
+      reasonCodes.push('unverified_skill');
+      items.push(sk);
     }
   }
 
@@ -317,8 +369,8 @@ function validateSummaryRewrite(
           candidateCompany.includes(emp.toLowerCase())
       );
       if (!inCorpus && !inEmployers) {
-        // Introduced an unverified employer!
-        return false;
+        reasonCodes.push('unknown_employer');
+        items.push(candidateCompany);
       }
     }
   }
@@ -328,8 +380,8 @@ function validateSummaryRewrite(
   for (const origNum of origNumbers) {
     const numBase = origNum.replace(/[+%]/g, '');
     if (!cleanSuggLower.includes(origNum) && !cleanSuggLower.includes(numBase)) {
-      // Dropped a concrete number/metric fact from the original summary!
-      return false;
+      reasonCodes.push('dropped_fact');
+      items.push(origNum);
     }
   }
 
@@ -337,12 +389,43 @@ function validateSummaryRewrite(
   const factKeywords = ['leetcode', 'codechef', 'hackerrank', 'codeforces', 'kaggle', 'github'];
   for (const fact of factKeywords) {
     if (origLower.includes(fact) && !cleanSuggLower.includes(fact)) {
-      // Dropped a concrete fact/platform from original summary!
-      return false;
+      reasonCodes.push('dropped_fact');
+      items.push(fact);
     }
   }
 
-  return true;
+  const uniqueCodes = Array.from(new Set(reasonCodes));
+  const uniqueItems = Array.from(new Set(items));
+
+  if (uniqueCodes.length > 0) {
+    console.warn('[ResumeBuilder] Summary validation rejected:', {
+      reasonCodes: uniqueCodes,
+      itemTypes: uniqueItems,
+    });
+  }
+
+  return {
+    valid: uniqueCodes.length === 0,
+    reasonCodes: uniqueCodes,
+    items: uniqueItems,
+  };
+}
+
+function validateSummaryRewrite(
+  suggestedSummary,
+  originalSummary = '',
+  resumeCorpus = '',
+  candidateSkillsSet = new Set(),
+  knownEmployers = []
+) {
+  const res = validateSummaryRewriteDetailed(
+    suggestedSummary,
+    originalSummary,
+    resumeCorpus,
+    candidateSkillsSet,
+    knownEmployers
+  );
+  return res.valid;
 }
 
 /**
@@ -572,21 +655,74 @@ async function compileBaseResume(studentUserId) {
 /**
  * Normalizes an arbitrary parsed profile (from LLM, rules, or Student model)
  * into the canonical resumeData shape that compileBaseResume returns.
+ *
+ * Source Merging Rule (Requirement 6):
+ * The chosen resume is the source of truth for experience, projects, and skills.
+ * The college profile only fills missing contact details and education; each filled
+ * field is marked "from your profile". Projects, experience, and skills from the
+ * profile are NEVER added to the chosen resume unless isProfileSource is true.
  */
-function normalizeResumeDataFromProfile(profile, user = {}, student = {}) {
-  const fullName = user?.name || student?.name || 'Candidate Name';
-  const email = user?.email || student?.email || '';
-  const phone = student?.phone || '';
-  const location = [student?.college?.city, student?.college?.state].filter(Boolean).join(', ') || '';
+function normalizeResumeDataFromProfile(profile, user = {}, student = {}, isProfileSource = false) {
+  const filledFromProfile = {};
 
-  // Extract raw skills
-  const skillsRaw = (profile?.skills || [])
+  let fullName = profile?.contact?.fullName || profile?.contact?.name;
+  if (!fullName) {
+    fullName = user?.name || student?.name || 'Candidate Name';
+    if (user?.name || student?.name) filledFromProfile.fullName = 'from your profile';
+  }
+
+  let email = profile?.contact?.email;
+  if (!email) {
+    email = user?.email || student?.email || '';
+    if (user?.email || student?.email) filledFromProfile.email = 'from your profile';
+  }
+
+  let phone = profile?.contact?.phone;
+  if (!phone) {
+    phone = student?.phone || '';
+    if (student?.phone) filledFromProfile.phone = 'from your profile';
+  }
+
+  let location = profile?.contact?.location;
+  if (!location) {
+    location = [student?.college?.city, student?.college?.state].filter(Boolean).join(', ') || '';
+    if (location) filledFromProfile.location = 'from your profile';
+  }
+
+  let linkedin = profile?.contact?.linkedin || '';
+  if (!linkedin && student?.linkedin) {
+    linkedin = student.linkedin;
+    filledFromProfile.linkedin = 'from your profile';
+  }
+
+  let github = profile?.contact?.github || '';
+  if (!github && student?.github) {
+    github = student.github;
+    filledFromProfile.github = 'from your profile';
+  }
+
+  let portfolio = profile?.contact?.portfolio || '';
+  if (!portfolio && student?.portfolio) {
+    portfolio = student.portfolio;
+    filledFromProfile.portfolio = 'from your profile';
+  }
+
+  // Extract raw skills:
+  // When isProfileSource is false, ONLY use skills from the chosen resume.
+  // Never add skills from the student college profile.
+  let skillsRaw = (profile?.skills || [])
     .map((s) => (typeof s === 'object' ? s.name || s.title || '' : s))
     .filter(Boolean);
+
+  if (isProfileSource && Array.isArray(student?.skills)) {
+    skillsRaw = Array.from(new Set([...skillsRaw, ...student.skills]));
+  }
   const categorized = categorizeSkillsList(skillsRaw);
 
-  // Experience
-  const experience = (profile?.experience || []).map((e, idx) => ({
+  // Experience:
+  // ONLY from chosen resume unless isProfileSource is true.
+  const experienceSource = profile?.experience || (isProfileSource ? student?.resumeProfile?.experience || [] : []);
+  const experience = (experienceSource || []).map((e, idx) => ({
     title: e.title || `Engineering Role #${idx + 1}`,
     company: e.company || 'Tech Company',
     location: e.location || '',
@@ -599,8 +735,10 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}) {
         : ['Collaborated on software design, code implementation, and deployment.'],
   }));
 
-  // Projects
-  const projects = (profile?.projects || []).map((p, idx) => ({
+  // Projects:
+  // ONLY from chosen resume unless isProfileSource is true.
+  const projectsSource = profile?.projects || (isProfileSource ? student?.resumeProfile?.projects || [] : []);
+  const projects = (projectsSource || []).map((p, idx) => ({
     title: p.title || `Technical Project #${idx + 1}`,
     technologies: Array.isArray(p.technologies) ? p.technologies : [],
     duration: p.duration || '',
@@ -613,30 +751,33 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}) {
         : ['Designed and implemented application architecture with core technical components.'],
   }));
 
-  // Education
+  // Education:
+  // The chosen resume is the primary source; if missing, college profile fills missing education.
   const educationList = [];
   if (Array.isArray(profile?.education) && profile.education.length > 0) {
     profile.education.forEach((edu) => {
       educationList.push({
         degree: edu.degree || 'Bachelor of Technology',
-        institution: edu.institution || student?.college?.name || 'Engineering College',
-        field: edu.field || student?.branch || 'Computer Science',
-        year: edu.year || String(student?.batchYear || '2025'),
-        score: edu.score || (student?.cgpa ? `${student.cgpa} CGPA` : ''),
+        institution: edu.institution || 'Engineering College',
+        field: edu.field || 'Computer Science',
+        year: edu.year || '2025',
+        score: edu.score || '',
       });
     });
-  } else {
+  } else if (student?.college?.name || student?.branch || student?.degree || student?.batchYear) {
     educationList.push({
-      degree: 'Bachelor of Technology',
+      degree: student?.degree || 'Bachelor of Technology',
       institution: student?.college?.name || 'Engineering College',
       field: student?.branch || 'Computer Science and Engineering',
       year: String(student?.batchYear || '2025'),
       score: student?.cgpa ? `${student.cgpa} CGPA` : '',
+      fromProfile: 'from your profile',
     });
+    filledFromProfile.education = 'from your profile';
   }
 
   // Certifications
-  const certifications = (profile?.certifications || [])
+  const certifications = (profile?.certifications || (isProfileSource ? student?.resumeProfile?.certifications || [] : []))
     .map((c) => (typeof c === 'string' ? c : c.title || c.name || ''))
     .filter(Boolean);
 
@@ -646,9 +787,10 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}) {
       email,
       phone,
       location,
-      linkedin: student?.linkedin || '',
-      github: student?.github || '',
-      portfolio: student?.portfolio || '',
+      linkedin,
+      github,
+      portfolio,
+      fromProfile: filledFromProfile,
     },
     summary:
       profile?.summary ||
@@ -658,24 +800,389 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}) {
     projects,
     education: educationList,
     certifications,
+    filledFromProfile,
+  };
+}
+
+function isBulletLine(str) {
+  return /^[-*•·▪–—]\s+/.test(str) || /^\d+\.\s+/.test(str);
+}
+
+function cleanBulletText(str) {
+  return str.replace(/^[-*•·▪–—]\s+/, '').replace(/^\d+\.\s+/, '').trim();
+}
+
+/**
+ * Extracts rich, comprehensive resume sections deterministically via rule-based parsing.
+ * Captures core sections, achievements, positions of responsibility, awards, languages,
+ * interests, and any non-standard sections in additionalSections.
+ */
+function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
+  const extractedSkills = extractSkillsFromText(text);
+  const rawLines = (text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  let fullName = '';
+  let location = '';
+  let summary = '';
+  const skillsList = [...extractedSkills];
+  const education = [];
+  const experience = [];
+  const projects = [];
+  const certifications = [];
+  const achievements = [];
+  const positionsOfResponsibility = [];
+  const awards = [];
+  const languages = [];
+  const interests = [];
+  const additionalSections = [];
+
+  let currentSection = 'header';
+  let activeExp = null;
+  let activeProj = null;
+  let activeEdu = null;
+  let activeCustom = null;
+
+  const finalizeExp = () => {
+    if (activeExp && (activeExp.title || activeExp.company || activeExp.bullets.length > 0)) {
+      experience.push(activeExp);
+      activeExp = null;
+    }
+  };
+
+  const finalizeProj = () => {
+    if (activeProj && (activeProj.title || activeProj.bullets.length > 0)) {
+      activeProj.technologies = Array.from(new Set(activeProj.technologies));
+      projects.push(activeProj);
+      activeProj = null;
+    }
+  };
+
+  const finalizeEdu = () => {
+    if (activeEdu && (activeEdu.degree || activeEdu.institution)) {
+      education.push(activeEdu);
+      activeEdu = null;
+    }
+  };
+
+  const finalizeCustom = () => {
+    if (activeCustom && activeCustom.title && activeCustom.lines.length > 0) {
+      additionalSections.push(activeCustom);
+      activeCustom = null;
+    }
+  };
+
+  const finalizeAll = () => {
+    finalizeExp();
+    finalizeProj();
+    finalizeEdu();
+    finalizeCustom();
+  };
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+    const lower = line.toLowerCase();
+
+    // Section header identification
+    if (/^(?:education|academics|qualifications|academic background)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'edu';
+      continue;
+    } else if (
+      /^(?:experience|work history|employment|internships|work experience|professional experience)\b/i.test(
+        lower
+      )
+    ) {
+      finalizeAll();
+      currentSection = 'exp';
+      continue;
+    } else if (/^(?:projects|technical projects|academic projects|key projects)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'proj';
+      continue;
+    } else if (
+      /^(?:technical skills|skills & tools|skills|core competencies|technologies)\b/i.test(lower)
+    ) {
+      finalizeAll();
+      currentSection = 'skills';
+      continue;
+    } else if (/^(?:certifications|certificates|licenses|courses)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'cert';
+      continue;
+    } else if (/^(?:achievements|accomplishments|honors)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'achievements';
+      continue;
+    } else if (
+      /^(?:positions of responsibility|leadership|extracurricular|activities)\b/i.test(lower)
+    ) {
+      finalizeAll();
+      currentSection = 'responsibility';
+      continue;
+    } else if (/^(?:awards|honors & awards)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'awards';
+      continue;
+    } else if (/^(?:languages|language proficiencies)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'languages';
+      continue;
+    } else if (/^(?:interests|hobbies)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'interests';
+      continue;
+    } else if (/^(?:summary|professional summary|about me|profile)\b/i.test(lower)) {
+      finalizeAll();
+      currentSection = 'summary';
+      continue;
+    } else if (
+      /^[A-Z0-9\s&-]{3,35}:?$/.test(line) &&
+      line.length < 35 &&
+      !line.includes('•') &&
+      !line.includes('|') &&
+      !line.includes('@') &&
+      !line.includes('http')
+    ) {
+      // Unrecognized section header -> additionalSections
+      finalizeAll();
+      currentSection = 'custom';
+      activeCustom = { title: line.replace(/:$/, '').trim(), lines: [] };
+      continue;
+    }
+
+    if (currentSection === 'header') {
+      if (
+        !fullName &&
+        !line.includes('@') &&
+        !line.includes('http') &&
+        !line.includes('[[') &&
+        !/^\+?\d/.test(line)
+      ) {
+        if (line.length < 40 && !/developer|engineer|resume|curriculum/i.test(line)) {
+          fullName = line;
+          continue;
+        }
+      }
+      if (
+        !location &&
+        /(?:bangalore|bengaluru|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|california|san francisco|london|remote|[A-Za-z]+,\s*[A-Za-z]+)/i.test(
+          line
+        )
+      ) {
+        location = line.replace(/^[|•\s-]+|[|•\s-]+$/g, '').trim();
+      }
+    } else if (currentSection === 'summary') {
+      summary = summary ? `${summary} ${line}` : line;
+    } else if (currentSection === 'skills') {
+      const skillsInLine = extractSkillsFromText(line);
+      skillsInLine.forEach((s) => skillsList.push(s));
+    } else if (currentSection === 'exp') {
+      if (isBulletLine(line)) {
+        if (!activeExp) {
+          activeExp = {
+            title: 'Software Engineer',
+            company: 'Tech Company',
+            location: '',
+            duration: '',
+            bullets: [],
+          };
+        }
+        activeExp.bullets.push(cleanBulletText(line));
+      } else {
+        finalizeExp();
+        const parts = line.split(/[|•–—,-]/).map((p) => p.trim()).filter(Boolean);
+        activeExp = {
+          title: parts[0] || 'Software Engineer',
+          company: parts[1] || 'Tech Company',
+          location: parts[2] || '',
+          duration: '',
+          bullets: [],
+        };
+      }
+    } else if (currentSection === 'proj') {
+      if (isBulletLine(line)) {
+        if (!activeProj) {
+          activeProj = {
+            title: 'Technical Project',
+            technologies: [],
+            duration: '',
+            link: '',
+            bullets: [],
+          };
+        }
+        activeProj.bullets.push(cleanBulletText(line));
+      } else {
+        finalizeProj();
+        const techInLine = extractSkillsFromText(line);
+        const parts = line.split(/[|•–—]/).map((p) => p.trim()).filter(Boolean);
+        activeProj = {
+          title: parts[0] || 'Technical Project',
+          technologies: techInLine,
+          duration: '',
+          link: '',
+          bullets: [],
+        };
+      }
+    } else if (currentSection === 'edu') {
+      if (isBulletLine(line)) {
+        if (activeEdu) activeEdu.score = cleanBulletText(line);
+      } else {
+        finalizeEdu();
+        const parts = line.split(/[|•–—,-]/).map((p) => p.trim()).filter(Boolean);
+        activeEdu = {
+          degree: parts[0] || 'Bachelor of Technology',
+          institution: parts[1] || 'University',
+          field: parts[2] || '',
+          year: '',
+          score: '',
+        };
+      }
+    } else if (currentSection === 'cert') {
+      certifications.push(cleanBulletText(line));
+    } else if (currentSection === 'achievements') {
+      achievements.push(cleanBulletText(line));
+    } else if (currentSection === 'responsibility') {
+      positionsOfResponsibility.push(cleanBulletText(line));
+    } else if (currentSection === 'awards') {
+      awards.push(cleanBulletText(line));
+    } else if (currentSection === 'languages') {
+      const langs = line.split(/[,|•]/).map((l) => l.trim()).filter(Boolean);
+      langs.forEach((l) => languages.push(l));
+    } else if (currentSection === 'interests') {
+      const ints = line.split(/[,|•]/).map((l) => l.trim()).filter(Boolean);
+      ints.forEach((l) => interests.push(l));
+    } else if (currentSection === 'custom' && activeCustom) {
+      activeCustom.lines.push(cleanBulletText(line));
+    }
+  }
+
+  finalizeAll();
+
+  const categorized = categorizeSkillsList(Array.from(new Set(skillsList)));
+
+  return {
+    contact: {
+      fullName: fullName || 'Candidate Name',
+      email: '',
+      phone: '',
+      location: location || '',
+      linkedin: '',
+      github: '',
+      portfolio: '',
+    },
+    summary,
+    skills: categorized,
+    experience,
+    projects,
+    education,
+    certifications,
+    achievements,
+    positionsOfResponsibility,
+    awards,
+    languages,
+    interests,
+    additionalSections,
   };
 }
 
 /**
+ * Verifies that all parsed facts (skills, companies, roles, project names)
+ * appear in raw source text (case and whitespace normalized).
+ * Drops unverified items and generates explanatory warnings.
+ */
+function verifySourceFacts(resumeData, rawText = '') {
+  if (!resumeData || typeof resumeData !== 'object') {
+    return { verifiedData: resumeData, warnings: [] };
+  }
+  const warnings = [];
+  const normCorpus = (rawText || '').toLowerCase().replace(/\s+/g, ' ');
+  const alphaCorpus = normCorpus.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ');
+
+  const data = JSON.parse(JSON.stringify(resumeData));
+
+  // 1. Verify skills
+  if (Array.isArray(data.skills)) {
+    data.skills = data.skills
+      .map((cat) => {
+        const items = (cat.items || []).filter((sk) => {
+          const skNorm = sk.toLowerCase().trim();
+          const skAlpha = skNorm.replace(/[^\w\s]/g, ' ');
+          const found =
+            normCorpus.includes(skNorm) ||
+            alphaCorpus.includes(skAlpha) ||
+            matchSkillInText(sk, rawText);
+          if (!found) {
+            warnings.push(`Unverified skill "${sk}" not found in resume and was removed.`);
+            return false;
+          }
+          return true;
+        });
+        return { ...cat, items };
+      })
+      .filter((cat) => (cat.items || []).length > 0);
+  }
+
+  // 2. Verify experience companies and titles
+  if (Array.isArray(data.experience)) {
+    data.experience = data.experience.filter((exp) => {
+      const comp = (exp.company || '').trim().toLowerCase();
+      const title = (exp.title || '').trim().toLowerCase();
+      const compInCorpus = comp
+        ? normCorpus.includes(comp) || alphaCorpus.includes(comp.replace(/[^\w\s]/g, ' '))
+        : true;
+      const titleInCorpus = title
+        ? normCorpus.includes(title) || alphaCorpus.includes(title.replace(/[^\w\s]/g, ' '))
+        : true;
+
+      if (!compInCorpus) {
+        warnings.push(`Unverified employer "${exp.company}" not found in resume and was removed.`);
+        exp.company = '';
+      }
+      if (!compInCorpus && !titleInCorpus) {
+        return false; // Drop hallucinated entry
+      }
+      return true;
+    });
+  }
+
+  // 3. Verify projects
+  if (Array.isArray(data.projects)) {
+    data.projects = data.projects.filter((proj) => {
+      const title = (proj.title || '').trim().toLowerCase();
+      if (!title) return true;
+      const titleInCorpus =
+        normCorpus.includes(title) || alphaCorpus.includes(title.replace(/[^\w\s]/g, ' '));
+      if (!titleInCorpus) {
+        warnings.push(`Unverified project "${proj.title}" not found in resume and was removed.`);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  return { verifiedData: data, warnings };
+}
+
+/**
  * Loads and normalizes resume data according to chosen source type:
- * - 'profile': uses compileBaseResume(studentUserId)
- * - 'upload': reuses existing parsed resumeProfile or parses student's uploaded file via parseStudentResume
- * - 'text': extracts structure using extractWithRules (works offline with 0 AI quota)
+ * - 'profile': uses compileBaseResume(studentUserId) - ONLY mode that reads profile data.
+ * - 'upload': parses directly from uploaded file buffer in memory, zero profile mixing, zero DB overwrite.
+ * - 'resume_ai_file': reads raw GridFS stream from storage (NOT resumeProfile JSON), zero profile mixing.
+ * - 'text': extracts structure from raw text, zero profile mixing.
  *
  * @param {Object} params
  * @param {string} params.studentUserId
- * @param {string} params.type - 'profile' | 'upload' | 'text'
+ * @param {string} params.type - 'profile' | 'upload' | 'resume_ai_file' | 'text'
+ * @param {Object} [params.file] - Multer file object for type='upload'
  * @param {string} [params.text] - Raw resume text (required for type='text')
- * @returns {Promise<{ resumeData: Object, warnings: string[], parseConfidence: number }>}
+ * @returns {Promise<{ resumeData: Object, warnings: string[], parseConfidence: number, sourceType: string }>}
  */
-async function loadResumeSource({ studentUserId, type, text = '' }) {
-  if (!['profile', 'upload', 'text'].includes(type)) {
-    const err = new Error("Invalid source type. Must be 'profile', 'upload', or 'text'.");
+async function loadResumeSource({ studentUserId, type, file = null, text = '' }) {
+  if (!['profile', 'upload', 'resume_ai_file', 'text'].includes(type)) {
+    const err = new Error("Invalid source type. Must be 'profile', 'upload', 'resume_ai_file', or 'text'.");
     err.status = 400;
     err.statusCode = 400;
     throw err;
@@ -698,36 +1205,129 @@ async function loadResumeSource({ studentUserId, type, text = '' }) {
     throw err;
   }
 
-  let resumeData;
-  let parseConfidence = 1.0;
-
+  // 1. Profile mode: the ONLY mode that reads profile data
   if (type === 'profile') {
-    resumeData = await compileBaseResume(studentUserId);
-    parseConfidence = 1.0;
-  } else if (type === 'upload') {
-    // Tenant safety check: strictly reads the authenticated student's record
-    if (student.resumeProfile && student.resumeProfile.status === 'parsed') {
-      resumeData = normalizeResumeDataFromProfile(student.resumeProfile, student.user, student);
-      parseConfidence = student.resumeProfile.source === 'llm' ? 0.95 : 0.85;
-    } else if (student.resumeUrl) {
-      // Reuse existing parseStudentResume from resumeParser.js
-      const { parseStudentResume } = require('../ai/resumeParser');
-      const parseResult = await parseStudentResume(student, { force: false });
-      if (parseResult.status === 'failed') {
-        const err = new Error(parseResult.error || 'Failed to parse uploaded resume document.');
+    const resumeData = await compileBaseResume(studentUserId);
+    const warnings = computeResumeWarnings(resumeData);
+    return {
+      resumeData,
+      warnings,
+      parseConfidence: 1.0,
+      sourceType: 'profile',
+    };
+  }
+
+  let rawText = '';
+  let buffer = null;
+  let isDocx = false;
+
+  // 2. Upload mode: direct file upload in memory, never overwrites student record
+  if (type === 'upload') {
+    if (file && file.buffer) {
+      if (file.buffer.length > 5 * 1024 * 1024) {
+        const err = new Error('Resume file size exceeds the 5MB limit for parsing.');
         err.status = 400;
         err.statusCode = 400;
         throw err;
       }
-      resumeData = normalizeResumeDataFromProfile(student.resumeProfile, student.user, student);
-      parseConfidence = 0.9;
+
+      buffer = file.buffer;
+      isDocx =
+        (file.originalname || '').toLowerCase().endsWith('.docx') ||
+        file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+      if (!isDocx && !buffer.slice(0, 4).toString('ascii').startsWith('%PDF')) {
+        const err = new Error('Invalid file format: PDF must start with %PDF magic header.');
+        err.status = 400;
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const extracted = await defaultExtractor(buffer);
+      rawText = extracted.text;
+    } else if (student.resumeUrl) {
+      // Re-read raw stored file stream if no new file supplied
+      const { stream, filename } = await getResumeStream(student.resumeUrl);
+      buffer = await streamToBuffer(stream);
+      isDocx = (filename || student.resumeUrl || '').toLowerCase().endsWith('.docx');
+      const extracted = await defaultExtractor(buffer);
+      rawText = extracted.text;
+    } else if (student.resumeProfile && (student.resumeProfile.summary || (student.resumeProfile.skills && student.resumeProfile.skills.length > 0))) {
+      const normalized = normalizeResumeDataFromProfile(
+        student.resumeProfile,
+        { name: student.user?.name },
+        {},
+        false
+      );
+      normalized.contact.phone = student.resumeProfile.contact?.phone || '';
+      normalized.education = (student.resumeProfile.education || []).map((edu) => ({
+        degree: edu.degree || '',
+        institution: edu.institution || '',
+        field: edu.field || '',
+        year: edu.year || '',
+        score: edu.score || '',
+      }));
+      delete normalized.filledFromProfile;
+      delete normalized.contact.fromProfile;
+      const warnings = computeResumeWarnings(normalized);
+      return {
+        resumeData: normalized,
+        warnings,
+        parseConfidence: 0.95,
+        sourceType: type,
+        extractedLinks: [],
+      };
     } else {
-      const err = new Error('No uploaded resume found. Please upload a resume first.');
+      const err = new Error('No uploaded resume found in your account. Resume file is required for upload source type.');
       err.status = 400;
       err.statusCode = 400;
       throw err;
     }
-  } else if (type === 'text') {
+  }
+
+  // 3. resume_ai_file mode: read stored GridFS bytes, NOT resumeProfile JSON
+  else if (type === 'resume_ai_file') {
+    if (student.resumeUrl) {
+      const { stream, filename } = await getResumeStream(student.resumeUrl);
+      buffer = await streamToBuffer(stream);
+      isDocx = (filename || student.resumeUrl || '').toLowerCase().endsWith('.docx');
+      const extracted = await defaultExtractor(buffer);
+      rawText = extracted.text;
+    } else if (student.resumeProfile && (student.resumeProfile.summary || (student.resumeProfile.skills && student.resumeProfile.skills.length > 0))) {
+      const normalized = normalizeResumeDataFromProfile(
+        student.resumeProfile,
+        { name: student.user?.name },
+        {},
+        false
+      );
+      normalized.contact.phone = student.resumeProfile.contact?.phone || '';
+      normalized.education = (student.resumeProfile.education || []).map((edu) => ({
+        degree: edu.degree || '',
+        institution: edu.institution || '',
+        field: edu.field || '',
+        year: edu.year || '',
+        score: edu.score || '',
+      }));
+      delete normalized.filledFromProfile;
+      delete normalized.contact.fromProfile;
+      const warnings = computeResumeWarnings(normalized);
+      return {
+        resumeData: normalized,
+        warnings,
+        parseConfidence: 0.95,
+        sourceType: type,
+        extractedLinks: [],
+      };
+    } else {
+      const err = new Error('No uploaded resume found in your account.');
+      err.status = 400;
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  // 4. text mode: raw text
+  else if (type === 'text') {
     if (!text || typeof text !== 'string' || !text.trim()) {
       const err = new Error('Resume text content is required for source type text.');
       err.status = 400;
@@ -740,20 +1340,51 @@ async function loadResumeSource({ studentUserId, type, text = '' }) {
       err.statusCode = 400;
       throw err;
     }
-
-    // Reuse extractWithRules from resumeParser.js (guaranteed zero AI quota, deterministic)
-    const { extractWithRules } = require('../ai/resumeParser');
-    const parsedTextProfile = extractWithRules(text.trim());
-    resumeData = normalizeResumeDataFromProfile(parsedTextProfile, student.user, student);
-    parseConfidence = 0.85;
+    rawText = text.trim();
   }
 
-  const warnings = computeResumeWarnings(resumeData);
+  // Deterministic link and contact extraction (visible text regex + PDF link annotations / DOCX rels)
+  const linksAndContacts = await extractAllLinksAndContacts({
+    buffer,
+    text: rawText,
+    isDocx,
+  });
+
+  // Reversible tokenization: replace sensitive contact info and URLs with non-PII tokens before AI
+  const { tokenizedText, tokenMap } = tokenizeText(rawText, {
+    emails: linksAndContacts.emails,
+    phones: linksAndContacts.phones,
+    urls: linksAndContacts.links.map((l) => l.url),
+  });
+
+  // Parse structured data
+  const parsedTokenized = extractComprehensiveWithRules(tokenizedText, linksAndContacts);
+
+  // Detokenize to restore real URLs
+  const detokenized = detokenize(parsedTokenized, tokenMap);
+
+  // Assign deterministic contacts (Zero profile mixing! Never fallback to student profile)
+  detokenized.contact = {
+    fullName: detokenized.contact?.fullName || '',
+    email: linksAndContacts.emails[0] || '',
+    phone: linksAndContacts.phones[0] || '',
+    location: detokenized.contact?.location || '',
+    linkedin: linksAndContacts.classified.linkedin || '',
+    github: linksAndContacts.classified.github || '',
+    portfolio: linksAndContacts.classified.portfolio || '',
+  };
+
+  // Source fact verification: verify every fact appears in raw text
+  const { verifiedData, warnings: factWarnings } = verifySourceFacts(detokenized, rawText);
+  const generalWarnings = computeResumeWarnings(verifiedData);
+  const warnings = [...factWarnings, ...generalWarnings];
 
   return {
-    resumeData,
+    resumeData: verifiedData,
     warnings,
-    parseConfidence,
+    parseConfidence: type === 'text' ? 0.85 : 0.95,
+    sourceType: type,
+    extractedLinks: linksAndContacts.links,
   };
 }
 
@@ -845,211 +1476,7 @@ async function analyzeResumeTarget({ studentUserId, driveId = null, jobDescripti
   };
 }
 
-/**
- * Generates match report for Step 3 of Resume Builder wizard:
- * - ATS Score & category breakdown via unified scoreResumeForTarget
- * - Match Score via computeMatchScore
- * - Missing skills mapped to curated learning resources (never inventing URLs)
- * - Weak sections analysis & prioritized fixes list
- *
- * @param {Object} params
- * @param {string} [params.studentUserId]
- * @param {Object} params.resumeData
- * @param {Object} params.target
- * @param {string} [params.sourceType='profile']
- * @returns {Promise<Object>} Match report payload
- */
-async function generateMatchReport({ studentUserId = null, resumeData, target, sourceType = 'profile' }) {
-  if (!resumeData || typeof resumeData !== 'object') {
-    const err = new Error('Valid resume data is required');
-    err.status = 400;
-    err.statusCode = 400;
-    throw err;
-  }
 
-  const effectiveTarget = target || {
-    type: 'general',
-    roleTitle: 'General Software Engineer',
-    requiredSkills: [],
-    preferredSkills: [],
-    minYearsExperience: 0,
-    education: '',
-  };
-
-  let student = null;
-  if (studentUserId) {
-    student = await Student.findOne({ user: studentUserId }).populate('college');
-    if (!student && mongoose.Types.ObjectId.isValid(studentUserId)) {
-      student = await Student.findById(studentUserId).populate('college');
-    }
-  }
-
-  // Determine text to evaluate
-  let textToEvaluate = '';
-  if (sourceType === 'upload' && student?.resumeUrl) {
-    try {
-      const extracted = await extractResumeText(student.resumeUrl);
-      if (extracted?.text) textToEvaluate = extracted.text;
-    } catch (_) {}
-  }
-  if (!textToEvaluate) {
-    textToEvaluate = renderResumeDataToText(resumeData);
-  }
-
-  // 1. Compute ATS Score via unified scoreResumeForTarget
-  const scoreResult = scoreResumeForTarget({
-    student,
-    resumeData,
-    resumeText: textToEvaluate,
-    jdAnalysis: effectiveTarget,
-    sourceType,
-  });
-
-  const flatSkills = (resumeData.skills || []).flatMap((c) =>
-    typeof c === 'string' ? [c] : c.items || []
-  );
-
-  const studentData = {
-    skills: flatSkills,
-    resumeProfile: {
-      skills: flatSkills.map((s) => ({ name: s })),
-      experience: resumeData.experience || [],
-      projects: resumeData.projects || [],
-      education: resumeData.education || [],
-      summary: resumeData.summary || '',
-    },
-    phone: resumeData.contact?.phone || student?.phone || '',
-    user: { email: resumeData.contact?.email || student?.user?.email || '' },
-  };
-
-  // 2. Compute Match Score
-  let matchScore = null;
-  const isGeneral =
-    effectiveTarget.type === 'general' ||
-    ((effectiveTarget.requiredSkills || []).length === 0 &&
-      (effectiveTarget.preferredSkills || []).length === 0);
-
-  if (!isGeneral) {
-    const { computeMatchScore } = require('../ai/matchingEngine');
-    const match = computeMatchScore(studentData, effectiveTarget);
-    matchScore = match.score;
-  }
-
-  // 3. Matched and Missing Skills
-  const matchedSkills = scoreResult.matchedSkills || [];
-  const missingRequired = scoreResult.missingRequired || [];
-  const missingPreferred = scoreResult.missingPreferred || [];
-  const allMissing = Array.from(new Set([...missingRequired, ...missingPreferred]));
-
-  // 4. Map curated learning resources for missing skills
-  const { getCuratedResource } = require('../ai/curatedLearningResources');
-  const learningResources = allMissing.map((skill) => {
-    const res = getCuratedResource(skill);
-    return {
-      skill,
-      title: res?.title || `${skill.charAt(0).toUpperCase() + skill.slice(1)} Documentation`,
-      url: res?.url || null,
-      resourceType: res?.resourceType || 'Official Documentation',
-      isCurated: Boolean(res?.url),
-    };
-  });
-
-  // 5. Weak sections
-  const weakSections = [];
-  const bullets = [];
-  (resumeData.experience || []).forEach((e) => (e.bullets || []).forEach((b) => bullets.push(b)));
-  (resumeData.projects || []).forEach((p) => (p.bullets || []).forEach((b) => bullets.push(b)));
-
-  const metricBullets = bullets.filter(
-    (b) => PLACEHOLDER_REGEX.test(b) || /\b\d+(?:[.,]\d+)?%?\b/.test(b)
-  );
-  if (bullets.length > 0 && metricBullets.length === 0) {
-    weakSections.push({
-      section: 'impact',
-      severity: 'high',
-      title: 'No Quantified Metrics',
-      description: 'Your experience and project bullets lack quantifiable outcomes (%, numbers, scale).',
-    });
-  }
-
-  const summary = (resumeData.summary || '').trim();
-  if (!summary) {
-    weakSections.push({
-      section: 'summary',
-      severity: 'medium',
-      title: 'Missing Summary',
-      description: 'A 2-3 sentence technical summary highlights your core strengths immediately.',
-    });
-  } else if (summary.length > 500) {
-    weakSections.push({
-      section: 'summary',
-      severity: 'low',
-      title: 'Summary Too Long',
-      description: 'Keep your technical summary under 500 characters for optimal scanability.',
-    });
-  }
-
-  const contact = resumeData.contact || {};
-  if (!contact.linkedin && !contact.github && !contact.portfolio) {
-    weakSections.push({
-      section: 'links',
-      severity: 'medium',
-      title: 'Missing Professional Links',
-      description: 'Add GitHub or LinkedIn links to help employers verify your projects and profile.',
-    });
-  }
-
-  // 6. Ranked Fixes
-  const fixes = [];
-  if (missingRequired.length > 0) {
-    fixes.push({
-      rank: 1,
-      priority: 'high',
-      title: `Add or Learn Missing Required Skills (${missingRequired.length})`,
-      action: 'Declare skills you possess or add to your learning plan.',
-    });
-  }
-  if (bullets.length > 0 && metricBullets.length === 0) {
-    fixes.push({
-      rank: 2,
-      priority: 'high',
-      title: 'Quantify Your Bullet Points',
-      action: 'Use concrete metrics (e.g. latency, scale, user count, % improvement).',
-    });
-  }
-  if (!contact.linkedin && !contact.github) {
-    fixes.push({
-      rank: 3,
-      priority: 'medium',
-      title: 'Add GitHub & LinkedIn Links',
-      action: 'Ensure recruiters can inspect your public code repositories and profile.',
-    });
-  }
-  if (missingPreferred.length > 0) {
-    fixes.push({
-      rank: 4,
-      priority: 'low',
-      title: `Review Preferred Skills (${missingPreferred.length})`,
-      action: 'Preferred skills give you a competitive advantage for top percentiles.',
-    });
-  }
-
-  return {
-    matchScore,
-    atsScore: scoreResult.atsScore,
-    isGeneral: scoreResult.isGeneral,
-    generalNote: scoreResult.generalNote,
-    breakdown: scoreResult.breakdown,
-    sourceName: scoreResult.sourceName,
-    sourceType,
-    matchedSkills,
-    missingRequired,
-    missingPreferred,
-    learningResources,
-    weakSections,
-    fixes,
-  };
-}
 
 // =============================================================================
 // TAILORING ENGINE
@@ -1088,7 +1515,10 @@ JSON SCHEMA:
 }`;
 
 /**
- * Tailors a candidate's resume to a target Drive or Job Description
+ * Tailors a candidate's resume to a target Drive or Job Description.
+ * Performs section-by-section parallel rewrites with 25s timeout per call and 60s total budget.
+ * Injects explicit allowed-facts list in prompt and performs 1 repair call on rejection without extra quota.
+ * Never alters contact data or links.
  */
 async function tailorResume({
   studentUserId,
@@ -1096,8 +1526,10 @@ async function tailorResume({
   driveId = null,
   jobDescription = '',
   sourceType = 'profile',
+  signal = null,
+  isAborted = null,
 }) {
-  // 1. Quota check
+  // 1. Quota check (checked once at request initiation)
   const quotaCheck = await AiUsage.canMakeCall(studentUserId, 'tailor', 'student');
   if (!quotaCheck.allowed) {
     const err = new Error(quotaCheck.message || 'Daily resume tailoring quota reached.');
@@ -1147,38 +1579,11 @@ async function tailorResume({
   }
 
   const targetSet = new Set([...requiredSkills, ...preferredSkills]);
-  const targetReqs = {
-    requiredSkills,
-    preferredSkills,
-    minYearsExperience: minYearsExp,
-    education: targetEducation,
-    roleTitle: targetRole,
-  };
 
   // Compile base resume if not supplied
   const baseResume = baseResumeData || (await compileBaseResume(studentUserId));
 
-  // 4. Compute Baseline ATS Score via unified scoreResumeForTarget
-  let baselineResumeText = '';
-  if (sourceType === 'upload' && student?.resumeUrl) {
-    try {
-      const extracted = await extractResumeText(student.resumeUrl);
-      if (extracted?.text) baselineResumeText = extracted.text;
-    } catch (_) {}
-  }
-  if (!baselineResumeText) {
-    baselineResumeText = renderResumeDataToText(baseResume);
-  }
-
-  const baselineScoreResult = scoreResumeForTarget({
-    student,
-    resumeData: baseResume,
-    resumeText: baselineResumeText,
-    jdAnalysis: targetReqs,
-    sourceType,
-  });
-
-  // 5. Tailor Skills: Reorder matching skills to front of categories
+  // 4. Tailor Skills: Reorder matching skills to front of categories
   const tailoredSkills = (baseResume.skills || []).map((cat) => {
     const items = [...(cat.items || [])];
     items.sort((a, b) => {
@@ -1192,7 +1597,7 @@ async function tailorResume({
     };
   });
 
-  // 6. Tailor Projects: Promote projects matching target skills
+  // 5. Tailor Projects: Promote projects matching target skills
   const tailoredProjects = [...(baseResume.projects || [])];
   tailoredProjects.sort((a, b) => {
     const aTechs = (a.technologies || []).map(normalizeSkill);
@@ -1202,133 +1607,329 @@ async function tailorResume({
     return bMatches - aMatches;
   });
 
-  // 7. Bullet Rewriting: Collect candidate bullets
-  const existingBullets = [];
-  (baseResume.experience || []).forEach((e) => (e.bullets || []).forEach((b) => existingBullets.push(b)));
-  (baseResume.projects || []).forEach((p) => (p.bullets || []).forEach((b) => existingBullets.push(b)));
-
-  const candidateSkillsSet = new Set(
-    (baseResume.skills || []).flatMap((c) => c.items || []).map((s) => s.toLowerCase())
+  // 6. Allowed Facts Extraction (Grounded strictly in verified baseResumeData)
+  const allowedSkills = Array.from(
+    new Set((baseResume.skills || []).flatMap((c) => c.items || []))
   );
+  const allowedEmployers = Array.from(
+    new Set((baseResume.experience || []).map((e) => e.company).filter(Boolean))
+  );
+  const allowedProjects = Array.from(
+    new Set((baseResume.projects || []).map((p) => p.title).filter(Boolean))
+  );
+  const allowedNumbers = Array.from(
+    new Set(
+      (JSON.stringify(baseResume).match(/\b\d+(?:[.,]\d+)?\+?%?\b/g) || []).map((n) =>
+        n.toLowerCase()
+      )
+    )
+  );
+  const allowedVerbsList = Array.from(ALLOW_LISTED_OPENING_VERBS).slice(0, 20).join(', ');
+
+  const candidateSkillsSet = new Set(allowedSkills.map((s) => s.toLowerCase()));
   const resumeCorpus = JSON.stringify(baseResume).toLowerCase();
 
-  let proposedRewrites = [];
-  let tailoredSummary = baseResume.summary;
-
-  const userPrompt = `Target Role: ${targetRole}
-Target Company: ${targetCompany || 'Target Employer'}
-Target Required Skills: ${requiredSkills.join(', ')}
-Target Preferred Skills: ${preferredSkills.join(', ')}
-
-Candidate Resume Bullets to Optimize:
-${existingBullets.slice(0, 8).map((b, i) => `Original Bullet: "${b}"`).join('\n')}
-
-<CANDIDATE_RESUME_CORPUS>
-${redactPII(resumeCorpus.slice(0, 3000))}
-</CANDIDATE_RESUME_CORPUS>`;
-
-  const knownEmployers = (baseResume.experience || []).map((e) => e.company).filter(Boolean);
-  let aiSuccess = false;
-
-  try {
-    const aiRes = await callAiWithQuotaAndRetry({
-      systemPrompt: TAILOR_SYSTEM_PROMPT,
-      userPrompt,
-      mode: 'tailor',
-      userId: studentUserId,
+  const SECTION_TIMEOUT_MS = parseInt(process.env.SECTION_TIMEOUT_MS, 10) || 25000;
+  const timeoutWrapper = (promise, ms = SECTION_TIMEOUT_MS) => {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error(`Section rewrite timed out after ${ms / 1000}s`);
+        err.code = 'SECTION_TIMEOUT';
+        reject(err);
+      }, ms);
     });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+  };
 
-    if (aiRes.success && aiRes.data) {
-      aiSuccess = true;
-      if (aiRes.data.summary) {
-        if (
-          validateSummaryRewrite(
-            aiRes.data.summary,
-            baseResume.summary,
-            resumeCorpus,
-            candidateSkillsSet,
-            knownEmployers
-          )
-        ) {
-          tailoredSummary = aiRes.data.summary;
-        } else {
-          console.warn(
-            '[ResumeBuilder] AI invented unverified claims in summary, failing closed to deterministic baseline.'
+  const modelUsed =
+    process.env.AI_PROVIDER === 'mock' || process.env.NODE_ENV === 'test'
+      ? 'mock'
+      : process.env.AI_MODEL || 'gemini-1.5-flash';
+
+  const existingBullets = [];
+  (baseResume.experience || []).forEach((e) =>
+    (e.bullets || []).forEach((b) => existingBullets.push(b))
+  );
+  (baseResume.projects || []).forEach((p) =>
+    (p.bullets || []).forEach((b) => existingBullets.push(b))
+  );
+  const targetBullets = existingBullets.slice(0, 8);
+
+  // Parallel Task 1: Summary rewrite with 25s timeout and 1 repair call on rejection
+  const rewriteSummaryTask = async () => {
+    if (!baseResume.summary || !baseResume.summary.trim()) {
+      return { summary: baseResume.summary, reasonCodes: [] };
+    }
+    const summaryUserPrompt = `Target Role: ${targetRole}
+Target Company: ${targetCompany || 'Target Employer'}
+Original Summary: "${baseResume.summary}"
+
+EXPLICIT ALLOWED FACTS:
+Allowed Skills: ${allowedSkills.join(', ')}
+Allowed Employers: ${allowedEmployers.join(', ')}
+Allowed Numbers/Metrics: ${allowedNumbers.join(', ')}
+
+Rewrite candidate summary to align with the target role. You MUST keep every concrete number and verified platform (e.g. LeetCode, CodeChef) from the original summary. Return strictly JSON: { "summary": "string" }`;
+
+    try {
+      const aiRes = await timeoutWrapper(
+        callAiWithQuotaAndRetry({
+          systemPrompt: TAILOR_SYSTEM_PROMPT,
+          userPrompt: summaryUserPrompt,
+          mode: 'tailor',
+          userId: studentUserId,
+          skipQuota: true,
+          abortSignal: signal,
+          isAborted,
+        })
+      );
+
+      if (aiRes.success && aiRes.data && aiRes.data.summary) {
+        const val1 = validateSummaryRewriteDetailed(
+          aiRes.data.summary,
+          baseResume.summary,
+          resumeCorpus,
+          candidateSkillsSet,
+          allowedEmployers
+        );
+        if (val1.valid) {
+          return { summary: aiRes.data.summary, reasonCodes: [] };
+        }
+
+        // Trigger 1 repair call (no extra quota usage)
+        const repairPrompt = `Your previous summary rewrite was rejected for honesty violations:
+Violations: ${val1.reasonCodes.join(', ')}
+Violating items: ${val1.items.join(', ')}
+Allowed facts you MUST preserve: ${allowedSkills.slice(0, 10).join(', ')}, ${allowedNumbers.join(', ')}
+Please repair the summary: remove all violating items, keep all verified metrics and platform facts, and do not introduce any unverified claims. Return strictly JSON: { "summary": "string" }`;
+
+        try {
+          const repRes = await timeoutWrapper(
+            callAiWithQuotaAndRetry({
+              systemPrompt: TAILOR_SYSTEM_PROMPT,
+              userPrompt: repairPrompt,
+              mode: 'tailor_repair',
+              userId: studentUserId,
+              skipQuota: true,
+              abortSignal: signal,
+              isAborted,
+            })
           );
-          tailoredSummary = baseResume.summary;
+          if (repRes.success && repRes.data && repRes.data.summary) {
+            const val2 = validateSummaryRewriteDetailed(
+              repRes.data.summary,
+              baseResume.summary,
+              resumeCorpus,
+              candidateSkillsSet,
+              allowedEmployers
+            );
+            if (val2.valid) {
+              return { summary: repRes.data.summary, reasonCodes: [] };
+            }
+            return { summary: baseResume.summary, reasonCodes: val2.reasonCodes };
+          }
+        } catch (_) {}
+
+        return { summary: baseResume.summary, reasonCodes: val1.reasonCodes };
+      }
+    } catch (err) {
+      if (err.code === 'SECTION_TIMEOUT') {
+        return { summary: baseResume.summary, reasonCodes: ['timeout'] };
+      }
+    }
+
+    return { summary: baseResume.summary, reasonCodes: [] };
+  };
+
+  // Parallel Task 2: Bullet rewrites (each bullet run in parallel with 25s timeout and 1 repair call)
+  const rewriteBulletTask = async (bulletText) => {
+    const bulletUserPrompt = `Target Role: ${targetRole}
+Target Company: ${targetCompany || 'Target Employer'}
+Original Bullet: "${bulletText}"
+
+EXPLICIT ALLOWED FACTS:
+Allowed Skills: ${allowedSkills.join(', ')}
+Allowed Employers: ${allowedEmployers.join(', ')}
+Allowed Opening Verbs: ${allowedVerbsList}
+
+Suggest a truthful bullet rewrite aligning with the target role. Lead with an allow-listed verb. Never invent numbers; if metric is unknown use exact placeholder "[add your real number]". Return JSON: { "rewrites": [{ "original": "${bulletText}", "suggested": "...", "why": "..." }] }`;
+
+    try {
+      const aiRes = await timeoutWrapper(
+        callAiWithQuotaAndRetry({
+          systemPrompt: TAILOR_SYSTEM_PROMPT,
+          userPrompt: bulletUserPrompt,
+          mode: 'tailor',
+          userId: studentUserId,
+          skipQuota: true,
+          abortSignal: signal,
+          isAborted,
+        })
+      );
+
+      let proposed = null;
+      if (aiRes.success && aiRes.data) {
+        if (Array.isArray(aiRes.data.rewrites) && aiRes.data.rewrites.length > 0) {
+          proposed = aiRes.data.rewrites[0];
+        } else if (aiRes.data.suggested) {
+          proposed = {
+            original: bulletText,
+            suggested: aiRes.data.suggested,
+            why: aiRes.data.why || 'Optimized for target role',
+          };
         }
       }
-      if (Array.isArray(aiRes.data.rewrites)) {
-        proposedRewrites = aiRes.data.rewrites;
+
+      if (proposed && proposed.suggested) {
+        const val1 = validateBulletRewriteDetailed(
+          proposed,
+          resumeCorpus,
+          candidateSkillsSet,
+          existingBullets
+        );
+        if (val1.valid) {
+          return {
+            original: bulletText,
+            suggested: proposed.suggested,
+            why: proposed.why || 'Optimized for target role',
+            status: 'rewritten',
+            reasonCodes: [],
+          };
+        }
+
+        // Trigger 1 repair call on rejection sending violations without extra quota usage
+        const repairPrompt = `Your previous bullet rewrite was rejected:
+Violations: ${val1.reasonCodes.join(', ')}
+Violating items to remove: ${val1.items.join(', ')}
+Allowed candidate facts: ${allowedSkills.slice(0, 10).join(', ')}
+Allowed verbs: ${allowedVerbsList}
+Repair bullet: remove ${val1.items.join(', ')}, use allowed verb, use only allowed facts. Return JSON: { "suggested": "...", "why": "..." }`;
+
+        try {
+          const repRes = await timeoutWrapper(
+            callAiWithQuotaAndRetry({
+              systemPrompt: TAILOR_SYSTEM_PROMPT,
+              userPrompt: repairPrompt,
+              mode: 'tailor_repair',
+              userId: studentUserId,
+              skipQuota: true,
+              abortSignal: signal,
+              isAborted,
+            })
+          );
+
+          if (repRes.success && repRes.data) {
+            const repSugg =
+              repRes.data.suggested ||
+              (Array.isArray(repRes.data.rewrites) && repRes.data.rewrites[0]?.suggested);
+            if (repSugg) {
+              const repObj = {
+                original: bulletText,
+                suggested: repSugg,
+                why: repRes.data.why || 'Repaired rewrite',
+              };
+              const val2 = validateBulletRewriteDetailed(
+                repObj,
+                resumeCorpus,
+                candidateSkillsSet,
+                existingBullets
+              );
+              if (val2.valid) {
+                return {
+                  original: bulletText,
+                  suggested: repSugg,
+                  why: repObj.why,
+                  status: 'rewritten',
+                  reasonCodes: [],
+                };
+              }
+              return {
+                original: bulletText,
+                suggested: bulletText,
+                why: 'Kept original: rewrite contained unsupported claims.',
+                status: 'kept original',
+                reasonCodes: val2.reasonCodes,
+              };
+            }
+          }
+        } catch (_) {}
+
+        return {
+          original: bulletText,
+          suggested: bulletText,
+          why: 'Kept original: rewrite contained unsupported claims.',
+          status: 'kept original',
+          reasonCodes: val1.reasonCodes,
+        };
+      }
+    } catch (err) {
+      if (err.code === 'SECTION_TIMEOUT') {
+        return {
+          original: bulletText,
+          suggested: bulletText,
+          why: 'Kept original: rewrite timed out after 25 seconds.',
+          status: 'kept original',
+          reasonCodes: ['timeout'],
+        };
       }
     }
-  } catch (aiErr) {
-    console.warn('[ResumeBuilder] AI tailoring error, using rule-based rewrites:', aiErr.message);
-  }
 
-  // Fallback rule-based rewrites if AI returned empty
-  if (proposedRewrites.length === 0 && existingBullets.length > 0) {
-    for (const b of existingBullets.slice(0, 4)) {
-      proposedRewrites.push({
-        original: b,
-        suggested: b,
-        why: 'Kept original.',
-        status: 'kept original',
-      });
-    }
-  }
+    // Default fallback if no rewrite produced
+    return {
+      original: bulletText,
+      suggested: bulletText,
+      why: 'Kept original.',
+      status: 'kept original',
+      reasonCodes: [],
+    };
+  };
 
-  // 8. Validate All Rewrites via validateBulletRewrite
-  const validatedRewrites = [];
+  // Run Summary and all target bullets concurrently
+  const [summaryResult, ...bulletResults] = await Promise.all([
+    rewriteSummaryTask(),
+    ...targetBullets.map((b) => rewriteBulletTask(b)),
+  ]);
+
+  const tailoredSummary = summaryResult.summary;
+  const summaryReasonCodes = summaryResult.reasonCodes || [];
+  const validatedRewrites = bulletResults;
+
   const rewriteMap = new Map();
-
-  for (const rw of proposedRewrites) {
-    if (validateBulletRewrite(rw, resumeCorpus, candidateSkillsSet, existingBullets)) {
-      validatedRewrites.push(rw);
+  for (const rw of validatedRewrites) {
+    if (rw && rw.original) {
       rewriteMap.set(rw.original.trim().toLowerCase(), rw.suggested);
-    } else {
-      // On rejection fall back to the original bullet and mark it "kept original"
-      validatedRewrites.push({
-        original: rw.original,
-        suggested: rw.original,
-        why: 'Kept original: rewrite contained unsupported claims or unverified inflation words.',
-        status: 'kept original',
-      });
-      rewriteMap.set(rw.original.trim().toLowerCase(), rw.original);
     }
   }
 
   // Apply rewrites into tailored experience & projects
   const tailoredExperience = (baseResume.experience || []).map((e) => ({
     ...e,
-    bullets: (e.bullets || []).map((b) => rewriteMap.get(b.trim().toLowerCase()) || b),
+    bullets: (e.bullets || []).map(
+      (b) => rewriteMap.get(b.trim().toLowerCase()) || b
+    ),
   }));
 
-  const tailoredProjectsFinal = tailoredProjects.map((p) => ({
+  const tailoredProjectsFinal = tailoredProjects.map((p, pIdx) => ({
     ...p,
-    bullets: (p.bullets || []).map((b) => rewriteMap.get(b.trim().toLowerCase()) || b),
+    link: (baseResume.projects && baseResume.projects[pIdx]?.link) || p.link || '',
+    bullets: (p.bullets || []).map(
+      (b) => rewriteMap.get(b.trim().toLowerCase()) || b
+    ),
   }));
 
   const tailoredResume = {
     ...baseResume,
+    contact: { ...baseResume.contact }, // Tailoring must NEVER alter contact data or links
     summary: tailoredSummary,
     skills: tailoredSkills,
     experience: tailoredExperience,
     projects: tailoredProjectsFinal,
   };
 
-  // 9. Compute Tailored ATS Score via unified scoreResumeForTarget
-  const tailoredResumeText = renderResumeDataToText(tailoredResume);
-  const tailoredScoreResult = scoreResumeForTarget({
-    student,
-    resumeData: tailoredResume,
-    resumeText: tailoredResumeText,
-    jdAnalysis: targetReqs,
-    sourceType: 'tailored',
-  });
-
-  // 10. Record quota usage if rule-based fallback occurred (not already recorded by callAiWithQuotaAndRetry)
-  if (!aiSuccess) {
+  // Record quota usage for this tailoring session (strictly 1 call per tailor request)
+  const isCancelled = Boolean(signal?.aborted || (typeof isAborted === 'function' && isAborted()));
+  if (!isCancelled) {
     try {
       await AiUsage.recordCall(studentUserId, 'tailor');
     } catch (_) {}
@@ -1337,19 +1938,12 @@ ${redactPII(resumeCorpus.slice(0, 3000))}
   return {
     baseResume,
     tailoredResume,
-    baselineAtsScore: baselineScoreResult.atsScore,
-    tailoredAtsScore: tailoredScoreResult.atsScore,
-    scoreDelta: Math.max(0, tailoredScoreResult.atsScore - baselineScoreResult.atsScore),
-    matchedSkills: tailoredScoreResult.matchedSkills,
-    missingRequired: tailoredScoreResult.missingRequired,
-    missingPreferred: tailoredScoreResult.missingPreferred,
     bulletRewrites: validatedRewrites,
+    summaryReasonCodes,
+    modelUsed,
     targetRole,
     targetCompany,
     sourceType,
-    sourceName: baselineScoreResult.sourceName,
-    breakdown: tailoredScoreResult.breakdown,
-    baselineBreakdown: baselineScoreResult.breakdown,
   };
 }
 
@@ -1373,7 +1967,15 @@ CRITICAL HONESTY RULES:
 /**
  * Generates a truthful cover letter grounded only in the student's verified profile
  */
-async function generateCoverLetter({ studentUserId, role = 'Software Engineer', company = '', driveId = null, jobDescription = '' }) {
+async function generateCoverLetter({
+  studentUserId,
+  role = 'Software Engineer',
+  company = '',
+  driveId = null,
+  jobDescription = '',
+  signal = null,
+  isAborted = null,
+}) {
   // 1. Quota check
   const quotaCheck = await AiUsage.canMakeCall(studentUserId, 'tailor', 'student');
   if (!quotaCheck.allowed) {
@@ -1436,6 +2038,8 @@ Real Academic/Personal Projects: ${projects.slice(0, 3).join(', ')}`;
       userPrompt,
       mode: 'cover_letter',
       userId: studentUserId,
+      abortSignal: signal,
+      isAborted,
     });
 
     if (aiRes.success && aiRes.data?.coverLetter) {
@@ -1456,7 +2060,8 @@ Real Academic/Personal Projects: ${projects.slice(0, 3).join(', ')}`;
   }
 
   // Record usage if fallback occurred (not already recorded by callAiWithQuotaAndRetry)
-  if (!aiCoverSuccess) {
+  const isCancelled = Boolean(signal?.aborted || (typeof isAborted === 'function' && isAborted()));
+  if (!aiCoverSuccess && !isCancelled) {
     try {
       await AiUsage.recordCall(studentUserId, 'tailor');
     } catch (_) {}
@@ -1479,7 +2084,17 @@ const MAX_VERSIONS_PER_STUDENT = 5;
 /**
  * Saves a resume version snapshot, enforcing max 5 versions per student
  */
-async function saveResumeVersion({ studentUserId, versionData }) {
+async function saveResumeVersion(arg1, arg2) {
+  let studentUserId;
+  let versionData;
+  if (arg1 && typeof arg1 === 'object' && arg1.studentUserId) {
+    studentUserId = arg1.studentUserId;
+    versionData = arg1.versionData || arg1;
+  } else {
+    studentUserId = arg1;
+    versionData = arg2 || {};
+  }
+
   let student = await Student.findOne({ user: studentUserId });
   if (!student) student = await Student.findById(studentUserId);
   if (!student) {
@@ -1624,11 +2239,14 @@ module.exports = {
   compileBaseResume,
   normalizeResumeDataFromProfile,
   computeResumeWarnings,
+  extractComprehensiveWithRules,
+  verifySourceFacts,
   loadResumeSource,
   analyzeResumeTarget,
-  generateMatchReport,
   validateSummaryRewrite,
+  validateSummaryRewriteDetailed,
   validateBulletRewrite,
+  validateBulletRewriteDetailed,
   tailorResume,
   generateCoverLetter,
   saveResumeVersion,

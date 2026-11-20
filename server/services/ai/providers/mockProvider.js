@@ -22,6 +22,7 @@ class MockProvider {
     this.mockMockEvalResponse = null;
     this.mockMockReportResponse = null;
     this.mockTailorResponse = null;
+    this.mockTailorRepairResponse = null;
     this.mockCoverLetterResponse = null;
     this.mockSkillGapResponse = null;
     this.mockWeeklySummaryResponse = null;
@@ -48,6 +49,7 @@ class MockProvider {
     this.mockMockEvalResponse = null;
     this.mockMockReportResponse = null;
     this.mockTailorResponse = null;
+    this.mockTailorRepairResponse = null;
     this.mockCoverLetterResponse = null;
     this.mockSkillGapResponse = null;
     this.mockWeeklySummaryResponse = null;
@@ -281,7 +283,12 @@ class MockProvider {
       });
     }
 
-    if (mode === 'tailor') {
+    if (mode === 'tailor' || mode === 'tailor_repair') {
+      if (mode === 'tailor_repair' && this.mockTailorRepairResponse !== null) {
+        return typeof this.mockTailorRepairResponse === 'string'
+          ? this.mockTailorRepairResponse
+          : JSON.stringify(this.mockTailorRepairResponse);
+      }
       if (this.mockTailorResponse !== null) {
         return typeof this.mockTailorResponse === 'string'
           ? this.mockTailorResponse
