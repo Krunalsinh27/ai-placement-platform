@@ -20,6 +20,9 @@ const { analyzeJobDescription, extractJdRequirementsWithRules } = require('./jdA
 const { getSkillSimilaritySync, findBestSemanticMatch } = require('./embeddingService');
 const AiUsage = require('../../models/AiUsage');
 
+// Current algorithm version for resume analysis cache invalidation (forces recompute on version change)
+const SCORING_VERSION = 2;
+
 // Fixed list of recognized resume action verbs (case-insensitive)
 const ACTION_VERBS = new Set([
   'built', 'build', 'developed', 'develop', 'designed', 'design', 'implemented', 'implement',
@@ -503,6 +506,261 @@ function computeAtsScore(studentData, targetData, resumeText = '') {
 }
 
 /**
+ * Converts structured resumeData into standardized text matching the PDFKit single-column output.
+ * Used to score Resume Builder resumes on their real textual content.
+ *
+ * @param {Object} resumeData
+ * @returns {string} Plain text representation of the resume
+ */
+function renderResumeDataToText(resumeData) {
+  if (!resumeData || typeof resumeData !== 'object') return '';
+  const parts = [];
+
+  // Contact
+  const contact = resumeData.contact || {};
+  const contactLines = [
+    contact.fullName,
+    [contact.email, contact.phone, contact.location, contact.linkedin, contact.github, contact.portfolio]
+      .filter(Boolean)
+      .join(' | '),
+  ].filter(Boolean);
+  if (contactLines.length > 0) parts.push(contactLines.join('\n'));
+
+  // Professional Summary
+  if (resumeData.summary && String(resumeData.summary).trim()) {
+    parts.push(`PROFESSIONAL SUMMARY\n${String(resumeData.summary).trim()}`);
+  }
+
+  // Technical Skills
+  if (Array.isArray(resumeData.skills) && resumeData.skills.length > 0) {
+    const skillLines = resumeData.skills.map((c) => {
+      const title = c.category || 'Skills';
+      const items = Array.isArray(c.items) ? c.items.join(', ') : '';
+      return `${title}: ${items}`;
+    });
+    parts.push(`TECHNICAL SKILLS\n${skillLines.join('\n')}`);
+  }
+
+  // Work Experience
+  if (Array.isArray(resumeData.experience) && resumeData.experience.length > 0) {
+    const expLines = resumeData.experience.map((e) => {
+      const header = [e.title, e.company, e.location, e.duration].filter(Boolean).join(' - ');
+      const bullets = (e.bullets || []).map((b) => `• ${b}`).join('\n');
+      return `${header}\n${bullets}`;
+    });
+    parts.push(`WORK EXPERIENCE\n${expLines.join('\n\n')}`);
+  }
+
+  // Projects
+  if (Array.isArray(resumeData.projects) && resumeData.projects.length > 0) {
+    const projLines = resumeData.projects.map((p) => {
+      const header = [p.title, (p.technologies || []).join(', '), p.duration].filter(Boolean).join(' - ');
+      const bullets = (p.bullets || []).map((b) => `• ${b}`).join('\n');
+      return `${header}\n${bullets}`;
+    });
+    parts.push(`PROJECTS\n${projLines.join('\n\n')}`);
+  }
+
+  // Education
+  if (Array.isArray(resumeData.education) && resumeData.education.length > 0) {
+    const eduLines = resumeData.education.map((e) => {
+      return [e.degree, e.field, e.institution, e.year, e.score].filter(Boolean).join(' - ');
+    });
+    parts.push(`EDUCATION\n${eduLines.join('\n')}`);
+  }
+
+  // Certifications
+  if (Array.isArray(resumeData.certifications) && resumeData.certifications.length > 0) {
+    const certLines = resumeData.certifications
+      .map((c) => (typeof c === 'string' ? c : c.name || ''))
+      .filter(Boolean);
+    if (certLines.length > 0) {
+      parts.push(`CERTIFICATIONS\n${certLines.join('\n')}`);
+    }
+  }
+
+  return parts.join('\n\n');
+}
+
+/**
+ * Unified ATS scoring entry point used by BOTH Resume AI and Resume Builder.
+ * Guarantees that scoring mathematics, breakdown calculation, and text evaluation
+ * are completely identical across all features.
+ *
+ * Exact Caller Contracts:
+ * - Resume AI (`analyzeResumeAgainstTarget`):
+ *   Passes { student, resumeText: uploadedFileText, jdAnalysis, sourceType: 'upload' }
+ *   Scores the actual uploaded PDF/document text extracted from student.resumeUrl.
+ *
+ * - Resume Builder Step 3 ("before" / Match Report) and Step 4 ("before" / Baseline):
+ *   When source is 'upload': passes { student, resumeData, resumeText: uploadedFileText, jdAnalysis, sourceType: 'upload' }
+ *   so the baseline score precisely matches Resume AI's score for the same uploaded resume and JD.
+ *   When source is 'profile' or 'text': passes { student, resumeData, resumeText: renderedText, jdAnalysis, sourceType }
+ *   where renderedText is compiled from builder resumeData (the same content that goes into the exported PDF).
+ *
+ * - Resume Builder Step 4 ("after" / Tailored Build):
+ *   Passes { student, resumeData: tailoredResume, resumeText: renderedTailoredText, jdAnalysis, sourceType: 'tailored' }
+ *   where renderedTailoredText is compiled from the tailored resume data.
+ *
+ * @param {Object} params
+ * @param {Object} [params.student] - Student mongoose document or student profile
+ * @param {Object} [params.resumeData] - Structured resume data object (contact, skills, experience, projects, education)
+ * @param {string} [params.resumeText] - Real plain text of the resume to be evaluated
+ * @param {Object} [params.jdAnalysis] - Target requirements { requiredSkills, preferredSkills, minYearsExperience, education }
+ * @param {string} [params.sourceType='profile'] - 'upload' | 'profile' | 'text' | 'tailored'
+ * @returns {Object} Standardized score result
+ */
+function scoreResumeForTarget({
+  student = null,
+  resumeData = null,
+  resumeText = '',
+  jdAnalysis = null,
+  sourceType = 'profile',
+}) {
+  // 1. Resolve Text to evaluate
+  let textToEvaluate = typeof resumeText === 'string' ? resumeText : '';
+  if (!textToEvaluate.trim()) {
+    if (resumeData) {
+      textToEvaluate = renderResumeDataToText(resumeData);
+    } else if (student?.resumeProfile) {
+      try {
+        const { normalizeResumeDataFromProfile } = require('../resumeBuilder/resumeBuilderService');
+        const synthData = normalizeResumeDataFromProfile(student.resumeProfile, student.user, student);
+        textToEvaluate = renderResumeDataToText(synthData);
+      } catch (_) {
+        textToEvaluate = renderResumeDataToText({
+          contact: {
+            fullName: student.user?.name || student.name || 'Candidate Name',
+            email: student.user?.email || student.email || '',
+            phone: student.phone || '',
+          },
+          summary: student.resumeProfile.summary || '',
+          skills: [{ category: 'Technical Skills', items: (student.resumeProfile.skills || []).map((s) => (typeof s === 'object' ? s.name : s)).filter(Boolean) }],
+          experience: student.resumeProfile.experience || [],
+          projects: student.resumeProfile.projects || [],
+          education: student.resumeProfile.education || [],
+          certifications: student.resumeProfile.certifications || [],
+        });
+      }
+    }
+  }
+
+  // 2. Resolve Student / Profile Data for structural scoring
+  let studentData = null;
+  if (sourceType === 'upload' && student?.resumeProfile) {
+    studentData = student;
+  } else if (resumeData && typeof resumeData === 'object') {
+    const flatSkills = Array.isArray(resumeData.skills)
+      ? resumeData.skills.flatMap((c) => (typeof c === 'string' ? [c] : c.items || []))
+      : [];
+    studentData = {
+      skills: flatSkills,
+      resumeProfile: {
+        skills: flatSkills.map((s) => ({ name: s })),
+        experience: resumeData.experience || [],
+        projects: resumeData.projects || [],
+        education: resumeData.education || [],
+        summary: resumeData.summary || '',
+      },
+      phone: resumeData.contact?.phone || student?.phone || '',
+      user: { email: resumeData.contact?.email || student?.user?.email || '' },
+      degree: student?.degree || '',
+      department: student?.branch || student?.department || '',
+    };
+  } else if (student) {
+    studentData = student;
+  } else {
+    studentData = { skills: [], resumeProfile: { skills: [] }, user: {} };
+  }
+
+  // 3. Resolve Target Data (JD Analysis)
+  const requiredSkills = normalizeSkillList(jdAnalysis?.requiredSkills || []);
+  const preferredSkills = normalizeSkillList(jdAnalysis?.preferredSkills || []);
+  const totalTargetSkills = requiredSkills.length + preferredSkills.length;
+  const isGeneral =
+    jdAnalysis?.type === 'general' ||
+    totalTargetSkills === 0;
+
+  const targetData = {
+    requiredSkills,
+    preferredSkills,
+    minYearsExperience: typeof jdAnalysis?.minYearsExperience === 'number' ? jdAnalysis.minYearsExperience : 0,
+    education: jdAnalysis?.education || '',
+    roleTitle: jdAnalysis?.roleTitle || 'Target Role',
+  };
+
+  // 4. Compute ATS Score
+  const atsResult = computeAtsScore(studentData, targetData, textToEvaluate);
+
+  // 5. Structure Breakdown and Scale for General Mode
+  let effectiveAtsScore = 0;
+  let breakdown = null;
+
+  if (isGeneral) {
+    const exp = atsResult.breakdown?.experienceMatch ?? 10;
+    const edu = atsResult.breakdown?.educationMatch ?? 5;
+    const struct = atsResult.breakdown?.structure ?? 0;
+    const imp = atsResult.breakdown?.impact ?? 0;
+    const verbs = atsResult.breakdown?.actionVerbs ?? 0;
+    const fmt = atsResult.breakdown?.formatting ?? 0;
+
+    const applicableSum = exp + edu + struct + imp + verbs + fmt;
+    effectiveAtsScore = Math.min(100, Math.round((applicableSum / 65) * 100));
+
+    breakdown = {
+      keywordMatch: null,
+      experience: exp,
+      experienceMatch: exp,
+      education: edu,
+      educationMatch: edu,
+      structure: struct,
+      impact: imp,
+      actionVerbs: verbs,
+      formatting: fmt,
+    };
+  } else {
+    effectiveAtsScore = atsResult.atsScore ?? 0;
+    const exp = atsResult.breakdown?.experienceMatch ?? 10;
+    const edu = atsResult.breakdown?.educationMatch ?? 5;
+
+    breakdown = {
+      keywordMatch: atsResult.breakdown?.keywordMatch ?? 0,
+      experience: exp,
+      experienceMatch: exp,
+      education: edu,
+      educationMatch: edu,
+      structure: atsResult.breakdown?.structure ?? 0,
+      impact: atsResult.breakdown?.impact ?? 0,
+      actionVerbs: atsResult.breakdown?.actionVerbs ?? 0,
+      formatting: atsResult.breakdown?.formatting ?? 0,
+    };
+  }
+
+  const sourceNameMap = {
+    upload: 'Uploaded PDF',
+    profile: 'College Profile',
+    text: 'Pasted Text',
+    tailored: 'Tailored Resume',
+  };
+
+  return {
+    atsScore: effectiveAtsScore,
+    breakdown,
+    matchedSkills: atsResult.matchedSkills || [],
+    missingRequired: atsResult.missingRequired || [],
+    missingPreferred: atsResult.missingPreferred || [],
+    experienceDetails: atsResult.experienceDetails,
+    educationDetails: atsResult.educationDetails,
+    reasons: atsResult.reasons || [],
+    isGeneral,
+    generalNote: isGeneral ? 'score excludes keyword match, no job selected' : null,
+    sourceType,
+    sourceName: sourceNameMap[sourceType] || 'Resume Source',
+    evaluatedTextLength: textToEvaluate.length,
+  };
+}
+
+/**
  * Validates bullet rewrite to strictly prevent hallucinations
  * Rejects suggestions introducing skills, employers, numbers, or technologies
  * not present in the resume or not clearly marked as "[add your real number]".
@@ -703,6 +961,17 @@ JSON SCHEMA:
 async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
   const force = options.force === true;
 
+  // Hydrate student.user if only an ObjectId reference was supplied
+  if (student && student.user && (!student.user.email || !student.user.name)) {
+    try {
+      const User = require('../../models/User');
+      const userDoc = await User.findById(student.user._id || student.user).select('name email');
+      if (userDoc) {
+        student.user = userDoc;
+      }
+    } catch (_) {}
+  }
+
   // 1. Resolve Resume Text & Profile
   const profile = student.resumeProfile;
   if (!profile || !profile.skills || profile.status === 'none') {
@@ -730,6 +999,10 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
   let preferredSkills = [];
   let minYearsExperience = 0;
   let targetEducation = '';
+  let jdSource = 'rules';
+  let jdCached = false;
+
+  const forceRefreshJd = options.refreshJd === true || options.forceRefreshJd === true;
 
   if (target.drive) {
     targetType = 'drive';
@@ -743,32 +1016,39 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
     if (requiredSkills.length === 0 && preferredSkills.length === 0) {
       const extractedFromDrive = await analyzeJobDescription(
         `Role: ${drive.role || ''}\nTitle: ${drive.title || ''}\nDescription: ${drive.description || ''}`,
-        { userId: student.user?._id || student.user }
+        { userId: student.user?._id || student.user, forceRefresh: forceRefreshJd }
       );
       requiredSkills = extractedFromDrive.requiredSkills;
       preferredSkills = extractedFromDrive.preferredSkills;
       minYearsExperience = extractedFromDrive.minYearsExperience;
       targetEducation = extractedFromDrive.education;
+      jdSource = extractedFromDrive.source || 'rules';
+      jdCached = Boolean(extractedFromDrive.cached);
     }
     rawJd = `Role: ${drive.role || ''}\nTitle: ${drive.title || ''}\nDescription: ${drive.description || ''}`;
   } else if (target.jdText) {
     targetType = 'jd';
     rawJd = String(target.jdText).trim().slice(0, 8000);
-    const analyzedJd = await analyzeJobDescription(rawJd, { userId: student.user?._id || student.user });
+    const analyzedJd = await analyzeJobDescription(rawJd, {
+      userId: student.user?._id || student.user,
+      forceRefresh: forceRefreshJd,
+    });
     targetTitle = analyzedJd.roleTitle || 'Pasted Job Description';
     requiredSkills = analyzedJd.requiredSkills;
     preferredSkills = analyzedJd.preferredSkills;
     minYearsExperience = analyzedJd.minYearsExperience;
     targetEducation = analyzedJd.education;
+    jdSource = analyzedJd.source || 'rules';
+    jdCached = Boolean(analyzedJd.cached);
   }
 
-  // Compute Target Cache Key
+  // Compute Target Cache Key with SCORING_VERSION
   const targetContent = targetType === 'drive'
     ? `drive:${target.drive._id.toString()}`
     : `jd:${rawJd}`;
   const targetHash = crypto.createHash('sha256').update(targetContent).digest('hex');
   const resumeHash = profile.resumeHash || crypto.createHash('sha256').update(resumeText || bullets.join(' ')).digest('hex');
-  const cacheKey = `${resumeHash}_${targetHash}`;
+  const cacheKey = `v${SCORING_VERSION}_${resumeHash}_${targetHash}`;
 
   // Check Cache (only if not forced and stored result exists)
   if (!force && student.resumeAnalysis && student.resumeAnalysis.cacheKey === cacheKey) {
@@ -780,15 +1060,20 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
     };
   }
 
-  // 3. Compute Deterministic Score
-  const targetData = { requiredSkills, preferredSkills, minYearsExperience, education: targetEducation };
-  const scoreResult = computeAtsScore(student, targetData, resumeText);
+  // 3. Compute Deterministic Score via scoreResumeForTarget
+  const targetData = { requiredSkills, preferredSkills, minYearsExperience, education: targetEducation, roleTitle: targetTitle };
+  const scoreResult = scoreResumeForTarget({
+    student,
+    resumeText,
+    jdAnalysis: targetData,
+    sourceType: 'upload',
+  });
 
   // If target has no extractable requirements, return score null immediately
-  if (scoreResult.atsScore === null) {
+  if (requiredSkills.length === 0 && preferredSkills.length === 0) {
     const responsePayload = {
       atsScore: null,
-      reason: scoreResult.reason,
+      reason: 'no_extractable_requirements',
       breakdown: scoreResult.breakdown,
       matchedSkills: [],
       missingRequired: [],
@@ -805,6 +1090,9 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
       rewrites: [],
       learningOrder: [],
       source: 'rules',
+      jdSource,
+      jdCached,
+      sourceName: 'Uploaded Resume',
       cached: false,
       generatedAt: new Date(),
       target: {
@@ -942,6 +1230,9 @@ ${redactedJd}
     rewrites: finalRewrites,
     learningOrder: finalLearningOrder,
     source,
+    jdSource,
+    jdCached,
+    sourceName: 'Uploaded Resume',
     cached: false,
     generatedAt: new Date(),
     target: {
@@ -962,6 +1253,7 @@ ${redactedJd}
 }
 
 module.exports = {
+  SCORING_VERSION,
   ACTION_VERBS,
   METRICS_REGEX,
   ResumeAnalysisZodSchema,
@@ -969,4 +1261,6 @@ module.exports = {
   validateBulletRewrite,
   generateRuleBasedAnalysis,
   analyzeResumeAgainstTarget,
+  renderResumeDataToText,
+  scoreResumeForTarget,
 };

@@ -80,7 +80,7 @@ const analyzeTargetHandler = async (req, res, next) => {
  */
 const generateMatchReportHandler = async (req, res, next) => {
   try {
-    const { resumeData, target } = req.body || {};
+    const { resumeData, target, sourceType } = req.body || {};
     if (!resumeData || typeof resumeData !== 'object') {
       return res.status(400).json({
         success: false,
@@ -88,9 +88,11 @@ const generateMatchReportHandler = async (req, res, next) => {
       });
     }
 
-    const result = generateMatchReport({
+    const result = await generateMatchReport({
+      studentUserId: req.user?._id,
       resumeData,
       target,
+      sourceType: sourceType || 'profile',
     });
 
     res.status(200).json({
@@ -128,13 +130,14 @@ const getBaseResume = async (req, res, next) => {
  */
 const tailorResumeHandler = async (req, res, next) => {
   try {
-    const { resumeData, driveId, jobDescription } = req.body;
+    const { resumeData, driveId, jobDescription, sourceType } = req.body || {};
 
     const result = await tailorResume({
       studentUserId: req.user._id,
       baseResumeData: resumeData,
       driveId,
       jobDescription,
+      sourceType: sourceType || 'profile',
     });
 
     res.status(200).json({

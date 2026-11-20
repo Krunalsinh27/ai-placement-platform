@@ -33,6 +33,7 @@ const {
   Drive,
   AiUsage,
   ResumeVersion,
+  JdAnalysisCache,
 } = require('../models');
 
 const mockProvider = require('../services/ai/providers/mockProvider');
@@ -182,6 +183,8 @@ async function runResumeBuilderTests() {
       phone: '9876501234',
       skills: ['javascript', 'nodejs', 'mongodb', 'react'],
       resumeProfile: {
+        status: 'parsed',
+        source: 'llm',
         summary: 'Passionate computer science engineer with experience in distributed backend APIs and database indexing.',
         skills: [{ name: 'javascript' }, { name: 'nodejs' }, { name: 'mongodb' }, { name: 'react' }, { name: 'redis' }],
         experience: [
@@ -1251,6 +1254,231 @@ async function runResumeBuilderTests() {
     } catch (err) {
       fail('Banned inflation words & match report numeric fields', err);
     }
+
+    // =========================================================================
+    // TEST 13: ATS Score Parity between Resume AI and Resume Builder Before
+    // Verifies parity across two distinct student fixtures and JDs
+    // =========================================================================
+    console.log('\n--- TEST 13: Resume AI vs Resume Builder Before Parity (Two Fixtures) ---');
+    try {
+      // -----------------------------------------------------------------------
+      // Fixture 1: Student A (Node.js/Full Stack) against Full Stack JD
+      // -----------------------------------------------------------------------
+      const jdFixture1 = `
+        Full Stack Node.js Engineer
+        Tech Innovators Inc.
+        Requirements:
+        - Strong experience in Node.js, Express, MongoDB, and Redis.
+        - Familiarity with React and REST APIs.
+        - Bachelor's degree in Computer Science.
+      `;
+
+      // 1.1 Resume AI analysis
+      const aiRes1 = await fetch(`${BASE_URL}/students/me/resume/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ jdText: jdFixture1, force: true }),
+      });
+      assert.strictEqual(aiRes1.status, 200, 'Resume AI analyze must return 200 for Fixture 1');
+      const aiData1 = await aiRes1.json();
+      assert.strictEqual(aiData1.success, true);
+      assert.strictEqual(typeof aiData1.atsScore, 'number');
+
+      // 1.2 Resume Builder wizard Steps 1-3 with source=upload
+      const srcRes1 = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ type: 'upload' }),
+      });
+      assert.strictEqual(srcRes1.status, 200, 'Resume Builder source=upload must return 200');
+      const srcData1 = await srcRes1.json();
+
+      const targetRes1 = await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({ jobDescription: jdFixture1 }),
+      });
+      assert.strictEqual(targetRes1.status, 200);
+      const targetData1 = await targetRes1.json();
+
+      const matchRes1 = await fetch(`${BASE_URL}/resume-builder/match-report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenA}`,
+        },
+        body: JSON.stringify({
+          resumeData: srcData1.resumeData,
+          target: targetData1.target,
+          sourceType: 'upload',
+        }),
+      });
+      assert.strictEqual(matchRes1.status, 200);
+      const matchData1 = await matchRes1.json();
+
+      assert.strictEqual(
+        matchData1.matchReport.atsScore,
+        aiData1.atsScore,
+        `Fixture 1: Builder Before (${matchData1.matchReport.atsScore}%) must equal Resume AI (${aiData1.atsScore}%)`
+      );
+      assert.strictEqual(
+        matchData1.matchReport.breakdown.keywordMatch,
+        aiData1.breakdown.keywordMatch,
+        'Fixture 1 keywordMatch breakdown must match exactly'
+      );
+      assert.strictEqual(
+        matchData1.matchReport.breakdown.structure,
+        aiData1.breakdown.structure,
+        'Fixture 1 structure breakdown must match exactly'
+      );
+      assert.strictEqual(
+        matchData1.matchReport.breakdown.impact,
+        aiData1.breakdown.impact,
+        'Fixture 1 impact breakdown must match exactly'
+      );
+
+      // -----------------------------------------------------------------------
+      // Fixture 2: Student B (Python Backend) against Python/Django JD
+      // -----------------------------------------------------------------------
+      const studentBDoc = await Student.findOne({ enrollmentNo: 'RB-ENR-002' });
+      assert.ok(studentBDoc, 'Student B document must exist');
+      const userBDoc = await User.findById(studentBDoc.user);
+      assert.ok(userBDoc, 'User B document must exist');
+      const tokenBFixture = createToken(userBDoc);
+
+      studentBDoc.resumeProfile = {
+        status: 'parsed',
+        source: 'llm',
+        summary: 'Aspiring software developer with expertise in Python backend architectures, Django REST framework, and PostgreSQL databases.',
+        skills: [{ name: 'python' }, { name: 'django' }, { name: 'postgresql' }, { name: 'docker' }, { name: 'rest api' }],
+        experience: [
+          {
+            title: 'Python Backend Intern',
+            company: 'DataTech Innovations',
+            location: 'Hyderabad',
+            duration: 'June 2024 - August 2024',
+            bullets: [
+              'Built automation scripts and REST APIs in Python and Django',
+              'Collaborated on database schema design and migrations in PostgreSQL',
+            ],
+          },
+        ],
+        projects: [
+          {
+            title: 'Scalable Microservices Gateway',
+            technologies: ['python', 'docker', 'postgresql'],
+            duration: '2 months',
+            bullets: [
+              'Developed API gateway containerized with Docker for load balancing',
+            ],
+          },
+        ],
+        education: [
+          {
+            degree: 'Bachelor of Technology',
+            institution: 'Apex Institute of Technology',
+            field: 'Information Technology',
+            year: '2025',
+          },
+        ],
+      };
+      await studentBDoc.save();
+
+      const jdFixture2 = `
+        Python Backend Engineer
+        PyScale Data Systems
+        Requirements:
+        - Strong experience in Python, Django, and PostgreSQL.
+        - Knowledge of REST APIs and Docker.
+        - Bachelor's degree in Information Technology.
+      `;
+
+      // 2.1 Resume AI analysis
+      const aiRes2 = await fetch(`${BASE_URL}/students/me/resume/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenBFixture}`,
+        },
+        body: JSON.stringify({ jdText: jdFixture2, force: true }),
+      });
+      assert.strictEqual(aiRes2.status, 200, 'Resume AI analyze must return 200 for Fixture 2');
+      const aiData2 = await aiRes2.json();
+      assert.strictEqual(aiData2.success, true);
+      assert.strictEqual(typeof aiData2.atsScore, 'number');
+
+      // 2.2 Resume Builder wizard Steps 1-3 with source=upload
+      const srcRes2 = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenBFixture}`,
+        },
+        body: JSON.stringify({ type: 'upload' }),
+      });
+      assert.strictEqual(srcRes2.status, 200);
+      const srcData2 = await srcRes2.json();
+
+      const targetRes2 = await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenBFixture}`,
+        },
+        body: JSON.stringify({ jobDescription: jdFixture2 }),
+      });
+      assert.strictEqual(targetRes2.status, 200);
+      const targetData2 = await targetRes2.json();
+
+      const matchRes2 = await fetch(`${BASE_URL}/resume-builder/match-report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenBFixture}`,
+        },
+        body: JSON.stringify({
+          resumeData: srcData2.resumeData,
+          target: targetData2.target,
+          sourceType: 'upload',
+        }),
+      });
+      assert.strictEqual(matchRes2.status, 200);
+      const matchData2 = await matchRes2.json();
+
+      assert.strictEqual(
+        matchData2.matchReport.atsScore,
+        aiData2.atsScore,
+        `Fixture 2: Builder Before (${matchData2.matchReport.atsScore}%) must equal Resume AI (${aiData2.atsScore}%)`
+      );
+      assert.strictEqual(
+        matchData2.matchReport.breakdown.keywordMatch,
+        aiData2.breakdown.keywordMatch,
+        'Fixture 2 keywordMatch breakdown must match exactly'
+      );
+      assert.strictEqual(
+        matchData2.matchReport.breakdown.structure,
+        aiData2.breakdown.structure,
+        'Fixture 2 structure breakdown must match exactly'
+      );
+      assert.strictEqual(
+        matchData2.matchReport.breakdown.impact,
+        aiData2.breakdown.impact,
+        'Fixture 2 impact breakdown must match exactly'
+      );
+
+      pass(`Builder before score equals Resume AI score for same uploaded resume + JD across two different fixtures (Fixture 1: ${aiData1.atsScore}%, Fixture 2: ${aiData2.atsScore}%)`);
+    } catch (err) {
+      fail('Resume AI vs Resume Builder Before Parity', err);
+    }
   } finally {
     console.log('\n--- CLEANING UP TEST FIXTURES ---');
     try {
@@ -1270,6 +1498,7 @@ async function runResumeBuilderTests() {
         await College.deleteMany({ _id: { $in: cleanupColleges } });
       }
       await Company.deleteMany({ name: 'CloudScale Technologies Ltd' });
+      await JdAnalysisCache.deleteMany({});
     } catch (cleanupErr) {
       console.warn('Cleanup error:', cleanupErr.message);
     }

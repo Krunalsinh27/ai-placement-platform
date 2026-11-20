@@ -8,7 +8,7 @@ class GroqProvider {
     this.endpoint = 'https://api.groq.com/openai/v1/chat/completions';
   }
 
-  async generateCompletion({ systemPrompt, userPrompt, model, timeoutMs = 20000 }) {
+  async generateCompletion({ systemPrompt, userPrompt, model, temperature = 0.1, timeoutMs = 20000 }) {
     const apiKey = process.env.AI_API_KEY;
     if (!apiKey) {
       throw new Error('Groq AI API key is missing');
@@ -32,7 +32,7 @@ class GroqProvider {
             { role: 'user', content: userPrompt },
           ],
           response_format: { type: 'json_object' },
-          temperature: 0.1,
+          temperature: typeof temperature === 'number' ? temperature : 0.1,
         }),
         signal: controller.signal,
       });

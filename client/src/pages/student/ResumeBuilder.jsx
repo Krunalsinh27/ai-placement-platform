@@ -352,6 +352,7 @@ const ResumeBuilder = () => {
           roleTitle: 'General Software Engineer',
           keywords: keywordChips,
         },
+        sourceType,
       });
 
       if (res.data?.success && res.data.matchReport) {
@@ -449,6 +450,7 @@ const ResumeBuilder = () => {
         resumeData,
         driveId: targetType === 'drive' ? selectedDriveId : null,
         jobDescription: targetType === 'jd' ? customJdText.trim() : '',
+        sourceType,
       };
 
       const res = await api.post('/students/me/resume-builder/tailor', payload);
@@ -1214,7 +1216,9 @@ const ResumeBuilder = () => {
                   {/* Score Highlights */}
                   <div className="grid grid-cols-2 gap-3 text-center">
                     <div className="p-3 rounded-xl border border-indigo-200 bg-indigo-50/40">
-                      <div className="text-[11px] font-semibold text-indigo-700 uppercase">ATS Readiness</div>
+                      <div className="text-[11px] font-semibold text-indigo-700 uppercase">
+                        Source resume ({matchReport.sourceName || (sourceType === 'upload' ? 'Uploaded PDF' : sourceType === 'text' ? 'Pasted Text' : 'College Profile')}):
+                      </div>
                       <div className="text-2xl font-bold text-indigo-900 mt-0.5">
                         {matchReport.atsScore !== null && matchReport.atsScore !== undefined ? `${matchReport.atsScore}%` : '0%'}
                       </div>
@@ -1230,6 +1234,14 @@ const ResumeBuilder = () => {
                         {matchReport.matchScore !== null && matchReport.matchScore !== undefined ? `${matchReport.matchScore}%` : 'N/A (General)'}
                       </div>
                     </div>
+                  </div>
+
+                  {/* Help Tooltip */}
+                  <div className="text-[11px] text-slate-500 bg-slate-50 rounded-xl p-2.5 border border-slate-200/70 flex items-start gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Why scores may differ:</strong> Resume AI evaluates your uploaded PDF file text directly, while Resume Builder evaluates your active source ({matchReport.sourceName || (sourceType === 'upload' ? 'Uploaded PDF' : sourceType === 'text' ? 'Pasted Text' : 'College Profile')}).
+                    </span>
                   </div>
 
                   {/* ATS Breakdown Bars */}
@@ -1465,16 +1477,28 @@ const ResumeBuilder = () => {
 
                   {/* ATS Score Progress Gauge */}
                   {tailoredAtsScore !== null && (
-                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-emerald-900 font-medium">
-                        <TrendingUp className="w-4 h-4 text-emerald-600" />
-                        <span>Baseline: <strong>{baselineAtsScore}%</strong></span>
-                        <ArrowRight className="w-3 h-3 text-emerald-500" />
-                        <span>Tailored: <strong className="text-emerald-700 text-sm">{tailoredAtsScore}%</strong></span>
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-wrap items-center gap-2 text-emerald-900 font-medium">
+                          <TrendingUp className="w-4 h-4 text-emerald-600" />
+                          <span>
+                            Source resume ({sourceType === 'upload' ? 'Uploaded PDF' : sourceType === 'text' ? 'Pasted Text' : 'College Profile'}): <strong>{baselineAtsScore}%</strong>
+                          </span>
+                          <ArrowRight className="w-3 h-3 text-emerald-500" />
+                          <span>
+                            Tailored resume: <strong className="text-emerald-700 text-sm">{tailoredAtsScore}%</strong>
+                          </span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold text-[10px]">
+                          +{Math.max(0, tailoredAtsScore - (baselineAtsScore || 0))} pts
+                        </span>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold text-[10px]">
-                        +{Math.max(0, tailoredAtsScore - (baselineAtsScore || 0))} pts
-                      </span>
+                      <div className="text-[10px] text-slate-500 bg-white/80 rounded-lg p-1.5 border border-emerald-100 flex items-start gap-1">
+                        <Info className="w-3 h-3 text-emerald-600 shrink-0 mt-0.5" />
+                        <span>
+                          Why scores differ: Resume AI evaluates your uploaded PDF file text directly, while Resume Builder evaluates your active source document ({sourceType === 'upload' ? 'Uploaded PDF' : sourceType === 'text' ? 'Pasted Text' : 'College Profile'}) and updates as you tailor.
+                        </span>
+                      </div>
                     </div>
                   )}
 

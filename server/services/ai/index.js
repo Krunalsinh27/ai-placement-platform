@@ -44,6 +44,7 @@ const {
 } = require('./matchingEngine');
 
 const {
+  SCORING_VERSION,
   ACTION_VERBS,
   METRICS_REGEX,
   ResumeAnalysisZodSchema,
@@ -51,12 +52,15 @@ const {
   validateBulletRewrite,
   generateRuleBasedAnalysis,
   analyzeResumeAgainstTarget,
+  renderResumeDataToText,
+  scoreResumeForTarget,
 } = require('./resumeAnalyzer');
 
 const {
   analyzeJobDescription,
   extractJdRequirementsWithRules,
   JdAnalysisZodSchema,
+  isSkillIndividuallyRequired,
 } = require('./jdAnalyzer');
 
 const {
@@ -105,6 +109,7 @@ module.exports = {
   generateApplicantExplanation,
 
   // Resume Analyzer
+  SCORING_VERSION,
   ACTION_VERBS,
   METRICS_REGEX,
   ResumeAnalysisZodSchema,
@@ -112,11 +117,14 @@ module.exports = {
   validateBulletRewrite,
   generateRuleBasedAnalysis,
   analyzeResumeAgainstTarget,
+  renderResumeDataToText,
+  scoreResumeForTarget,
 
   // JD Analyzer
   analyzeJobDescription,
   extractJdRequirementsWithRules,
   JdAnalysisZodSchema,
+  isSkillIndividuallyRequired,
 
   // Embeddings & Semantic Matching
   getSkillEmbedding,

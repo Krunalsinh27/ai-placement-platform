@@ -22,10 +22,16 @@ const {
   Drive,
   Application,
   AiUsage,
+  JdAnalysisCache,
 } = require('../models');
 
 const { Readable } = require('stream');
 const mockProvider = require('../services/ai/providers/mockProvider');
+const { getJdHash } = require('../services/ai/jdAnalyzer');
+const {
+  generateMatchReport,
+  loadResumeSource,
+} = require('../services/resumeBuilder/resumeBuilderService');
 const {
   computeMatchScore,
   normalizeSkill,
@@ -2374,6 +2380,250 @@ async function runAiFeatureTests() {
     assert.strictEqual(invalidRes.code, 'INVALID_PDF', 'Error code must be INVALID_PDF');
     console.log('✓ OCR fallback triggers correctly on scanned PDFs and validates magic bytes\n');
 
+    // =================================================================
+    // TEST 37: ATS Score Consistency & JD Analysis Cache Parity
+    // =================================================================
+    console.log('TEST 37: Verifying JD Analysis Cache, Stable Extraction, and Resume AI vs Builder ATS Parity...');
+
+    const consistencyJdText = `
+      Backend Software Engineer
+      Tech Innovators Inc.
+      Requirements:
+      - 3+ years experience in Node.js, Express, MongoDB, and Redis.
+      - Strong knowledge of REST APIs, Docker, and Microservices.
+      - Preferred: AWS, Kubernetes, and GraphQL.
+      - Bachelor's degree in Computer Science.
+    `;
+
+    // 1. JD extraction caching and spy on AI client
+    const aiClient = require('../services/ai/aiClient');
+    let aiCallCount = 0;
+    const origCallAi = aiClient.callAiWithQuotaAndRetry;
+    aiClient.callAiWithQuotaAndRetry = async (...args) => {
+      aiCallCount++;
+      return origCallAi(...args);
+    };
+
+    // First call: extracts and caches
+    const jdAnalysis1 = await analyzeJobDescription(consistencyJdText, { userId: createdUserIds[0] });
+    assert.ok(jdAnalysis1);
+    assert.ok(jdAnalysis1.requiredSkills.includes('nodejs'));
+    assert.strictEqual(jdAnalysis1.cached, false, 'First call should not be from cache');
+    const firstCallCount = aiCallCount;
+
+    // Verify JdAnalysisCache has stored it
+    const expectedHash = getJdHash(consistencyJdText);
+    const cachedDoc1 = await JdAnalysisCache.findOne({ hash: expectedHash });
+    assert.ok(cachedDoc1, 'JdAnalysisCache document must exist for hashed JD');
+    assert.strictEqual(cachedDoc1.source, 'ai');
+
+    // Second call: must hit cache and NOT invoke AI client
+    const jdAnalysis2 = await analyzeJobDescription(consistencyJdText, { userId: createdUserIds[0] });
+    assert.strictEqual(jdAnalysis2.cached, true, 'Second call must be marked as cached');
+    assert.strictEqual(aiCallCount, firstCallCount, 'AI client call count must NOT increase on cache hit');
+    assert.deepStrictEqual(jdAnalysis1.requiredSkills, jdAnalysis2.requiredSkills, 'Cached skills must match exactly');
+
+    // Changing one word in JD produces a new cache entry
+    const modifiedJdText = consistencyJdText + '\nAdditional requirement: Golang development.';
+    const modHash = getJdHash(modifiedJdText);
+    assert.notStrictEqual(modHash, expectedHash, 'Modifying JD text must change the sha256 hash');
+    const jdAnalysisMod = await analyzeJobDescription(modifiedJdText, { userId: createdUserIds[0] });
+    assert.strictEqual(jdAnalysisMod.cached, false, 'Modified JD should not hit the previous cache');
+    const cachedDocMod = await JdAnalysisCache.findOne({ hash: modHash });
+    assert.ok(cachedDocMod, 'A new JdAnalysisCache document must exist for the modified JD');
+
+    // Disjunctive list test: "languages such as JavaScript, Python, Java, or C++"
+    mockProvider.mockJdResponse = {
+      roleTitle: 'Software Developer',
+      requiredSkills: ['JavaScript', 'Python'],
+      preferredSkills: ['Java', 'C++'],
+      minYearsExperience: 2,
+      education: 'Bachelor',
+      softSkills: [],
+    };
+
+    const disjunctiveJd = `
+      Software Developer
+      Requirements:
+      - Proficiency in languages such as JavaScript, Python, Java, or C++.
+    `;
+
+    const disjunctiveAnalysis = await analyzeJobDescription(disjunctiveJd, {
+      userId: createdUserIds[0],
+      forceRefresh: true,
+    });
+
+    // Verify C++ and Java are not both added as hard requirements if the AI marked them preferred
+    const disjunctiveReq = disjunctiveAnalysis.requiredSkills;
+    const hasBothJavaAndCpp = disjunctiveReq.includes('c++') && disjunctiveReq.includes('java');
+    assert.strictEqual(
+      hasBothJavaAndCpp,
+      false,
+      'C++ and Java must NOT both be added as hard requirements when AI marked them preferred'
+    );
+    assert.ok(disjunctiveReq.includes('javascript'));
+    assert.ok(disjunctiveReq.includes('python'));
+    assert.ok(disjunctiveAnalysis.preferredSkills.includes('c++'));
+    assert.ok(disjunctiveAnalysis.preferredSkills.includes('java'));
+    mockProvider.mockJdResponse = null;
+
+    // With AI disabled (AI_PROVIDER=rules), rules result is cached with 1-hour TTL (expiresAt)
+    const prevProvider = process.env.AI_PROVIDER;
+    process.env.AI_PROVIDER = 'rules';
+    const rulesJdText = `
+      Frontend Engineer
+      Requirements: React, TypeScript, Tailwind CSS, Next.js.
+    `;
+    const rulesHash = getJdHash(rulesJdText);
+    const testUserForTtl = new mongoose.Types.ObjectId();
+    const rulesJdAnalysis = await analyzeJobDescription(rulesJdText, { userId: testUserForTtl, forceRefresh: true });
+    assert.strictEqual(rulesJdAnalysis.source, 'rules', 'Extraction must be marked with source rules');
+    const rulesCachedDoc = await JdAnalysisCache.findOne({ hash: rulesHash });
+    assert.ok(rulesCachedDoc, 'Rules extraction must be cached in JdAnalysisCache');
+    assert.strictEqual(rulesCachedDoc.source, 'rules');
+    assert.ok(rulesCachedDoc.expiresAt, 'Cache entry must have expiresAt');
+    const rulesTtlHours = (rulesCachedDoc.expiresAt.getTime() - rulesCachedDoc.createdAt.getTime()) / (1000 * 60 * 60);
+    assert.ok(Math.abs(rulesTtlHours - 1) < 0.1, `Rules cache TTL must be 1 hour (got ${rulesTtlHours.toFixed(2)})`);
+
+    // Switch AI back to available (mock) and call without forceRefresh:
+    // It must replace the 1-hour rules cache with an AI extraction that has 30 days TTL
+    process.env.AI_PROVIDER = prevProvider;
+    mockProvider.mockJdResponse = {
+      roleTitle: 'Frontend Engineer',
+      requiredSkills: ['React', 'TypeScript'],
+      preferredSkills: ['Tailwind CSS', 'Next.js'],
+      minYearsExperience: 1,
+      education: 'B.Tech',
+      softSkills: [],
+    };
+    const aiReplacedAnalysis = await analyzeJobDescription(rulesJdText, { userId: testUserForTtl });
+    assert.strictEqual(aiReplacedAnalysis.source, 'ai', 'Rules cache entry must be replaced by AI extraction when AI is available');
+    const aiCachedDoc = await JdAnalysisCache.findOne({ hash: rulesHash });
+    assert.strictEqual(aiCachedDoc.source, 'ai', 'Cache document must now have source ai');
+    const aiTtlDays = (aiCachedDoc.expiresAt.getTime() - aiCachedDoc.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+    assert.ok(Math.abs(aiTtlDays - 30) < 0.1, `AI cache TTL must be 30 days (got ${aiTtlDays.toFixed(2)})`);
+    mockProvider.mockJdResponse = null;
+
+    // Restore spy
+    aiClient.callAiWithQuotaAndRetry = origCallAi;
+
+    // 2. Duplicate scoring of the same resume and JD gives IDENTICAL score (even with force: true)
+    await AiUsage.deleteMany({ user: createdUserIds[0] });
+    const testStudentForParity = await Student.findById(createdStudentIds[0]).populate('user').populate('college');
+    testStudentForParity.resumeProfile = {
+      status: 'parsed',
+      source: 'llm',
+      skills: [
+        { name: 'python', confirmedByStudent: true, foundInResume: true },
+        { name: 'react', confirmedByStudent: true, foundInResume: true },
+        { name: 'nodejs', confirmedByStudent: true, foundInResume: true },
+        { name: 'mongodb', confirmedByStudent: true, foundInResume: true },
+        { name: 'redis', confirmedByStudent: true, foundInResume: true },
+        { name: 'docker', confirmedByStudent: true, foundInResume: true },
+      ],
+      experience: [
+        {
+          title: 'Software Development Intern',
+          company: 'Acme Labs',
+          duration: '6 months',
+          bullets: [
+            'Built REST APIs using Node.js and Express',
+            'Optimized MongoDB queries by 35% through indexing',
+          ],
+        },
+      ],
+      projects: [
+        {
+          title: 'Distributed Task Queue',
+          technologies: ['Node.js', 'Redis', 'MongoDB'],
+          bullets: [
+            'Engineered an asynchronous task queue with retry backoff',
+          ],
+        },
+      ],
+      education: [
+        {
+          degree: 'B.Tech',
+          institution: 'Apex Institute of Technology',
+          field: 'Computer Science and Engineering',
+          year: '2025',
+        },
+      ],
+      summary: 'Full Stack Developer experienced in modern web technologies and distributed systems.',
+      resumeHash: 'alice_parity_hash_37',
+    };
+    await testStudentForParity.save();
+
+    const parityTarget = { jdText: consistencyJdText };
+
+    // Re-Analyze (force=true) twice
+    const resumeAiScoreRun1 = await analyzeResumeAgainstTarget(testStudentForParity, parityTarget, { force: true });
+    const resumeAiScoreRun2 = await analyzeResumeAgainstTarget(testStudentForParity, parityTarget, { force: true });
+    assert.strictEqual(
+      resumeAiScoreRun1.atsScore,
+      resumeAiScoreRun2.atsScore,
+      `ATS score must be identical on repeat scoring: ${resumeAiScoreRun1.atsScore} vs ${resumeAiScoreRun2.atsScore}`
+    );
+    assert.deepStrictEqual(
+      resumeAiScoreRun1.breakdown,
+      resumeAiScoreRun2.breakdown,
+      'Breakdown must be identical on repeat scoring'
+    );
+
+    // Verify SCORING_VERSION is part of resumeAnalysis cacheKey (v2_...)
+    const { SCORING_VERSION } = require('../services/ai');
+    assert.strictEqual(SCORING_VERSION, 2, 'SCORING_VERSION must be at 2');
+    assert.ok(
+      testStudentForParity.resumeAnalysis?.cacheKey?.startsWith(`v${SCORING_VERSION}_`),
+      `resumeAnalysis cacheKey must start with v${SCORING_VERSION}_ (got ${testStudentForParity.resumeAnalysis?.cacheKey})`
+    );
+
+    // 3. Resume AI and Resume Builder "before" score give identical score for the same uploaded resume + JD
+    const builderTarget = {
+      type: 'jd',
+      roleTitle: jdAnalysis1.roleTitle,
+      requiredSkills: jdAnalysis1.requiredSkills,
+      preferredSkills: jdAnalysis1.preferredSkills,
+      minYearsExperience: jdAnalysis1.minYearsExperience,
+      education: jdAnalysis1.education,
+    };
+
+    // Load resume source as 'upload'
+    const loadedSource = await loadResumeSource({
+      studentUserId: testStudentForParity.user._id,
+      type: 'upload',
+    });
+
+    const builderReport = await generateMatchReport({
+      studentUserId: testStudentForParity.user._id,
+      resumeData: loadedSource.resumeData,
+      target: builderTarget,
+      sourceType: 'upload',
+    });
+
+    assert.strictEqual(
+      builderReport.atsScore,
+      resumeAiScoreRun1.atsScore,
+      `Resume AI (${resumeAiScoreRun1.atsScore}%) and Resume Builder Before (${builderReport.atsScore}%) must match identically for the same uploaded resume and JD`
+    );
+    assert.strictEqual(
+      builderReport.breakdown.keywordMatch,
+      resumeAiScoreRun1.breakdown.keywordMatch,
+      'Keywords score must match between Resume AI and Builder'
+    );
+    assert.strictEqual(
+      builderReport.breakdown.structure,
+      resumeAiScoreRun1.breakdown.structure,
+      'Structure score must match between Resume AI and Builder'
+    );
+    assert.strictEqual(
+      builderReport.breakdown.impact,
+      resumeAiScoreRun1.breakdown.impact,
+      'Impact score must match between Resume AI and Builder'
+    );
+
+    console.log(`✓ Parity confirmed: Resume AI ATS=${resumeAiScoreRun1.atsScore}% exactly matches Resume Builder Before ATS=${builderReport.atsScore}%\n`);
+
     console.log('=================================================================');
     console.log('            ALL AI & MATCHING TESTS PASSED (100%)                ');
     console.log('=================================================================\n');
@@ -2387,6 +2637,7 @@ async function runAiFeatureTests() {
     await College.deleteMany({ code: { $in: ['AICOL-A', 'AICOL-B'] } });
     await Company.deleteMany({ email: { $in: ['hiring@neuraltech.com', 'recruiter@othercorp.com'] } });
     await AiUsage.deleteMany({});
+    await JdAnalysisCache.deleteMany({});
 
     for (const filePath of createdFiles) {
       if (fs.existsSync(filePath)) {

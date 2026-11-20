@@ -27,6 +27,7 @@ const MockInterviewSession = require('./MockInterviewSession');
 const ResumeVersion = require('./ResumeVersion');
 const AiCallLog = require('./AiCallLog');
 const ConversationMeta = require('./ConversationMeta');
+const JdAnalysisCache = require('./JdAnalysisCache');
 
 module.exports = {
   User,
@@ -58,4 +59,5 @@ module.exports = {
   ResumeVersion,
   AiCallLog,
   ConversationMeta,
+  JdAnalysisCache,
 };

@@ -7,7 +7,7 @@ class GeminiProvider {
     this.name = 'gemini';
   }
 
-  async generateCompletion({ systemPrompt, userPrompt, model, timeoutMs = 20000 }) {
+  async generateCompletion({ systemPrompt, userPrompt, model, temperature = 0.1, timeoutMs = 20000 }) {
     const apiKey = process.env.AI_API_KEY;
     if (!apiKey) {
       throw new Error('Gemini API key is missing');
@@ -37,7 +37,7 @@ class GeminiProvider {
           ],
           generationConfig: {
             responseMimeType: 'application/json',
-            temperature: 0.1,
+            temperature: typeof temperature === 'number' ? temperature : 0.1,
           },
         }),
         signal: controller.signal,

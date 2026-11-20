@@ -17,7 +17,12 @@
 
 const mongoose = require('mongoose');
 const { Student, Drive, College, ResumeVersion, AiUsage } = require('../../models');
-const { computeAtsScore } = require('../ai/resumeAnalyzer');
+const {
+  computeAtsScore,
+  scoreResumeForTarget,
+  renderResumeDataToText,
+} = require('../ai/resumeAnalyzer');
+const { extractResumeText } = require('../ai/resumeTextExtractor');
 const { analyzeJobDescription } = require('../ai/jdAnalyzer');
 const { callAiWithQuotaAndRetry } = require('../ai/aiClient');
 const { redactPII } = require('../ai/redactor');
@@ -798,9 +803,7 @@ async function analyzeResumeTarget({ studentUserId, driveId = null, jobDescripti
   }
 
   if (jobDescription && typeof jobDescription === 'string' && jobDescription.trim()) {
-    // Zero quota / rules path if rules are sufficient or AI is disabled
-    const { extractJdRequirementsWithRules } = require('../ai/jdAnalyzer');
-    const parsed = extractJdRequirementsWithRules(jobDescription.trim().slice(0, 10000));
+    const parsed = await analyzeJobDescription(jobDescription.trim(), { userId: studentUserId });
 
     const keywords = Array.from(
       new Set([
@@ -815,12 +818,14 @@ async function analyzeResumeTarget({ studentUserId, driveId = null, jobDescripti
       target: {
         type: 'jd',
         roleTitle: parsed.roleTitle || 'Target Role',
-        company: 'Target Employer',
+        company: parsed.company || 'Target Employer',
         requiredSkills: parsed.requiredSkills || [],
         preferredSkills: parsed.preferredSkills || [],
         minYearsExperience: parsed.minYearsExperience || 0,
         education: parsed.education || '',
         keywords,
+        source: parsed.source || 'rules',
+        cached: Boolean(parsed.cached),
       },
     };
   }
@@ -842,17 +847,19 @@ async function analyzeResumeTarget({ studentUserId, driveId = null, jobDescripti
 
 /**
  * Generates match report for Step 3 of Resume Builder wizard:
- * - ATS Score & category breakdown via computeAtsScore
+ * - ATS Score & category breakdown via unified scoreResumeForTarget
  * - Match Score via computeMatchScore
  * - Missing skills mapped to curated learning resources (never inventing URLs)
  * - Weak sections analysis & prioritized fixes list
  *
  * @param {Object} params
+ * @param {string} [params.studentUserId]
  * @param {Object} params.resumeData
  * @param {Object} params.target
- * @returns {Object} Match report payload
+ * @param {string} [params.sourceType='profile']
+ * @returns {Promise<Object>} Match report payload
  */
-function generateMatchReport({ resumeData, target }) {
+async function generateMatchReport({ studentUserId = null, resumeData, target, sourceType = 'profile' }) {
   if (!resumeData || typeof resumeData !== 'object') {
     const err = new Error('Valid resume data is required');
     err.status = 400;
@@ -869,6 +876,35 @@ function generateMatchReport({ resumeData, target }) {
     education: '',
   };
 
+  let student = null;
+  if (studentUserId) {
+    student = await Student.findOne({ user: studentUserId }).populate('college');
+    if (!student && mongoose.Types.ObjectId.isValid(studentUserId)) {
+      student = await Student.findById(studentUserId).populate('college');
+    }
+  }
+
+  // Determine text to evaluate
+  let textToEvaluate = '';
+  if (sourceType === 'upload' && student?.resumeUrl) {
+    try {
+      const extracted = await extractResumeText(student.resumeUrl);
+      if (extracted?.text) textToEvaluate = extracted.text;
+    } catch (_) {}
+  }
+  if (!textToEvaluate) {
+    textToEvaluate = renderResumeDataToText(resumeData);
+  }
+
+  // 1. Compute ATS Score via unified scoreResumeForTarget
+  const scoreResult = scoreResumeForTarget({
+    student,
+    resumeData,
+    resumeText: textToEvaluate,
+    jdAnalysis: effectiveTarget,
+    sourceType,
+  });
+
   const flatSkills = (resumeData.skills || []).flatMap((c) =>
     typeof c === 'string' ? [c] : c.items || []
   );
@@ -882,12 +918,9 @@ function generateMatchReport({ resumeData, target }) {
       education: resumeData.education || [],
       summary: resumeData.summary || '',
     },
-    phone: resumeData.contact?.phone || '',
-    user: { email: resumeData.contact?.email || '' },
+    phone: resumeData.contact?.phone || student?.phone || '',
+    user: { email: resumeData.contact?.email || student?.user?.email || '' },
   };
-
-  // 1. Compute ATS Score
-  const atsResult = computeAtsScore(studentData, effectiveTarget);
 
   // 2. Compute Match Score
   let matchScore = null;
@@ -903,9 +936,9 @@ function generateMatchReport({ resumeData, target }) {
   }
 
   // 3. Matched and Missing Skills
-  const matchedSkills = atsResult.matchedSkills || [];
-  const missingRequired = atsResult.missingRequired || [];
-  const missingPreferred = atsResult.missingPreferred || [];
+  const matchedSkills = scoreResult.matchedSkills || [];
+  const missingRequired = scoreResult.missingRequired || [];
+  const missingPreferred = scoreResult.missingPreferred || [];
   const allMissing = Array.from(new Set([...missingRequired, ...missingPreferred]));
 
   // 4. Map curated learning resources for missing skills
@@ -1001,38 +1034,14 @@ function generateMatchReport({ resumeData, target }) {
     });
   }
 
-  const breakdown = {
-    keywordMatch: isGeneral ? null : (atsResult.breakdown?.keywordMatch ?? 0),
-    experience: atsResult.breakdown?.experienceMatch ?? 10,
-    experienceMatch: atsResult.breakdown?.experienceMatch ?? 10,
-    education: atsResult.breakdown?.educationMatch ?? 5,
-    educationMatch: atsResult.breakdown?.educationMatch ?? 5,
-    structure: atsResult.breakdown?.structure ?? 0,
-    impact: atsResult.breakdown?.impact ?? 0,
-    actionVerbs: atsResult.breakdown?.actionVerbs ?? 0,
-    formatting: atsResult.breakdown?.formatting ?? 0,
-  };
-
-  const applicableSum =
-    breakdown.experienceMatch +
-    breakdown.educationMatch +
-    breakdown.structure +
-    breakdown.impact +
-    breakdown.actionVerbs +
-    breakdown.formatting;
-  const generalAtsScore = Math.min(100, Math.round((applicableSum / 65) * 100));
-
-  const effectiveAtsScore =
-    isGeneral || atsResult.atsScore === null || atsResult.atsScore === undefined
-      ? generalAtsScore
-      : atsResult.atsScore;
-
   return {
     matchScore,
-    atsScore: effectiveAtsScore,
-    isGeneral,
-    generalNote: isGeneral ? 'score excludes keyword match, no job selected' : null,
-    breakdown,
+    atsScore: scoreResult.atsScore,
+    isGeneral: scoreResult.isGeneral,
+    generalNote: scoreResult.generalNote,
+    breakdown: scoreResult.breakdown,
+    sourceName: scoreResult.sourceName,
+    sourceType,
     matchedSkills,
     missingRequired,
     missingPreferred,
@@ -1081,7 +1090,13 @@ JSON SCHEMA:
 /**
  * Tailors a candidate's resume to a target Drive or Job Description
  */
-async function tailorResume({ studentUserId, baseResumeData, driveId = null, jobDescription = '' }) {
+async function tailorResume({
+  studentUserId,
+  baseResumeData,
+  driveId = null,
+  jobDescription = '',
+  sourceType = 'profile',
+}) {
   // 1. Quota check
   const quotaCheck = await AiUsage.canMakeCall(studentUserId, 'tailor', 'student');
   if (!quotaCheck.allowed) {
@@ -1119,8 +1134,9 @@ async function tailorResume({ studentUserId, baseResumeData, driveId = null, job
     }
   } else if (jobDescription && jobDescription.trim()) {
     try {
-      const parsedJd = await analyzeJobDescription(jobDescription, studentUserId);
+      const parsedJd = await analyzeJobDescription(jobDescription.trim(), { userId: studentUserId });
       targetRole = parsedJd.roleTitle || targetRole;
+      targetCompany = parsedJd.company || targetCompany;
       requiredSkills = (parsedJd.requiredSkills || []).map(normalizeSkill);
       preferredSkills = (parsedJd.preferredSkills || []).map(normalizeSkill);
       minYearsExp = parsedJd.minYearsExperience || 0;
@@ -1142,14 +1158,25 @@ async function tailorResume({ studentUserId, baseResumeData, driveId = null, job
   // Compile base resume if not supplied
   const baseResume = baseResumeData || (await compileBaseResume(studentUserId));
 
-  // 4. Compute Baseline ATS Score
-  const baseStudentData = {
-    skills: (baseResume.skills || []).flatMap((c) => c.items || []),
-    experience: baseResume.experience || [],
-    projects: baseResume.projects || [],
-    education: baseResume.education || [],
-  };
-  const baselineAts = computeAtsScore(baseStudentData, targetReqs);
+  // 4. Compute Baseline ATS Score via unified scoreResumeForTarget
+  let baselineResumeText = '';
+  if (sourceType === 'upload' && student?.resumeUrl) {
+    try {
+      const extracted = await extractResumeText(student.resumeUrl);
+      if (extracted?.text) baselineResumeText = extracted.text;
+    } catch (_) {}
+  }
+  if (!baselineResumeText) {
+    baselineResumeText = renderResumeDataToText(baseResume);
+  }
+
+  const baselineScoreResult = scoreResumeForTarget({
+    student,
+    resumeData: baseResume,
+    resumeText: baselineResumeText,
+    jdAnalysis: targetReqs,
+    sourceType,
+  });
 
   // 5. Tailor Skills: Reorder matching skills to front of categories
   const tailoredSkills = (baseResume.skills || []).map((cat) => {
@@ -1290,14 +1317,15 @@ ${redactPII(resumeCorpus.slice(0, 3000))}
     projects: tailoredProjectsFinal,
   };
 
-  // 9. Compute Tailored ATS Score
-  const tailoredStudentData = {
-    skills: tailoredSkills.flatMap((c) => c.items || []),
-    experience: tailoredExperience,
-    projects: tailoredProjectsFinal,
-    education: tailoredResume.education || [],
-  };
-  const tailoredAts = computeAtsScore(tailoredStudentData, targetReqs);
+  // 9. Compute Tailored ATS Score via unified scoreResumeForTarget
+  const tailoredResumeText = renderResumeDataToText(tailoredResume);
+  const tailoredScoreResult = scoreResumeForTarget({
+    student,
+    resumeData: tailoredResume,
+    resumeText: tailoredResumeText,
+    jdAnalysis: targetReqs,
+    sourceType: 'tailored',
+  });
 
   // 10. Record quota usage if rule-based fallback occurred (not already recorded by callAiWithQuotaAndRetry)
   if (!aiSuccess) {
@@ -1306,36 +1334,22 @@ ${redactPII(resumeCorpus.slice(0, 3000))}
     } catch (_) {}
   }
 
-  const getScoreNumber = (scoreObj) => {
-    if (scoreObj && typeof scoreObj.atsScore === 'number') {
-      return scoreObj.atsScore;
-    }
-    const bd = scoreObj?.breakdown || {};
-    const appSum =
-      (bd.experienceMatch ?? 10) +
-      (bd.educationMatch ?? 5) +
-      (bd.structure ?? 0) +
-      (bd.impact ?? 0) +
-      (bd.actionVerbs ?? 0) +
-      (bd.formatting ?? 0);
-    return Math.min(100, Math.round((appSum / 65) * 100));
-  };
-
-  const baselineScoreNum = getScoreNumber(baselineAts);
-  const tailoredScoreNum = getScoreNumber(tailoredAts);
-
   return {
     baseResume,
     tailoredResume,
-    baselineAtsScore: baselineScoreNum,
-    tailoredAtsScore: tailoredScoreNum,
-    scoreDelta: Math.max(0, tailoredScoreNum - baselineScoreNum),
-    matchedSkills: tailoredAts.matchedSkills,
-    missingRequired: tailoredAts.missingRequired,
-    missingPreferred: tailoredAts.missingPreferred,
+    baselineAtsScore: baselineScoreResult.atsScore,
+    tailoredAtsScore: tailoredScoreResult.atsScore,
+    scoreDelta: Math.max(0, tailoredScoreResult.atsScore - baselineScoreResult.atsScore),
+    matchedSkills: tailoredScoreResult.matchedSkills,
+    missingRequired: tailoredScoreResult.missingRequired,
+    missingPreferred: tailoredScoreResult.missingPreferred,
     bulletRewrites: validatedRewrites,
     targetRole,
     targetCompany,
+    sourceType,
+    sourceName: baselineScoreResult.sourceName,
+    breakdown: tailoredScoreResult.breakdown,
+    baselineBreakdown: baselineScoreResult.breakdown,
   };
 }
 
