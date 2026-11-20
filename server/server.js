@@ -149,6 +149,24 @@ app.get('/api/health', async (req, res) => {
   res.status(200).json(responseBody);
 });
 
+// Enforce Cache-Control: no-store on all authenticated API responses
+app.use('/api', (req, res, next) => {
+  const hasAuth = Boolean(
+    req.headers.authorization ||
+    req.cookies?.token ||
+    req.cookies?.refreshToken
+  );
+  if (hasAuth) {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store',
+    });
+  }
+  next();
+});
+
 // API Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/colleges/public', publicApiLimiter);

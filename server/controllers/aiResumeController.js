@@ -666,13 +666,18 @@ const analyzeResumeHandler = async (req, res, next) => {
     const analysis = await analyzeResumeAgainstTarget(student, target, {
       force: isForce,
       refreshJd: isRefreshJd,
+      signal: req.abortSignal,
+      isAborted: req.isAborted,
     });
+
+    if (res.headersSent || req.timedOut) return;
 
     return res.status(200).json({
       success: true,
       ...analysis,
     });
   } catch (error) {
+    if (res.headersSent || req.timedOut) return;
     next(error);
   }
 };

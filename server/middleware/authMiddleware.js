@@ -5,6 +5,14 @@ const { User, Student } = require('../models');
  * Protect routes - Verifies JWT in Authorization header
  */
 const protect = async (req, res, next) => {
+  // Always send no-store headers on protected authenticated API responses
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'Surrogate-Control': 'no-store',
+  });
+
   let token;
 
   if (

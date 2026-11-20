@@ -36,6 +36,7 @@ const testSuites = [
   { name: 'test:security', file: 'tests/testSecurityHardening.js' },
   { name: 'test:seedguard', file: 'tests/testSeedGuard.js' },
   { name: 'test:redis', file: 'tests/testRedisDurable.js' },
+  { name: 'test:ratelimit', file: 'tests/testRedisRateLimitResilience.js' },
 ];
 
 async function ensureSeedInTestDb() {

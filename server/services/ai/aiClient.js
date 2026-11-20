@@ -219,7 +219,10 @@ async function callAiWithQuotaAndRetry({
   timeoutMs = CIRCUIT_CONFIG.defaultTimeoutMs,
   skipQuota = false,
   temperature = 0.1,
+  abortSignal = null,
+  isAborted = null,
 }) {
+  const isCancelled = () => Boolean(abortSignal?.aborted || (typeof isAborted === 'function' && isAborted()));
   // 1. Feature flag check
   if (!isAiFeatureEnabled(mode)) {
     return {
@@ -345,8 +348,8 @@ async function callAiWithQuotaAndRetry({
         // Record circuit breaker success
         recordCircuitSuccess(providerName);
 
-        // Record usage in daily quota tracker (skipped if skipQuota or assistant_title)
-        if (!skipQuota && mode !== 'assistant_title' && userId) {
+        // Record usage in daily quota tracker (skipped if skipQuota, assistant_title, or cancelled)
+        if (!skipQuota && mode !== 'assistant_title' && userId && !isCancelled()) {
           try {
             await AiUsage.recordCall(userId, mode);
           } catch (recErr) {

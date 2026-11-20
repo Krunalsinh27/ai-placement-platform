@@ -93,6 +93,17 @@ const resumeVersionSchema = new mongoose.Schema(
         },
       ],
       certifications: [{ type: String, trim: true }],
+      achievements: [{ type: String, trim: true }],
+      positionsOfResponsibility: [{ type: String, trim: true }],
+      awards: [{ type: String, trim: true }],
+      languages: [{ type: String, trim: true }],
+      interests: [{ type: String, trim: true }],
+      additionalSections: [
+        {
+          title: { type: String, default: '' },
+          lines: [{ type: String }],
+        },
+      ],
     },
     atsScore: {
       type: Number,
