@@ -52,6 +52,7 @@ class MockProvider {
     this.mockSkillGapResponse = null;
     this.mockWeeklySummaryResponse = null;
     this.mockTitleResponse = null;
+    this.lastTemperature = null;
   }
 
   /**
@@ -61,9 +62,10 @@ class MockProvider {
    * @param {string} options.userPrompt
    * @param {string} [options.mode] - 'parse' | 'explain'
    */
-  async generateCompletion({ systemPrompt, userPrompt, mode = 'parse' }) {
+  async generateCompletion({ systemPrompt, userPrompt, mode = 'parse', model = null, temperature = 0.1 }) {
     this.lastReceivedPrompt = { systemPrompt, userPrompt };
     this.lastReceivedPayload = userPrompt;
+    this.lastTemperature = temperature;
 
     if (this.forceDelayMs > 0) {
       await new Promise((r) => setTimeout(r, this.forceDelayMs));

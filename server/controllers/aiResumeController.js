@@ -571,7 +571,7 @@ const updateDriveSkills = async (req, res, next) => {
  */
 const analyzeResumeHandler = async (req, res, next) => {
   try {
-    const student = await Student.findOne({ user: req.user._id });
+    const student = await Student.findOne({ user: req.user._id }).populate('user', 'name email');
     if (!student) {
       return res.status(404).json({ success: false, message: 'Student profile not found' });
     }
@@ -583,7 +583,7 @@ const analyzeResumeHandler = async (req, res, next) => {
       });
     }
 
-    const { jdText, driveId, force } = req.body;
+    const { jdText, driveId, force, refreshJd } = req.body || {};
 
     if (!jdText && !driveId) {
       return res.status(400).json({
@@ -662,7 +662,11 @@ const analyzeResumeHandler = async (req, res, next) => {
     };
 
     const isForce = force === true || force === 'true' || req.query.force === 'true';
-    const analysis = await analyzeResumeAgainstTarget(student, target, { force: isForce });
+    const isRefreshJd = refreshJd === true || refreshJd === 'true' || req.query.refreshJd === 'true';
+    const analysis = await analyzeResumeAgainstTarget(student, target, {
+      force: isForce,
+      refreshJd: isRefreshJd,
+    });
 
     return res.status(200).json({
       success: true,

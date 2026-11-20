@@ -5,13 +5,20 @@
  * Falls back to deterministic rule-based extraction that splits required vs preferred skills.
  */
 
+const crypto = require('crypto');
 const { z } = require('zod');
 const {
   normalizeSkill,
   extractSkillsFromText,
   SKILL_REGEX,
 } = require('./skillsDictionary');
-const { callAiWithQuotaAndRetry } = require('./aiClient');
+const {
+  callAiWithQuotaAndRetry,
+  isAiConfigured,
+  getActiveProviderName,
+} = require('./aiClient');
+const { isAiFeatureEnabled } = require('../../utils/featureFlags');
+const JdAnalysisCache = require('../../models/JdAnalysisCache');
 
 // Strict Zod schema for validated JD extraction output
 const JdAnalysisZodSchema = z.object({
@@ -220,33 +227,119 @@ function extractJdRequirementsWithRules(rawJd) {
 
   return {
     roleTitle,
-    requiredSkills: cleanSkillArray(Array.from(requiredSet)),
-    preferredSkills: cleanSkillArray(Array.from(preferredSet)),
+    requiredSkills: cleanSkillArray(Array.from(requiredSet)).sort(),
+    preferredSkills: cleanSkillArray(Array.from(preferredSet)).sort(),
     minYearsExperience,
     education,
-    softSkills,
+    softSkills: softSkills.sort(),
     source: 'rules',
   };
 }
 
+// Disjunctive / grouped list indicators where skills belong to a group choice or illustrative examples
+const DISJUNCTIVE_REGEX = /\b(?:such\s+as|any\s+of|one\s+of|either\b|\bor\b|\be\.g\.|\bfor\s+example)\b/i;
+
 /**
- * Main JD Analysis function coordinating LLM extraction with Zod schema validation
- * and seamless fallback to rule-based analysis.
+ * Checks whether a candidate skill appears in the JD text as an individually required skill
+ * (i.e. on its own requirement bullet/sentence, not inside a disjunctive "or" / "such as" list).
+ *
+ * @param {string} skill
+ * @param {string} rawJd
+ * @returns {boolean}
+ */
+function isSkillIndividuallyRequired(skill, rawJd) {
+  if (!skill || !rawJd || typeof rawJd !== 'string') return false;
+  const normTarget = normalizeSkill(skill);
+  if (!normTarget) return false;
+
+  const lines = rawJd.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Check sentence segments within the line
+    const segments = trimmed.split(/(?<=[.;])\s+/).map((s) => s.trim()).filter(Boolean);
+
+    for (const seg of segments) {
+      const segSkills = extractSkillsFromText(seg).map(normalizeSkill);
+      if (!segSkills.includes(normTarget)) continue;
+
+      // If the segment contains disjunctive or example markers ("such as", "any of", "or", etc.)
+      if (DISJUNCTIVE_REGEX.test(seg)) {
+        continue;
+      }
+
+      // If segment is not explicitly marked preferred, it is individually required
+      if (!PREFERRED_INDICATORS.test(seg)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Computes deterministic SHA-256 hash of normalized job description text.
+ * Trims, collapses whitespace, and lowercases.
+ *
+ * @param {string} rawJd
+ * @returns {string} SHA-256 hex digest
+ */
+function getJdHash(rawJd) {
+  const normalized = (rawJd || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+/**
+ * Main JD Analysis function coordinating LLM extraction with Zod schema validation,
+ * 30-day SHA-256 cache, union agreement with rules, and stable sorting.
  *
  * @param {string} rawJd - Raw job description text
- * @param {Object} [options={}] - { userId }
- * @returns {Promise<Object>} { roleTitle, requiredSkills, preferredSkills, minYearsExperience, education, softSkills, source }
+ * @param {Object} [options={}] - { userId, forceRefresh: boolean }
+ * @returns {Promise<Object>} { roleTitle, requiredSkills, preferredSkills, minYearsExperience, education, softSkills, source, cached }
  */
 async function analyzeJobDescription(rawJd, options = {}) {
   const userId = options.userId || null;
+  const forceRefresh =
+    options.forceRefresh === true || options.refresh === true || options.refreshJd === true;
 
   if (!rawJd || typeof rawJd !== 'string' || !rawJd.trim()) {
     return extractJdRequirementsWithRules('');
   }
 
-  const cleanedJd = rawJd.trim().slice(0, 8000);
+  const hash = getJdHash(rawJd);
 
-  // Try LLM Extraction
+  // 1. Check cache first unless explicitly bypassing
+  if (!forceRefresh) {
+    try {
+      const cachedEntry = await JdAnalysisCache.findOne({ hash });
+      if (cachedEntry && cachedEntry.analysis) {
+        // If entry source is 'rules', it should only be used if AI is NOT currently available.
+        // When AI is available, rules cache entries must be replaced by an AI extraction on the next call.
+        const aiAvailable =
+          isAiConfigured() && getActiveProviderName() !== 'rules' && isAiFeatureEnabled('parse');
+        const canUseCache = cachedEntry.source === 'ai' || !aiAvailable;
+
+        if (canUseCache) {
+          return {
+            ...cachedEntry.analysis,
+            cached: true,
+            source: cachedEntry.source || cachedEntry.analysis.source || 'rules',
+          };
+        }
+      }
+    } catch (cacheReadErr) {
+      console.warn('[JdAnalyzer] Cache read error:', cacheReadErr.message);
+    }
+  }
+
+  const cleanedJd = rawJd.trim().slice(0, 8000);
+  const rulesResult = extractJdRequirementsWithRules(cleanedJd);
+
+  let finalResult = null;
+
+  // 2. Try LLM Extraction with temperature 0 for stability
   try {
     const userPrompt = `<JOB_DESCRIPTION>\n${cleanedJd}\n</JOB_DESCRIPTION>\n\nExtract the role title, required skills, preferred skills, minimum years of experience, education requirement, and soft skills from the job description above. Output strictly valid JSON conforming to the requested schema.`;
 
@@ -255,43 +348,117 @@ async function analyzeJobDescription(rawJd, options = {}) {
       userPrompt,
       mode: 'parse',
       userId,
+      temperature: 0,
       validateFn: (parsed) => JdAnalysisZodSchema.parse(parsed),
     });
 
     if (aiRes.success && aiRes.data) {
       const data = aiRes.data;
 
-      // Clean & normalize skills, preserving unknown skills
-      const rawReq = Array.isArray(data.requiredSkills) ? data.requiredSkills : [];
-      const rawPref = Array.isArray(data.preferredSkills) ? data.preferredSkills : [];
+      const aiRequired = cleanSkillArray(Array.isArray(data.requiredSkills) ? data.requiredSkills : []);
+      const aiPreferred = cleanSkillArray(Array.isArray(data.preferredSkills) ? data.preferredSkills : []);
+      const rulesRequired = rulesResult.requiredSkills || [];
+      const rulesPreferred = rulesResult.preferredSkills || [];
 
-      const requiredSkills = cleanSkillArray(rawReq);
-      const reqSet = new Set(requiredSkills);
+      // Union only for required skills that appear in the JD text as individually required.
+      // For "such as A, B, C or D" / "any of" / "or" lists, treat them as one group:
+      // keep the skills the AI listed, do not add grouped items as hard requirements if AI marked them preferred.
+      const finalRequiredSet = new Set(aiRequired);
 
-      // Preferred skills should not duplicate required skills
-      const preferredSkills = cleanSkillArray(rawPref).filter((s) => !reqSet.has(s));
+      for (const rSkill of rulesRequired) {
+        if (finalRequiredSet.has(rSkill)) continue;
 
-      // If LLM returned empty skills, fall back to rule-based
-      if (requiredSkills.length === 0 && preferredSkills.length === 0) {
-        return extractJdRequirementsWithRules(cleanedJd);
+        if (isSkillIndividuallyRequired(rSkill, cleanedJd)) {
+          finalRequiredSet.add(rSkill);
+        }
       }
 
-      return {
-        roleTitle: data.roleTitle ? String(data.roleTitle).trim().slice(0, 60) : 'Target Role',
-        requiredSkills,
-        preferredSkills,
-        minYearsExperience: typeof data.minYearsExperience === 'number' ? Math.max(0, data.minYearsExperience) : 0,
-        education: data.education ? String(data.education).trim() : '',
-        softSkills: Array.isArray(data.softSkills) ? data.softSkills.map((s) => String(s).trim().toLowerCase()) : [],
-        source: 'ai',
-      };
+      const unionRequired = Array.from(finalRequiredSet).sort();
+      const reqSet = new Set(unionRequired);
+
+      // Preferred skills should not duplicate required skills, sorted alphabetically
+      const finalPreferredSet = new Set();
+      for (const pSkill of aiPreferred) {
+        if (!reqSet.has(pSkill)) {
+          finalPreferredSet.add(pSkill);
+        }
+      }
+      for (const pSkill of rulesPreferred) {
+        if (!reqSet.has(pSkill)) {
+          finalPreferredSet.add(pSkill);
+        }
+      }
+      const unionPreferred = Array.from(finalPreferredSet).sort();
+
+      const softSkills = Array.from(
+        new Set([
+          ...(Array.isArray(data.softSkills) ? data.softSkills.map((s) => String(s).trim().toLowerCase()) : []),
+          ...(rulesResult.softSkills || []),
+        ])
+      ).sort();
+
+      // If both AI and rules found no skills, fall back to pure rules
+      if (unionRequired.length > 0 || unionPreferred.length > 0) {
+        finalResult = {
+          roleTitle: data.roleTitle
+            ? String(data.roleTitle).trim().slice(0, 60)
+            : rulesResult.roleTitle || 'Target Role',
+          requiredSkills: unionRequired,
+          preferredSkills: unionPreferred,
+          minYearsExperience:
+            typeof data.minYearsExperience === 'number'
+              ? Math.max(0, data.minYearsExperience)
+              : rulesResult.minYearsExperience || 0,
+          education: data.education ? String(data.education).trim() : rulesResult.education || '',
+          softSkills,
+          source: 'ai',
+        };
+      }
     }
   } catch (err) {
     console.warn('[JdAnalyzer] LLM extraction error, using rule-based fallback:', err.message);
   }
 
-  // Fallback to rule-based analysis
-  return extractJdRequirementsWithRules(cleanedJd);
+  // 3. Fallback to rule-based analysis if AI failed or was disabled
+  if (!finalResult) {
+    finalResult = {
+      ...rulesResult,
+      requiredSkills: (rulesResult.requiredSkills || []).sort(),
+      preferredSkills: (rulesResult.preferredSkills || []).sort(),
+      source: 'rules',
+    };
+  }
+
+  // 4. Save to JdAnalysisCache:
+  // - source 'rules' (AI unavailable) gets a 1-hour TTL (expiresAt field)
+  // - source 'ai' gets 30 days TTL (expiresAt field)
+  try {
+    const isRules = finalResult.source === 'rules';
+    const ttlMs = isRules
+      ? 60 * 60 * 1000 // 1 hour for rules
+      : 30 * 24 * 60 * 60 * 1000; // 30 days for AI
+
+    const expiresAt = new Date(Date.now() + ttlMs);
+
+    await JdAnalysisCache.findOneAndUpdate(
+      { hash },
+      {
+        hash,
+        analysis: finalResult,
+        source: finalResult.source || 'rules',
+        createdAt: new Date(),
+        expiresAt,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } catch (cacheWriteErr) {
+    console.warn('[JdAnalyzer] Cache write error:', cacheWriteErr.message);
+  }
+
+  return {
+    ...finalResult,
+    cached: false,
+  };
 }
 
 module.exports = {
@@ -300,4 +467,6 @@ module.exports = {
   extractJdRequirementsWithRules,
   cleanSkillArray,
   normalizeAndPreserveSkill,
+  getJdHash,
+  isSkillIndividuallyRequired,
 };

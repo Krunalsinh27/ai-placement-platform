@@ -218,6 +218,7 @@ async function callAiWithQuotaAndRetry({
   model = null,
   timeoutMs = CIRCUIT_CONFIG.defaultTimeoutMs,
   skipQuota = false,
+  temperature = 0.1,
 }) {
   // 1. Feature flag check
   if (!isAiFeatureEnabled(mode)) {
@@ -332,6 +333,7 @@ async function callAiWithQuotaAndRetry({
             userPrompt,
             mode,
             model: selectedModel,
+            temperature,
           }),
           timeoutMs,
           `Provider '${providerName}' completion`
