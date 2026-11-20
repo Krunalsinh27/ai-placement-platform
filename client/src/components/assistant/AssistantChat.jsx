@@ -44,6 +44,7 @@ import {
 import toast from 'react-hot-toast';
 import api, { getAccessToken } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { registerSessionResetHandler } from '../../utils/sessionManager';
 import SafeMarkdown from '../common/SafeMarkdown';
 import { groupConversationsByDate } from '../../utils/dateGrouping';
 
@@ -56,6 +57,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000
  */
 const AssistantChat = ({ role: propRole = null }) => {
   const { user } = useAuth();
+  const currentUserId = user?._id || user?.id || null;
   const activeRole = String(propRole || user?.role || 'tpo').toLowerCase();
 
   // State
@@ -138,6 +140,24 @@ const AssistantChat = ({ role: propRole = null }) => {
     fetchSuggestions();
   }, [activeRole]);
 
+  const resetChatState = React.useCallback(() => {
+    setConversations([]);
+    setActiveConversationId(null);
+    setMessages([]);
+    setInputQuestion('');
+    setIsStreaming(false);
+    setStreamStatus(null);
+    setDailyUsage({ used: 0, cap: 30, remaining: 30 });
+    setSuggestions([]);
+  }, []);
+
+  // Listen to session reset (logout, 401, cross-tab)
+  useEffect(() => {
+    return registerSessionResetHandler(() => {
+      resetChatState();
+    });
+  }, [resetChatState]);
+
   // Load user conversation list
   const loadConversations = async () => {
     try {
@@ -149,8 +169,11 @@ const AssistantChat = ({ role: propRole = null }) => {
   };
 
   useEffect(() => {
-    loadConversations();
-  }, []);
+    resetChatState();
+    if (currentUserId) {
+      loadConversations();
+    }
+  }, [currentUserId, resetChatState]);
 
   // Load specific conversation thread
   const selectConversation = async (conversationId) => {

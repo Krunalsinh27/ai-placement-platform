@@ -3,6 +3,7 @@ import axios from 'axios';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 let inMemoryToken = null;
+let authFailureHandler = null;
 
 export const setAccessToken = (token) => {
   inMemoryToken = token || null;
@@ -14,6 +15,10 @@ export const setAccessToken = (token) => {
 };
 
 export const getAccessToken = () => inMemoryToken;
+
+export const setAuthFailureHandler = (handler) => {
+  authFailureHandler = handler;
+};
 
 /**
  * Checks whether an HTTP method is idempotent and safe for automatic retry.
@@ -200,6 +205,11 @@ api.interceptors.response.use(
       // Only force logout on confirmed 401/403 unauthenticated response, not transient network errors
       if (lastRefreshErr?.response?.status === 401 || lastRefreshErr?.response?.status === 403) {
         setAccessToken(null);
+        if (typeof authFailureHandler === 'function') {
+          try {
+            authFailureHandler();
+          } catch (_) {}
+        }
         if (typeof window !== 'undefined' && window.location) {
           const currentPath = window.location.pathname || '';
           if (currentPath !== '/login' && currentPath !== '/register') {
@@ -207,7 +217,14 @@ api.interceptors.response.use(
               localStorage.removeItem('user');
               localStorage.removeItem('student');
             }
-            window.location.href = '/login';
+            if (typeof sessionStorage !== 'undefined') {
+              sessionStorage.clear();
+            }
+            if (typeof window.location.replace === 'function') {
+              window.location.replace('/login');
+            } else {
+              window.location.href = '/login';
+            }
           }
         }
       }

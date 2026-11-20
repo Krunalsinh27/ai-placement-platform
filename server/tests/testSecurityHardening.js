@@ -1282,6 +1282,48 @@ async function runSecurityHardeningTests() {
     );
     console.log('✓ Test database safety guard verified: strictly rejects non-_test databases with fatal exception\n');
 
+    // ==========================================
+    // SECTION 19: Authenticated API Responses Cache-Control: no-store Header Verification
+    // ==========================================
+    console.log('19. Testing Cache-Control: no-store on Authenticated API Responses...');
+    const tpoToken = generateAuthToken(tpoAUser);
+
+    // 1. Authenticated request to protected endpoint (GET /api/colleges/my/settings)
+    const authRes = await fetch(`${BASE_URL}/colleges/my/settings`, {
+      headers: {
+        Authorization: `Bearer ${tpoToken}`,
+      },
+    });
+    assert.strictEqual(authRes.status, 200);
+    const ccHeader = authRes.headers.get('cache-control') || '';
+    assert.ok(
+      ccHeader.includes('no-store'),
+      `Authenticated response Cache-Control must contain "no-store", got: "${ccHeader}"`
+    );
+    assert.ok(
+      ccHeader.includes('no-cache'),
+      `Authenticated response Cache-Control must contain "no-cache", got: "${ccHeader}"`
+    );
+    const pragmaHeader = authRes.headers.get('pragma') || '';
+    assert.strictEqual(pragmaHeader, 'no-cache');
+    const expiresHeader = authRes.headers.get('expires') || '';
+    assert.strictEqual(expiresHeader, '0');
+    console.log('✓ Authenticated API endpoint strictly returns Cache-Control: no-store, Pragma: no-cache, Expires: 0');
+
+    // 2. /api/auth/me endpoint with Bearer token
+    const authMeRes = await fetch(`${BASE_URL}/auth/me`, {
+      headers: {
+        Authorization: `Bearer ${tpoToken}`,
+      },
+    });
+    assert.strictEqual(authMeRes.status, 200);
+    const authMeCc = authMeRes.headers.get('cache-control') || '';
+    assert.ok(
+      authMeCc.includes('no-store'),
+      `/api/auth/me must return Cache-Control: no-store, got: "${authMeCc}"`
+    );
+    console.log('✓ /api/auth/me returns Cache-Control: no-store\n');
+
     // Clean up test documents
     await JobRequirement.deleteMany({ title: 'Software Engineer', batchYear: 2026 });
     await JobRequirement.deleteMany({ _id: { $in: [jobReqA._id, jobReqB._id] } });

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api, { setAccessToken } from '../services/api';
+import { clearSessionData, registerSessionResetHandler } from '../utils/sessionManager';
 
 const AuthContext = createContext(null);
 
@@ -27,8 +28,20 @@ export const AuthProvider = ({ children }) => {
     setStudent(null);
     setNetworkError(false);
     setIsWakingUp(false);
-    localStorage.removeItem('user');
-    localStorage.removeItem('student');
+    clearSessionData({ broadcast: false });
+  }, []);
+
+  // Register AuthContext reset handler with sessionManager
+  useEffect(() => {
+    const unregister = registerSessionResetHandler(() => {
+      setAccessToken(null);
+      setToken(null);
+      setUser(null);
+      setStudent(null);
+      setNetworkError(false);
+      setIsWakingUp(false);
+    });
+    return unregister;
   }, []);
 
   // Synchronize auth state on mount via httpOnly refresh cookie
@@ -201,17 +214,11 @@ export const AuthProvider = ({ children }) => {
     try {
       await api.post('/auth/logout');
     } catch (_) {}
+    clearSessionData({ broadcast: true });
     handleLocalLogout();
-
-    // Broadcast logout event across tabs
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        const channel = new BroadcastChannel('placement_auth_channel');
-        channel.postMessage({ type: 'LOGOUT' });
-        channel.close();
-      }
-    } catch (_) {}
-    localStorage.setItem('auth_logout_timestamp', Date.now().toString());
+    if (typeof window !== 'undefined' && window.location) {
+      window.location.replace('/login');
+    }
   };
 
   // Update student profile locally

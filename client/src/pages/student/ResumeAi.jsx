@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { registerSessionResetHandler } from '../../utils/sessionManager';
 import { openResumeInNewTab, downloadResumePdf } from '../../utils/resumeViewer';
 import { groupSkillsByCategory, SKILL_CATEGORIES } from '../../utils/skillCategorizer';
 import { formatISTDate, formatISTDateTime } from '../../utils/dateTime';
@@ -41,6 +42,10 @@ const SKILL_REGEX = /^[a-z0-9+#.\-/ ]{1,40}$/i;
 
 const ResumeAi = () => {
   const { user, student, updateStudent } = useAuth();
+  const currentUserId = user?._id || user?.id || null;
+
+  // Track the user ID whose data has been verified and loaded into component state
+  const [loadedUserId, setLoadedUserId] = useState(null);
 
   // State
   const [loading, setLoading] = useState(true);
@@ -73,34 +78,66 @@ const ResumeAi = () => {
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [targetError, setTargetError] = useState(null);
 
-  // 1. Fetch Resume Profile & Usage
-  const fetchResumeProfile = async () => {
+  // Reset all state on user change or session purge
+  const resetAllData = React.useCallback(() => {
+    setLoadedUserId(null);
+    setProfile(null);
+    setSkills([]);
+    setHasResume(false);
+    setResumeFilename(null);
+    setTargetAnalysis(null);
+    setDrives([]);
+    setAppliedDriveIds(new Set());
+    setDailyUsage({ used: 0, cap: 5, remaining: 5 });
+    setRateLimited(false);
+    setJdInput('');
+    setSelectedTargetDriveId('');
+    setTargetError(null);
+  }, []);
+
+  // Register session reset listener
+  useEffect(() => {
+    return registerSessionResetHandler(() => {
+      resetAllData();
+    });
+  }, [resetAllData]);
+
+  // 1. Fetch Resume Profile & Usage for target user
+  const fetchResumeProfile = async (targetUserId) => {
+    if (!targetUserId) return;
+    setLoading(true);
     try {
       const res = await api.get('/students/me/resume-profile');
-      if (res.data.success) {
-        setProfile(res.data.resumeProfile);
+      // Strictly verify that the user did not switch or log out while fetching
+      if (res.data?.success && (user?._id || user?.id) === targetUserId) {
+        setProfile(res.data.resumeProfile || null);
         setSkills(res.data.resumeProfile?.skills || []);
         setHasResume(Boolean(res.data.hasResume || student?.resumeUrl));
-        setResumeFilename(res.data.resumeFilename);
-        if (res.data.resumeAnalysis) {
-          setTargetAnalysis(res.data.resumeAnalysis);
-        }
+        setResumeFilename(res.data.resumeFilename || null);
+        setTargetAnalysis(res.data.resumeAnalysis || null);
         if (res.data.dailyUsage) {
           setDailyUsage(res.data.dailyUsage);
         }
         if (res.data.resumeProfile?.status === 'rate_limited') {
           setRateLimited(true);
         }
+        setLoadedUserId(targetUserId);
       }
     } catch (err) {
       console.warn('Could not load resume profile:', err);
+      if ((user?._id || user?.id) === targetUserId) {
+        setProfile(null);
+        setTargetAnalysis(null);
+        setLoadedUserId(null);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. Fetch Eligible Drives & Matching
-  const fetchEligibleDrives = async () => {
+  // 2. Fetch Eligible Drives & Matching for target user
+  const fetchEligibleDrives = async (targetUserId) => {
+    if (!targetUserId) return;
     setLoadingDrives(true);
     try {
       const [drivesRes, appsRes] = await Promise.all([
@@ -108,16 +145,18 @@ const ResumeAi = () => {
         api.get('/applications/my'),
       ]);
 
-      if (drivesRes.data.success) {
-        setDrives(drivesRes.data.drives || []);
-      }
-      if (appsRes.data.success) {
-        const idSet = new Set(
-          (appsRes.data.applications || []).map((app) =>
-            typeof app.drive === 'object' ? app.drive?._id : app.drive
-          )
-        );
-        setAppliedDriveIds(idSet);
+      if ((user?._id || user?.id) === targetUserId) {
+        if (drivesRes.data?.success) {
+          setDrives(drivesRes.data.drives || []);
+        }
+        if (appsRes.data?.success) {
+          const idSet = new Set(
+            (appsRes.data.applications || []).map((app) =>
+              typeof app.drive === 'object' ? app.drive?._id : app.drive
+            )
+          );
+          setAppliedDriveIds(idSet);
+        }
       }
     } catch (err) {
       console.warn('Could not load drives for matching:', err);
@@ -126,10 +165,21 @@ const ResumeAi = () => {
     }
   };
 
+  // Re-fetch only when the authenticated user id changes
   useEffect(() => {
-    fetchResumeProfile();
-    fetchEligibleDrives();
-  }, []);
+    resetAllData();
+    if (!currentUserId) {
+      setLoading(false);
+      setLoadingDrives(false);
+      return;
+    }
+    fetchResumeProfile(currentUserId);
+    fetchEligibleDrives(currentUserId);
+  }, [currentUserId]);
+
+  const isCurrentUserDataLoaded = Boolean(
+    currentUserId && loadedUserId && loadedUserId === currentUserId
+  );
 
   // Compute "Skills to Learn Next" from open drives (ignoring drives without skill requirements)
   const skillsToLearnNext = useMemo(() => {
@@ -763,7 +813,7 @@ Requirements:
           </div>
 
           <div className="flex items-center gap-2">
-            {targetAnalysis && (
+            {isCurrentUserDataLoaded && targetAnalysis && (
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
@@ -817,7 +867,7 @@ Requirements:
         )}
 
         {/* ANALYSIS RESULTS VIEW */}
-        {targetAnalysis && (
+        {isCurrentUserDataLoaded && targetAnalysis && (
           <div className="pt-4 border-t border-slate-100 space-y-6">
             {/* Top Row: Score Ring + Breakdown Bars */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
@@ -884,12 +934,6 @@ Requirements:
                         JD source: {targetAnalysis.jdSource === 'ai' ? 'AI' : 'Rules'} ({targetAnalysis.jdCached ? 'from cache' : 'fresh'})
                       </span>
                     )}
-                  </div>
-                  <div className="mt-2 text-[10px] text-slate-500 bg-slate-100/70 rounded-lg p-1.5 text-left border border-slate-200/50 flex items-start gap-1">
-                    <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
-                    <span>
-                      <strong>Why scores may differ:</strong> Resume AI evaluates your uploaded PDF file text directly, while Resume Builder evaluates your active source document ({targetAnalysis.sourceName || 'Uploaded Resume'}).
-                    </span>
                   </div>
                   <p className="text-[10px] text-slate-400 mt-2 max-w-[200px] leading-tight mx-auto italic">
                     Note: The ATS score is an automated algorithmic estimate based on resume-to-job description textual alignment. It is designed as an optimization guide and does not guarantee employer hiring outcomes.
