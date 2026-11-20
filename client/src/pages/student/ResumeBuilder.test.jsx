@@ -151,4 +151,20 @@ describe('ResumeBuilder Wizard & Responsive Layout Tests', () => {
     expect(sourceCode).toContain('Saved "${skill}" to personal learning list. (Not added to resume)');
     expect(sourceCode).toContain('Kept strictly in your study queue. Never injected into your resume');
   });
+
+  it('9. Displays "Source resume:" and "Tailored resume:" labels and score difference tooltip in Step 3 and Step 4', () => {
+    const filePath = path.resolve(__dirname, './ResumeBuilder.jsx');
+    const sourceCode = fs.readFileSync(filePath, 'utf-8');
+
+    // Step 3 shows Source resume with source name
+    expect(sourceCode).toContain('Source resume (');
+    expect(sourceCode).toContain('matchReport.sourceName');
+
+    // Step 4 shows Source resume and Tailored resume
+    expect(sourceCode).toContain('Tailored resume:');
+
+    // Both steps include explanatory tooltip on why scores differ
+    expect(sourceCode).toContain('Why scores may differ:');
+    expect(sourceCode).toContain('Resume AI evaluates your uploaded PDF file text directly');
+  });
 });
