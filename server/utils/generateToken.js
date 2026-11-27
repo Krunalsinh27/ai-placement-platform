@@ -19,9 +19,17 @@ const generateToken = (id) => {
  */
 const generateRefreshToken = (id) => {
   const secret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
-  return jwt.sign({ id, tokenType: 'refresh' }, secret, {
-    expiresIn: '7d',
-  });
+  return jwt.sign(
+    {
+      id,
+      tokenType: 'refresh',
+      jti: crypto.randomBytes(16).toString('hex'),
+    },
+    secret,
+    {
+      expiresIn: '7d',
+    }
+  );
 };
 
 /**

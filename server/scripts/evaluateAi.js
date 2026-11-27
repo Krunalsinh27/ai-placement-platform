@@ -16,6 +16,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
+const { getTestDbUri } = require('../tests/testHelper');
 const {
   analyzeJobDescription,
   extractJdRequirementsWithRules,
@@ -282,6 +284,12 @@ async function runEvaluation() {
   console.log('    PRODUCTION AI EVALUATION, STABILITY & BENCHMARK HARNESS    ');
   console.log('================================================================\n');
 
+  try {
+    await mongoose.connect(process.env.MONGO_URI_TEST || getTestDbUri());
+  } catch (dbErr) {
+    console.warn('Note: Running eval without active MongoDB connection:', dbErr.message);
+  }
+
   const reportSections = [];
   reportSections.push('# Production AI Benchmark & Evaluation Report\n');
   reportSections.push(`*Generated At:* ${new Date().toISOString()}\n`);
@@ -353,6 +361,7 @@ async function runEvaluation() {
     extractionResults.push({
       id: jdData.id,
       role: jdData.roleTitle.slice(0, 24),
+      source: extracted.source || 'rules',
       precision: (precision * 100).toFixed(1) + '%',
       recall: (recall * 100).toFixed(1) + '%',
       f1: (f1 * 100).toFixed(1) + '%',
@@ -363,12 +372,19 @@ async function runEvaluation() {
   const macroRecall = sumRecall / extractionResults.length;
   const macroF1 = sumF1 / extractionResults.length;
 
+  console.log(`Extraction Sources: ${extractionResults.map((r) => `${r.id}: ${r.source}`).join(', ')}`);
   console.log(`Macro F1-Score: ${(macroF1 * 100).toFixed(2)}% (Target: >= ${(F1_THRESHOLD * 100).toFixed(1)}%)`);
 
   reportSections.push('## 1. Skill & Job Description Extraction Metrics\n');
   reportSections.push(`- **Macro Precision:** ${(macroPrecision * 100).toFixed(2)}%`);
   reportSections.push(`- **Macro Recall:** ${(macroRecall * 100).toFixed(2)}%`);
   reportSections.push(`- **Macro F1-Score:** ${(macroF1 * 100).toFixed(2)}%\n`);
+  reportSections.push('| Fixture ID | Target Role | Extraction Source | Precision | Recall | F1 |');
+  reportSections.push('|---|---|---|---|---|---|');
+  for (const r of extractionResults) {
+    reportSections.push(`| ${r.id} | ${r.role} | ${r.source} | ${r.precision} | ${r.recall} | ${r.f1} |`);
+  }
+  reportSections.push('');
 
   // =========================================================================
   // SECTION 2: ATS Score Invariance & Stability
@@ -533,6 +549,7 @@ async function runEvaluation() {
   console.log('\n================================================================');
   console.log('       ALL AI EVALUATION BENCHMARKS PASSED (100%)       ');
   console.log('================================================================\n');
+  await mongoose.disconnect();
   process.exit(0);
 }
 

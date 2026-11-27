@@ -1,6 +1,7 @@
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
 process.env.AI_PROVIDER = 'mock';
+process.env.AI_PROVIDER_CHAIN = 'mock';
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -2468,7 +2469,9 @@ async function runAiFeatureTests() {
 
     // With AI disabled (AI_PROVIDER=rules), rules result is cached with 1-hour TTL (expiresAt)
     const prevProvider = process.env.AI_PROVIDER;
+    const prevProviderChain = process.env.AI_PROVIDER_CHAIN;
     process.env.AI_PROVIDER = 'rules';
+    delete process.env.AI_PROVIDER_CHAIN;
     const rulesJdText = `
       Frontend Engineer
       Requirements: React, TypeScript, Tailwind CSS, Next.js.
@@ -2487,6 +2490,7 @@ async function runAiFeatureTests() {
     // Switch AI back to available (mock) and call without forceRefresh:
     // It must replace the 1-hour rules cache with an AI extraction that has 30 days TTL
     process.env.AI_PROVIDER = prevProvider;
+    if (prevProviderChain) process.env.AI_PROVIDER_CHAIN = prevProviderChain;
     mockProvider.mockJdResponse = {
       roleTitle: 'Frontend Engineer',
       requiredSkills: ['React', 'TypeScript'],

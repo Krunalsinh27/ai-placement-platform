@@ -1,7 +1,7 @@
 const rateLimit = require('express-rate-limit');
 const { MemoryStore } = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
-const { isRedisConfigured, getRedisClient, getRateLimitRedisClient } = require('../config/redis');
+const { isRedisConfigured, getRedisClient, getRateLimitRedisClient, waitForClientReady } = require('../config/redis');
 
 const isTestEnv = () => process.env.NODE_ENV === 'test' && process.env.ENFORCE_RATE_LIMIT !== 'true';
 
@@ -15,17 +15,62 @@ const resetRateLimitCircuit = () => {
   sharedConsecutiveFailures = 0;
   sharedCircuitOpenUntil = 0;
   lastFallbackWarningTs = 0;
+  lastGeneralWarningTs = 0;
+};
+
+/**
+ * Classify Redis errors into safe categories and sanitize sensitive details.
+ * Never logs REDIS_URL, credentials, tokens, or request payloads.
+ */
+function classifyRedisError(err) {
+  if (!err) return { category: 'UNKNOWN', message: 'No error details' };
+  const msg = typeof err === 'string' ? err : err.message || '';
+  const code = err.code || '';
+
+  let category = 'COMMAND_ERROR';
+  if (code === 'ECONNREFUSED' || msg.includes('ECONNREFUSED')) {
+    category = 'CONNECTION_REFUSED';
+  } else if (code === 'ETIMEDOUT' || msg.includes('timed out') || msg.includes('ETIMEDOUT')) {
+    category = 'TIMEOUT';
+  } else if (msg.includes('enableOfflineQueue') || msg.includes("Stream isn't writeable") || msg.includes('not ready')) {
+    category = 'CLIENT_NOT_READY';
+  } else if (code === 'ENOTFOUND' || code === 'EHOSTUNREACH') {
+    category = 'NETWORK_UNREACHABLE';
+  } else if (msg.includes('circuit')) {
+    category = 'CIRCUIT_OPEN';
+  }
+
+  // Sanitize message: never include credentials, authentication tokens, URLs, or query strings
+  const sanitized = msg
+    .replace(/redis:\/\/[^\s@]+@/gi, 'redis://***@')
+    .replace(/rediss:\/\/[^\s@]+@/gi, 'rediss://***@');
+
+  return { category, message: sanitized };
+}
+
+/**
+ * Throttled warning: logs at most 1 warning per minute without the URL.
+ * Preserves the exact substring "Redis unavailable, using in-memory rate limits" for test and telemetry parity.
+ */
+const logFallbackWarning = (err = null, operation = 'rate_limit') => {
+  const now = Date.now();
+  if (now - lastFallbackWarningTs >= 60000) {
+    lastFallbackWarningTs = now;
+    const { category, message } = classifyRedisError(err);
+    console.warn(`[RateLimit] Redis unavailable, using in-memory rate limits [op: ${operation}, category: ${category}] - ${message}`);
+  }
 };
 
 /**
  * Throttled logger for general limiters: logs at most 1 warning per minute without the URL
  */
 const throttledGeneralStoreLogger = {
-  error: () => {
+  error: (err) => {
     const now = Date.now();
     if (now - lastGeneralWarningTs >= 60000) {
       lastGeneralWarningTs = now;
-      console.warn('[RateLimit] Redis unavailable, using in-memory rate limits');
+      const { category, message } = classifyRedisError(err);
+      console.warn(`[RateLimit] Redis unavailable, using in-memory rate limits [op: general_store, category: ${category}] - ${message}`);
     }
   },
   warn: () => {},
@@ -34,16 +79,60 @@ const throttledGeneralStoreLogger = {
 };
 
 /**
- * Throttled warning: logs at most 1 warning per minute without the URL
- * Exact message: "Redis unavailable, using in-memory rate limits"
+ * Specialized RedisStore wrapper for rate-limit-redis v6.0.2.
+ * - Non-blocking startup initialization (0ms startup overhead).
+ * - Asynchronous, safe, deduplicated script preloading when Redis client emits 'ready'.
+ * - Reconnection-aware: safely reloads Lua scripts into Redis on reconnect.
+ * - Unhandled-promise-rejection-safe: catches background script load errors so express-rate-limit never logs false startup errors.
  */
-const logFallbackWarning = () => {
-  const now = Date.now();
-  if (now - lastFallbackWarningTs >= 60000) {
-    lastFallbackWarningTs = now;
-    console.warn('[RateLimit] Redis unavailable, using in-memory rate limits');
+class GeneralRedisStore extends RedisStore {
+  constructor(options, client) {
+    super(options);
+    this.client = client;
+    this._preloadPromise = null;
+
+    if (client && typeof client.on === 'function') {
+      client.on('ready', () => {
+        this._safePreloadScripts();
+      });
+    }
   }
-};
+
+  _safePreloadScripts() {
+    if (!this.windowMs || !this.client || this.client.status !== 'ready') {
+      return Promise.resolve();
+    }
+    if (this._preloadPromise) {
+      return this._preloadPromise;
+    }
+
+    this._preloadPromise = Promise.all([
+      this.loadIncrementScript().catch(() => {}),
+      this.loadGetScript().catch(() => {}),
+    ])
+      .then(([incSha, getSha]) => {
+        if (incSha) this.incrementScriptSha = Promise.resolve(incSha);
+        if (getSha) this.getScriptSha = Promise.resolve(getSha);
+      })
+      .catch(() => {})
+      .finally(() => {
+        this._preloadPromise = null;
+      });
+
+    return this._preloadPromise;
+  }
+
+  init(options) {
+    this.windowMs = options.windowMs;
+    // Non-blocking initialization:
+    // If Redis is already ready, initiate preloading immediately.
+    // If Redis is connecting or offline, return immediately (0ms blocking time).
+    // The 'ready' listener and rate-limit-redis retryableIncrement handle script loading safely.
+    if (this.client && this.client.status === 'ready') {
+      this._safePreloadScripts();
+    }
+  }
+}
 
 /**
  * Fallback store that routes increments to Redis when available,
@@ -58,14 +147,38 @@ class FallbackRedisStore {
     this.customClient = customClient;
     this.consecutiveFailures = 0;
     this.circuitOpenUntil = 0;
+    this.client = null;
 
-    const client = customClient || (isRedisConfigured() ? getRateLimitRedisClient() : null);
+    this._setupRedisStore();
+  }
+
+  _setupRedisStore() {
+    const client = this.customClient || (isRedisConfigured() ? getRateLimitRedisClient() : null);
     if (client) {
       this.client = client;
-      this.redisStore = new RedisStore({
-        sendCommand: (...args) => client.call(...args),
-        prefix,
-      });
+      this.redisStore = new GeneralRedisStore({
+        sendCommand: async (...args) => {
+          const isReady = this.client.status === 'ready' ? true : await waitForClientReady(this.client, 800);
+          if (!isReady && this.client.status !== 'ready') {
+            throw new Error(`Redis client unavailable (status: ${this.client.status})`);
+          }
+          let timer = null;
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Redis command timed out after 800ms')), 800);
+          });
+          const cmdPromise = Promise.resolve(this.client.call(...args));
+          cmdPromise.catch(() => {});
+          try {
+            return await Promise.race([cmdPromise, timeoutPromise]);
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        },
+        prefix: this.prefix,
+      }, this.client);
+      if (this.options && typeof this.options.windowMs === 'number') {
+        this.redisStore.windowMs = this.options.windowMs;
+      }
     }
   }
 
@@ -77,7 +190,7 @@ class FallbackRedisStore {
     return now < sharedCircuitOpenUntil;
   }
 
-  _recordFailure() {
+  _recordFailure(err = null, operation = 'unknown') {
     const now = Date.now();
     if (this.customClient) {
       this.consecutiveFailures += 1;
@@ -90,7 +203,7 @@ class FallbackRedisStore {
         sharedCircuitOpenUntil = now + 30000;
       }
     }
-    logFallbackWarning();
+    logFallbackWarning(err, operation);
   }
 
   _recordSuccess() {
@@ -112,20 +225,12 @@ class FallbackRedisStore {
   }
 
   _getRedisStore() {
-    if (this.redisStore) return this.redisStore;
-    if (!this.customClient && isRedisConfigured()) {
-      const client = getRateLimitRedisClient();
-      if (client) {
-        this.client = client;
-        this.redisStore = new RedisStore({
-          sendCommand: (...args) => client.call(...args),
-          prefix: this.prefix,
-        });
-        if (this.options && typeof this.redisStore.init === 'function') {
-          try {
-            this.redisStore.init(this.options);
-          } catch (_) {}
-        }
+    if (!this.customClient && (!this.client || this.client.status === 'end')) {
+      this._setupRedisStore();
+      if (this.options && this.redisStore && typeof this.redisStore.init === 'function') {
+        try {
+          this.redisStore.init(this.options);
+        } catch (_) {}
       }
     }
     return this.redisStore;
@@ -139,22 +244,8 @@ class FallbackRedisStore {
     const store = this._getRedisStore();
     if (store && typeof store.init === 'function') {
       try {
-        let timer;
-        const timeoutPromise = new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('init timed out after 800ms')), 800);
-        });
-        Promise.race([
-          Promise.resolve(store.init(options)),
-          timeoutPromise,
-        ])
-          .then(() => clearTimeout(timer))
-          .catch(() => {
-            clearTimeout(timer);
-            this._recordFailure();
-          });
-      } catch (_) {
-        this._recordFailure();
-      }
+        store.init(options);
+      } catch (_) {}
     }
   }
 
@@ -163,31 +254,48 @@ class FallbackRedisStore {
     const isCircuitOpen = this._isCircuitOpen();
 
     if (store && !isCircuitOpen) {
-      let timer;
+      let timer = null;
       try {
+        if (!store.windowMs) {
+          store.windowMs = (this.options && this.options.windowMs) || 60000;
+        }
         const fn = store[fnName];
         if (typeof fn === 'function') {
+          // If client is currently establishing connection, allow it up to 800ms to become ready
+          if (this.client && this.client.status !== 'ready') {
+            const ready = await waitForClientReady(this.client, 800);
+            if (!ready && this.client.status !== 'ready') {
+              throw new Error(`Redis client not ready (status: ${this.client.status})`);
+            }
+          }
+
           const timeoutPromise = new Promise((_, reject) => {
             timer = setTimeout(() => reject(new Error(`Redis ${fnName} timed out after 800ms`)), 800);
           });
+
+          const opPromise = Promise.resolve(fn.apply(store, args));
+          opPromise.catch(() => {}); // prevent unhandled rejection if timeoutPromise settles first
+
           const result = await Promise.race([
-            fn.apply(store, args),
+            opPromise,
             timeoutPromise,
           ]);
-          clearTimeout(timer);
+
           this._recordSuccess();
           return result;
         }
       } catch (err) {
-        clearTimeout(timer);
-        this._recordFailure();
+        this._recordFailure(err, fnName);
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     }
 
     // Fallback to in-memory store
     const memFn = this.memStore[fnName];
     if (typeof memFn === 'function') {
-      return await memFn.apply(this.memStore, args);
+      const memRes = await memFn.apply(this.memStore, args);
+      return typeof memRes === 'object' && memRes !== null ? { ...memRes } : memRes;
     }
   }
 
@@ -215,7 +323,7 @@ class FallbackRedisStore {
 /**
  * Build Redis store for general rate limiters.
  * Falls back to undefined (MemoryStore) when Redis is unset.
- * Wrapped in 800ms timeout.
+ * Wrapped in 800ms timeout with readiness check to avoid offline queue rejections.
  */
 const createRedisStore = (prefix, customClient = null) => {
   if (!customClient && !isRedisConfigured()) {
@@ -225,20 +333,26 @@ const createRedisStore = (prefix, customClient = null) => {
   if (!client) {
     return undefined;
   }
-  return new RedisStore({
+  return new GeneralRedisStore({
     sendCommand: async (...args) => {
-      let timer;
+      const isReady = client.status === 'ready' ? true : await waitForClientReady(client, 800);
+      if (!isReady && client.status !== 'ready') {
+        throw new Error(`Redis client unavailable (status: ${client.status})`);
+      }
+      let timer = null;
       const timeoutPromise = new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('Redis command timed out after 800ms')), 800);
       });
+      const cmdPromise = Promise.resolve(client.call(...args));
+      cmdPromise.catch(() => {}); // prevent unhandled rejection if timeoutPromise settles first
       try {
-        return await Promise.race([client.call(...args), timeoutPromise]);
+        return await Promise.race([cmdPromise, timeoutPromise]);
       } finally {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
       }
     },
     prefix,
-  });
+  }, client);
 };
 
 const createFallbackStore = (prefix, customClient = null) => {
@@ -426,6 +540,7 @@ module.exports = {
   createRedisStore,
   createFallbackStore,
   FallbackRedisStore,
+  GeneralRedisStore,
   resetRateLimitCircuit,
   throttledGeneralStoreLogger,
   normalizeAccountKey,

@@ -1,8 +1,13 @@
+const path = require('path');
+const dotenv = require('dotenv');
+
+// Load environment variables before any dependent modules are imported.
+// Deployment-provided environment variables take precedence.
+dotenv.config({ path: path.join(__dirname, '.env') });
+
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const dotenv = require('dotenv');
-const path = require('path');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
@@ -23,9 +28,6 @@ const { verifyTransporter } = require('./utils/emailService');
 const { publicApiLimiter } = require('./middleware/rateLimitMiddleware');
 const { validateCorsConfig, parseAllowedOrigins, isOriginAllowed } = require('./utils/corsConfig');
 const { waitForPendingNotifications, getNotificationJobCounts } = require('./utils/notificationService');
-
-// Load environment variables
-dotenv.config();
 
 // Fail fast in production if MONGO_URI is missing
 if (process.env.NODE_ENV === 'production' && !process.env.MONGO_URI) {
@@ -131,6 +133,7 @@ app.get('/api/health', async (req, res) => {
   if (healthDetailKey && providedKey && providedKey === healthDetailKey) {
     let emailCounts = { waiting: 0, active: 0, failed: 0 };
     let notifCounts = { waiting: 0, active: 0, failed: 0 };
+    let aiCounts = { waiting: 0, active: 0, completed: 0, failed: 0 };
 
     try {
       emailCounts = await emailQueue.getJobCounts();
@@ -140,9 +143,18 @@ app.get('/api/health', async (req, res) => {
       notifCounts = await getNotificationJobCounts();
     } catch (_) {}
 
+    try {
+      const { isRedisConfigured } = require('./config/redis');
+      if (isRedisConfigured()) {
+        const { getAiJobCounts } = require('./services/ai/aiQueue');
+        aiCounts = await getAiJobCounts();
+      }
+    } catch (_) {}
+
     responseBody.queues = {
       email: emailCounts,
       notification: notifCounts,
+      ai: aiCounts,
     };
   }
 
@@ -196,6 +208,7 @@ app.use('/api/assistant', require('./routes/assistantRoutes'));
 app.use('/api/mock-interviews', require('./routes/mockInterviewRoutes'));
 app.use('/api/admin/mock-interviews', require('./routes/mockInterviewRoutes'));
 app.use('/api/resume-builder', require('./routes/resumeBuilderRoutes'));
+app.use('/api/resume-studio', require('./routes/resumeStudioRoutes'));
 
 // 404 Handler
 app.use(notFound);
@@ -203,7 +216,11 @@ app.use(notFound);
 // Global Error Handler
 app.use(errorHandler);
 
-const runWorkerInApi = process.env.RUN_WORKER_IN_API !== 'false';
+// In production, background workers run in dedicated worker process (worker.js).
+// In development, in-API workers run by default unless RUN_WORKER_IN_API='false'.
+const runWorkerInApi =
+  process.env.RUN_WORKER_IN_API === 'true' ||
+  (process.env.NODE_ENV !== 'production' && process.env.RUN_WORKER_IN_API !== 'false');
 
 // Server listener
 const PORT = process.env.PORT || 5000;
@@ -246,6 +263,10 @@ const handleShutdown = async (signal) => {
     }
     emailQueue.stopPeriodicRecovery();
     await waitForPendingNotifications(5000);
+    try {
+      const { closeAiQueue } = require('./services/ai/aiQueue');
+      await closeAiQueue();
+    } catch (_) {}
     await closeRedisConnections();
     if (mongoose.connection.readyState === 1) {
       await mongoose.connection.close();

@@ -4,6 +4,7 @@
  * version management (max 5), and ATS-compliant PDFKit export.
  */
 
+const { z } = require('zod');
 const {
   compileBaseResume,
   loadResumeSource,
@@ -19,6 +20,69 @@ const {
 const { generateResumePdf } = require('../services/resumeBuilder/pdfGenerator');
 const { AiUsage } = require('../models');
 
+// =============================================================================
+// ZOD VALIDATION SCHEMAS
+// =============================================================================
+
+const objectIdRegex = /^[0-9a-fA-F]{24}$/;
+const objectIdSchema = z.string().regex(objectIdRegex, 'Invalid ObjectId');
+
+const sourceSchema = z.object({
+  type: z.enum(['profile', 'upload', 'resume_ai_file', 'text'], {
+    errorMap: () => ({ message: "Source 'type' is required ('profile', 'upload', 'resume_ai_file', or 'text')" }),
+  }),
+  text: z.string().max(50000, 'Resume text is too large (maximum 50,000 characters)').optional(),
+});
+
+const analyzeTargetSchema = z.object({
+  driveId: objectIdSchema.optional().nullable(),
+  jobDescription: z.string().max(20000, 'Job description must be 20,000 characters or fewer').optional().default(''),
+});
+
+const tailorSchema = z.object({
+  resumeData: z.record(z.any()).optional(),
+  driveId: objectIdSchema.optional().nullable(),
+  jobDescription: z.string().max(20000, 'Job description must be 20,000 characters or fewer').optional().default(''),
+  sourceType: z.enum(['profile', 'upload', 'resume_ai_file', 'text']).optional().default('profile'),
+});
+
+const coverLetterSchema = z.object({
+  role: z.string().max(100, 'Role must be 100 characters or fewer').optional(),
+  company: z.string().max(100, 'Company must be 100 characters or fewer').optional(),
+  driveId: objectIdSchema.optional().nullable(),
+  jobDescription: z.string().max(20000, 'Job description must be 20,000 characters or fewer').optional().default(''),
+});
+
+const exportPdfSchema = z.object({
+  resumeData: z.record(z.any(), {
+    required_error: 'Valid resume data object is required for PDF export',
+    invalid_type_error: 'Valid resume data object is required for PDF export',
+  }),
+  templateId: z.enum(['modern', 'classic', 'compact']).optional().default('modern'),
+});
+
+const saveVersionSchema = z.object({
+  versionId: objectIdSchema.optional(),
+  name: z.string().min(1, 'Name is required').max(100, 'Name must be 100 characters or fewer').optional().default('Custom Tailored Resume'),
+  resumeData: z.record(z.any(), {
+    required_error: 'Valid resume data object is required',
+    invalid_type_error: 'Valid resume data object is required',
+  }),
+  templateId: z.enum(['modern', 'classic', 'compact']).optional().default('modern'),
+  targetRole: z.string().max(100).optional(),
+  targetCompany: z.string().max(100).optional(),
+  driveId: objectIdSchema.optional().nullable(),
+});
+
+const objectIdParamSchema = z.object({
+  id: objectIdSchema,
+});
+
+const listVersionsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
 /**
  * @desc    Load and normalize resume data from selected source (profile, upload, resume_ai_file, text)
  * @route   POST /api/resume-builder/source
@@ -26,13 +90,16 @@ const { AiUsage } = require('../models');
  */
 const loadSourceHandler = async (req, res, next) => {
   try {
-    const { type, text } = req.body || {};
-    if (!type || typeof type !== 'string') {
+    const parseResult = sourceSchema.safeParse(req.body || {});
+    if (!parseResult.success) {
       return res.status(400).json({
         success: false,
-        message: "Source 'type' is required ('profile', 'upload', 'resume_ai_file', or 'text')",
+        message: parseResult.error.issues[0]?.message || "Source 'type' is required ('profile', 'upload', 'resume_ai_file', or 'text')",
+        errors: parseResult.error.issues,
       });
     }
+
+    const { type, text } = parseResult.data;
 
     const result = await loadResumeSource({
       studentUserId: req.user._id,
@@ -57,7 +124,16 @@ const loadSourceHandler = async (req, res, next) => {
  */
 const analyzeTargetHandler = async (req, res, next) => {
   try {
-    const { driveId, jobDescription } = req.body || {};
+    const parseResult = analyzeTargetSchema.safeParse(req.body || {});
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: parseResult.error.issues[0]?.message || 'Invalid target payload',
+        errors: parseResult.error.issues,
+      });
+    }
+
+    const { driveId, jobDescription } = parseResult.data;
     const result = await analyzeResumeTarget({
       studentUserId: req.user._id,
       driveId,
@@ -85,6 +161,7 @@ const getBaseResume = async (req, res, next) => {
     res.status(200).json({
       success: true,
       resumeData,
+      missingFields: resumeData.missingFields || [],
     });
   } catch (error) {
     next(error);
@@ -98,14 +175,23 @@ const getBaseResume = async (req, res, next) => {
  */
 const tailorResumeHandler = async (req, res, next) => {
   try {
-    const { resumeData, driveId, jobDescription, sourceType } = req.body || {};
+    const parseResult = tailorSchema.safeParse(req.body || {});
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: parseResult.error.issues[0]?.message || 'Invalid tailor payload',
+        errors: parseResult.error.issues,
+      });
+    }
+
+    const { resumeData, driveId, jobDescription, sourceType } = parseResult.data;
 
     const result = await tailorResume({
       studentUserId: req.user._id,
       baseResumeData: resumeData,
       driveId,
       jobDescription,
-      sourceType: sourceType || 'profile',
+      sourceType,
       signal: req.abortSignal,
       isAborted: req.isAborted,
     });
@@ -129,7 +215,16 @@ const tailorResumeHandler = async (req, res, next) => {
  */
 const generateCoverLetterHandler = async (req, res, next) => {
   try {
-    const { role, company, driveId, jobDescription } = req.body;
+    const parseResult = coverLetterSchema.safeParse(req.body || {});
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: parseResult.error.issues[0]?.message || 'Invalid cover letter payload',
+        errors: parseResult.error.issues,
+      });
+    }
+
+    const { role, company, driveId, jobDescription } = parseResult.data;
 
     const result = await generateCoverLetter({
       studentUserId: req.user._id,
@@ -160,14 +255,16 @@ const generateCoverLetterHandler = async (req, res, next) => {
  */
 const exportPdfHandler = async (req, res, next) => {
   try {
-    const { resumeData, templateId = 'modern' } = req.body;
-
-    if (!resumeData || typeof resumeData !== 'object') {
+    const parseResult = exportPdfSchema.safeParse(req.body || {});
+    if (!parseResult.success) {
       return res.status(400).json({
         success: false,
-        message: 'Valid resume data object is required for PDF export',
+        message: parseResult.error.issues[0]?.message || 'Valid resume data object is required for PDF export',
+        errors: parseResult.error.issues,
       });
     }
+
+    const { resumeData, templateId } = parseResult.data;
 
     // 1. Enforce Placeholder Blocking Guard
     const placeholderCheck = checkUnresolvedPlaceholders(resumeData);
@@ -203,9 +300,18 @@ const exportPdfHandler = async (req, res, next) => {
  */
 const saveVersionHandler = async (req, res, next) => {
   try {
+    const parseResult = saveVersionSchema.safeParse(req.body || {});
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: parseResult.error.issues[0]?.message || 'Invalid version payload',
+        errors: parseResult.error.issues,
+      });
+    }
+
     const result = await saveResumeVersion({
       studentUserId: req.user._id,
-      versionData: req.body,
+      versionData: parseResult.data,
     });
 
     res.status(201).json({
@@ -224,7 +330,9 @@ const saveVersionHandler = async (req, res, next) => {
  */
 const listVersionsHandler = async (req, res, next) => {
   try {
-    const result = await listResumeVersions(req.user._id);
+    const queryResult = listVersionsQuerySchema.safeParse(req.query);
+    const paginationOptions = queryResult.success ? queryResult.data : {};
+    const result = await listResumeVersions(req.user._id, paginationOptions);
 
     res.status(200).json({
       success: true,
@@ -242,7 +350,16 @@ const listVersionsHandler = async (req, res, next) => {
  */
 const getVersionHandler = async (req, res, next) => {
   try {
-    const version = await getResumeVersion(req.params.id, req.user._id);
+    const paramResult = objectIdParamSchema.safeParse(req.params);
+    if (!paramResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid version ID format',
+        errors: paramResult.error.issues,
+      });
+    }
+
+    const version = await getResumeVersion(paramResult.data.id, req.user._id);
 
     res.status(200).json({
       success: true,
@@ -260,7 +377,16 @@ const getVersionHandler = async (req, res, next) => {
  */
 const deleteVersionHandler = async (req, res, next) => {
   try {
-    const result = await deleteResumeVersion(req.params.id, req.user._id);
+    const paramResult = objectIdParamSchema.safeParse(req.params);
+    if (!paramResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid version ID format',
+        errors: paramResult.error.issues,
+      });
+    }
+
+    const result = await deleteResumeVersion(paramResult.data.id, req.user._id);
 
     res.status(200).json(result);
   } catch (error) {
@@ -298,4 +424,14 @@ module.exports = {
   getVersionHandler,
   deleteVersionHandler,
   getQuotaHandler,
+  schemas: {
+    sourceSchema,
+    analyzeTargetSchema,
+    tailorSchema,
+    coverLetterSchema,
+    exportPdfSchema,
+    saveVersionSchema,
+    objectIdParamSchema,
+    listVersionsQuerySchema,
+  },
 };

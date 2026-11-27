@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
+import { openResumeInNewTab, openSnapshotResumeInNewTab } from '../../utils/resumeViewer';
 import RankedApplicantsView from '../../components/recruitment/RankedApplicantsView';
 
 const DriveProgress = () => {
@@ -1290,6 +1291,7 @@ const DriveProgress = () => {
                   <th className="py-2.5 px-3">Backlogs</th>
                   <th className="py-2.5 px-3">Applied Date</th>
                   <th className="py-2.5 px-3">Status</th>
+                  <th className="py-2.5 px-3">Resume</th>
                   <th className="py-2.5 px-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -1311,6 +1313,44 @@ const DriveProgress = () => {
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 uppercase">
                           {app.status}
                         </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      {app.resumeSnapshot && app.resumeSnapshot.data ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openSnapshotResumeInNewTab(
+                              app._id,
+                              `${app.student?.user?.name || 'Applicant'}'s Submitted Resume`
+                            )
+                          }
+                          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-bold text-[11px] cursor-pointer"
+                        >
+                          <span>View submitted resume</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      ) : app.student?.resumeUrl ? (
+                        <div className="flex flex-col items-start gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openResumeInNewTab(
+                                app.student._id || app.student,
+                                `${app.student?.user?.name || 'Student'}'s Resume`
+                              )
+                            }
+                            className="inline-flex items-center gap-1 text-slate-700 hover:text-indigo-600 font-semibold text-[11px] cursor-pointer"
+                          >
+                            <span>Current resume</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                          <span className="text-[9px] text-slate-400">
+                            (legacy application)
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-[11px]">Not uploaded</span>
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-right">

@@ -8,6 +8,7 @@ const {
   updateDrive,
   deleteDrive,
   reopenDrive,
+  getDriveApplicantAnalytics,
 } = require('../controllers/driveController');
 const {
   freezeDriveAndInitializePipeline,
@@ -45,6 +46,7 @@ router.put('/:id/freeze', protect, authorize('tpo', 'admin', 'superadmin'), free
 router.put('/:id/reopen', protect, authorize('tpo', 'admin', 'superadmin'), reopenDrive);
 router.put('/:id/remove-applicant/:studentId', protect, authorize('tpo', 'admin', 'superadmin'), removeApplicantBeforeFreeze);
 router.get('/:id/progress', protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), getDriveProgress);
+router.get('/:id/applicant-analytics', protect, authorize('recruiter', 'tpo', 'admin', 'superadmin'), getDriveApplicantAnalytics);
 router.post('/:id/offers', protect, authorize('recruiter', 'superadmin'), extendBulkOffers);
 
 // AI Ranking & Explanation routes

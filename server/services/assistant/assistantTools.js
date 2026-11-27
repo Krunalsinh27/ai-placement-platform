@@ -615,21 +615,35 @@ async function driveFunnel(collegeId, params = {}) {
   const compName = drive.company?.name || drive.companyName || 'Corporate Partner';
   const driveTitle = drive.title || drive.role || 'Placement Drive';
 
-  // 1. Applied
-  const applied = await Application.countDocuments({ drive: drive._id });
+  // Scope counts strictly to students of this college to prevent multi-college data leakage
+  const collegeStudentIds = await Student.find({ college: collegeObjId }).distinct('_id');
 
-  // 2. Shortlisted (students who cleared at least one round or were marked shortlisted)
+  // 1. Applied (scoped to this college)
+  const applied = await Application.countDocuments({
+    drive: drive._id,
+    student: { $in: collegeStudentIds },
+  });
+
+  // 2. Shortlisted (students from this college who cleared at least one round or were marked shortlisted)
   const shortlistedStudents = await RoundParticipant.distinct('student', {
     drive: drive._id,
+    student: { $in: collegeStudentIds },
     $or: [{ result: 'cleared' }, { status: 'shortlisted' }],
   });
   const shortlisted = shortlistedStudents.length;
 
-  // 3. Offered
-  const offered = await Offer.countDocuments({ drive: drive._id });
+  // 3. Offered (scoped to this college)
+  const offered = await Offer.countDocuments({
+    drive: drive._id,
+    $or: [{ college: collegeObjId }, { student: { $in: collegeStudentIds } }],
+  });
 
-  // 4. Accepted
-  const accepted = await Offer.countDocuments({ drive: drive._id, status: 'accepted' });
+  // 4. Accepted (scoped to this college)
+  const accepted = await Offer.countDocuments({
+    drive: drive._id,
+    $or: [{ college: collegeObjId }, { student: { $in: collegeStudentIds } }],
+    status: 'accepted',
+  });
 
   const conversionRate = applied > 0 ? Number(((accepted / applied) * 100).toFixed(1)) : 0;
 

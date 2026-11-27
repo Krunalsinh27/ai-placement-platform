@@ -562,7 +562,7 @@ async function compileBaseResume(studentUserId) {
     throw err;
   }
 
-  const fullName = student.user?.name || 'Candidate Name';
+  const fullName = student.user?.name || '';
   const email = student.user?.email || '';
   const phone = student.phone || '';
   const location = [student.college?.city, student.college?.state].filter(Boolean).join(', ') || '';
@@ -573,57 +573,57 @@ async function compileBaseResume(studentUserId) {
   const allSkills = Array.from(new Set([...profileSkills, ...rawSkills]));
   const categorizedSkills = categorizeSkillsList(allSkills);
 
-  // Summary
-  const summary =
-    student.resumeProfile?.summary ||
-    `Aspiring ${student.branch || 'Computer Science'} graduate from ${student.college?.name || 'University'} with hands-on technical skills and engineering project experience.`;
+  // Summary: Leave empty when missing, NEVER invent generic text
+  const summary = (student.resumeProfile?.summary || '')
+    .replace(/^[-*•·▪–—\s]+/, '')
+    .trim();
 
-  // Experience
+  // Experience: Never invent titles, companies, or default bullets
   const experience = (student.resumeProfile?.experience || []).map((e) => ({
-    title: e.title || 'Software Engineering Intern',
-    company: e.company || 'Tech Company',
+    title: e.title || '',
+    company: e.company || '',
     location: e.location || '',
     duration: e.duration || '',
     bullets:
       Array.isArray(e.bullets) && e.bullets.length > 0
-        ? e.bullets
+        ? e.bullets.map((b) => String(b).trim()).filter(Boolean)
         : e.description
-        ? [e.description]
-        : ['Developed software components and collaborated with senior engineering team members.'],
+        ? [e.description.trim()]
+        : [],
   }));
 
-  // Projects
+  // Projects: Never invent titles or default bullets
   const projects = (student.resumeProfile?.projects || []).map((p) => ({
-    title: p.title || 'Technical Platform Project',
+    title: p.title || '',
     technologies: Array.isArray(p.technologies) ? p.technologies : [],
     duration: p.duration || '',
     link: p.link || '',
     bullets:
       Array.isArray(p.bullets) && p.bullets.length > 0
-        ? p.bullets
+        ? p.bullets.map((b) => String(b).trim()).filter(Boolean)
         : p.description
-        ? [p.description]
-        : ['Engineered scalable full-stack web application with responsive UI and database indexing.'],
+        ? [p.description.trim()]
+        : [],
   }));
 
-  // Education
+  // Education: Never invent degrees, years, or institutions
   const educationList = [];
   if (Array.isArray(student.resumeProfile?.education) && student.resumeProfile.education.length > 0) {
     student.resumeProfile.education.forEach((edu) => {
       educationList.push({
-        degree: edu.degree || 'Bachelor of Technology',
+        degree: edu.degree || student.degree || '',
         institution: edu.institution || student.college?.name || '',
         field: edu.field || student.branch || '',
-        year: edu.year || String(student.batchYear || ''),
-        score: student.cgpa ? `${student.cgpa} CGPA` : '',
+        year: edu.year || (student.batchYear ? String(student.batchYear) : ''),
+        score: edu.score || (student.cgpa ? `${student.cgpa} CGPA` : ''),
       });
     });
-  } else {
+  } else if (student.degree) {
     educationList.push({
-      degree: 'Bachelor of Technology',
-      institution: student.college?.name || 'Engineering College',
-      field: student.branch || 'Computer Science and Engineering',
-      year: String(student.batchYear || '2025'),
+      degree: student.degree,
+      institution: student.college?.name || '',
+      field: student.branch || '',
+      year: student.batchYear ? String(student.batchYear) : '',
       score: student.cgpa ? `${student.cgpa} CGPA` : '',
     });
   }
@@ -632,6 +632,18 @@ async function compileBaseResume(studentUserId) {
   const certifications = (student.resumeProfile?.certifications || []).map((c) =>
     typeof c === 'string' ? c : c.title || c.name || ''
   ).filter(Boolean);
+
+  // Missing fields audit array
+  const missingFields = [];
+  if (!fullName) missingFields.push('fullName');
+  if (!email) missingFields.push('email');
+  if (!phone) missingFields.push('phone');
+  if (!location) missingFields.push('location');
+  if (!summary) missingFields.push('summary');
+  if (categorizedSkills.length === 0) missingFields.push('skills');
+  if (experience.length === 0) missingFields.push('experience');
+  if (projects.length === 0) missingFields.push('projects');
+  if (educationList.length === 0) missingFields.push('education');
 
   return {
     contact: {
@@ -649,6 +661,7 @@ async function compileBaseResume(studentUserId) {
     projects,
     education: educationList,
     certifications,
+    missingFields,
   };
 }
 
@@ -667,20 +680,20 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}, isProf
 
   let fullName = profile?.contact?.fullName || profile?.contact?.name;
   if (!fullName) {
-    fullName = user?.name || student?.name || 'Candidate Name';
-    if (user?.name || student?.name) filledFromProfile.fullName = 'from your profile';
+    fullName = user?.name || student?.name || '';
+    if (fullName) filledFromProfile.fullName = 'from your profile';
   }
 
   let email = profile?.contact?.email;
   if (!email) {
     email = user?.email || student?.email || '';
-    if (user?.email || student?.email) filledFromProfile.email = 'from your profile';
+    if (email) filledFromProfile.email = 'from your profile';
   }
 
   let phone = profile?.contact?.phone;
   if (!phone) {
     phone = student?.phone || '';
-    if (student?.phone) filledFromProfile.phone = 'from your profile';
+    if (phone) filledFromProfile.phone = 'from your profile';
   }
 
   let location = profile?.contact?.location;
@@ -720,11 +733,11 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}, isProf
   const categorized = categorizeSkillsList(skillsRaw);
 
   // Experience:
-  // ONLY from chosen resume unless isProfileSource is true.
+  // ONLY from chosen resume unless isProfileSource is true. Never invent fallbacks.
   const experienceSource = profile?.experience || (isProfileSource ? student?.resumeProfile?.experience || [] : []);
-  const experience = (experienceSource || []).map((e, idx) => ({
-    title: e.title || `Engineering Role #${idx + 1}`,
-    company: e.company || 'Tech Company',
+  const experience = (experienceSource || []).map((e) => ({
+    title: e.title || '',
+    company: e.company || '',
     location: e.location || '',
     duration: e.duration || '',
     bullets:
@@ -732,14 +745,14 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}, isProf
         ? e.bullets.map((b) => String(b).trim()).filter(Boolean)
         : e.description
         ? [e.description.trim()]
-        : ['Collaborated on software design, code implementation, and deployment.'],
+        : [],
   }));
 
   // Projects:
-  // ONLY from chosen resume unless isProfileSource is true.
+  // ONLY from chosen resume unless isProfileSource is true. Never invent fallbacks.
   const projectsSource = profile?.projects || (isProfileSource ? student?.resumeProfile?.projects || [] : []);
-  const projects = (projectsSource || []).map((p, idx) => ({
-    title: p.title || `Technical Project #${idx + 1}`,
+  const projects = (projectsSource || []).map((p) => ({
+    title: p.title || '',
     technologies: Array.isArray(p.technologies) ? p.technologies : [],
     duration: p.duration || '',
     link: p.link || '',
@@ -748,7 +761,7 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}, isProf
         ? p.bullets.map((b) => String(b).trim()).filter(Boolean)
         : p.description
         ? [p.description.trim()]
-        : ['Designed and implemented application architecture with core technical components.'],
+        : [],
   }));
 
   // Education:
@@ -756,20 +769,51 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}, isProf
   const educationList = [];
   if (Array.isArray(profile?.education) && profile.education.length > 0) {
     profile.education.forEach((edu) => {
-      educationList.push({
-        degree: edu.degree || 'Bachelor of Technology',
-        institution: edu.institution || 'Engineering College',
-        field: edu.field || 'Computer Science',
-        year: edu.year || '2025',
-        score: edu.score || '',
-      });
+      if (typeof edu === 'string') {
+        const { entries } = parseEducationSection([edu]);
+        entries.forEach((e) => educationList.push(e));
+      } else if (typeof edu === 'object' && edu !== null) {
+        let degree = edu.degree || '';
+        let institution = edu.institution || '';
+        let field = edu.field || '';
+        let year = edu.year || '';
+        let score = edu.score || '';
+
+        // If degree matches institution keywords but not degree keywords, swap
+        if (
+          INSTITUTION_KEYWORD_REGEX.test(degree) &&
+          !DEGREE_REGEX.test(degree) &&
+          (!institution || DEGREE_REGEX.test(institution))
+        ) {
+          const temp = degree;
+          degree = institution;
+          institution = temp;
+        }
+
+        if (degree && !field) {
+          const inMatch =
+            degree.match(/^(.*?)\s+in\s+(.*)$/i) || degree.match(/^(.*?)\s+[-–—]\s+(.*)$/i);
+          if (inMatch) {
+            degree = inMatch[1].trim();
+            field = inMatch[2].trim();
+          }
+        }
+
+        educationList.push({
+          degree,
+          institution,
+          field,
+          year,
+          score,
+        });
+      }
     });
   } else if (student?.college?.name || student?.branch || student?.degree || student?.batchYear) {
     educationList.push({
-      degree: student?.degree || 'Bachelor of Technology',
-      institution: student?.college?.name || 'Engineering College',
-      field: student?.branch || 'Computer Science and Engineering',
-      year: String(student?.batchYear || '2025'),
+      degree: student?.degree || '',
+      institution: student?.college?.name || '',
+      field: student?.branch || '',
+      year: student?.batchYear ? String(student.batchYear) : '',
       score: student?.cgpa ? `${student.cgpa} CGPA` : '',
       fromProfile: 'from your profile',
     });
@@ -792,9 +836,7 @@ function normalizeResumeDataFromProfile(profile, user = {}, student = {}, isProf
       portfolio,
       fromProfile: filledFromProfile,
     },
-    summary:
-      profile?.summary ||
-      `Aspiring ${student?.branch || 'Computer Science'} graduate with hands-on technical skills and engineering project experience.`,
+    summary: (profile?.summary || '').replace(/^[-*•·▪–—\s]+/, '').trim(),
     skills: categorized,
     experience,
     projects,
@@ -810,6 +852,250 @@ function isBulletLine(str) {
 
 function cleanBulletText(str) {
   return str.replace(/^[-*•·▪–—]\s+/, '').replace(/^\d+\.\s+/, '').trim();
+}
+
+const DEGREE_REGEX =
+  /\b(?:B\.?E\.?|B\.?Tech\.?|M\.?Tech\.?|B\.?Sc\.?|M\.?Sc\.?|B\.?C\.?A\.?|M\.?C\.?A\.?|B\.?B\.?A\.?|M\.?B\.?A\.?|B\.?Com\.?|M\.?Com\.?|B\.?A\.?|M\.?A\.?|Ph\.?D\.?|Doctorate|Diploma|HSC|SSC|12th(?:\s+Standard)?|10th(?:\s+Standard)?|Higher\s+Secondary|Secondary\s+School(?:\s+Certificate)?|Bachelor(?:'s)?(?:\s+of\s+[^,\n|]+)?|Master(?:'s)?(?:\s+of\s+[^,\n|]+)?|Associate(?:'s)?(?:\s+of\s+[^,\n|]+)?)\b/i;
+
+const INSTITUTION_KEYWORD_REGEX =
+  /\b(?:University|Institute|College|School|Academy|Polytechnic|Vidyalaya|Campus|Facult(?:y|ies)|IIT|NIT|IIIT|BITS|MIT|IISc)\b/i;
+
+const DATE_RANGE_REGEX =
+  /\b(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+)?\d{4}\s*(?:-|–|—|to)\s*(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+)?(?:\d{4}|present|current|expected)\b/i;
+
+const SINGLE_DATE_REGEX =
+  /\b(?:Expected\s+)?(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}\b/i;
+
+const YEAR_ONLY_REGEX = /\b(19[7-9]\d|20[0-4]\d)\b/;
+
+const SCORE_VALUE_REGEX =
+  /(?:\b\d{1,2}(?:\.\d{1,3})?\s*\/\s*\d{1,2}(?:\.\d{1,2})?\b|\b\d{1,3}(?:\.\d{1,2})?%)/;
+
+const SCORE_WITH_LABEL_REGEX =
+  /(?:CGPA|GPA|Score|Percentage|Grade)[:\s]*([0-9]+(?:\.[0-9]+)?(?:\s*\/\s*[0-9]+(?:\.[0-9]+)?)?|[0-9]+(?:\.[0-9]+)?%)/i;
+
+const SCORE_LABEL_ONLY_REGEX = /^(?:CGPA|GPA|Percentage|Score|Grade)[:\s]*$/i;
+
+const FIELD_KEYWORD_REGEX =
+  /\b(?:Computer(?:\s+Science|\s+Engineering)?|Information\s+Technology|Electronics|Electrical|Mechanical|Civil|Data\s+Science|Artificial\s+Intelligence|Cybersecurity|Biotechnology|Business\s+Administration|Commerce|Physics|Chemistry|Mathematics)\b/i;
+
+/**
+ * Parses education lines into structured education objects using pattern recognition
+ * rather than line position.
+ * Recognizes degree, institution, date/range, score, and field of study.
+ * Groups on degree/institution boundaries and joins score labels with values.
+ *
+ * @param {Array<string>} rawLines
+ * @param {Array<string>} [warnings]
+ * @returns {{ entries: Array<Object>, warnings: Array<string> }}
+ */
+function parseEducationSection(rawLines = [], warnings = []) {
+  const entries = [];
+  let currentEntry = null;
+  let pendingScoreLabel = '';
+
+  const finalizeEntry = () => {
+    if (!currentEntry) return;
+    const hasDegree = Boolean(currentEntry.degree && currentEntry.degree.trim());
+    const hasInst = Boolean(currentEntry.institution && currentEntry.institution.trim());
+    const hasContent = hasDegree || hasInst || Boolean(currentEntry.score) || Boolean(currentEntry.year);
+
+    if (hasContent) {
+      if (!hasDegree || !hasInst) {
+        warnings.push('Please check this education entry');
+      }
+      entries.push({
+        degree: currentEntry.degree || '',
+        institution: currentEntry.institution || '',
+        field: currentEntry.field || '',
+        year: currentEntry.year || '',
+        score: currentEntry.score || '',
+      });
+    }
+    currentEntry = null;
+    pendingScoreLabel = '';
+  };
+
+  const getOrCreateEntry = () => {
+    if (!currentEntry) {
+      currentEntry = { degree: '', institution: '', field: '', year: '', score: '' };
+    }
+    return currentEntry;
+  };
+
+  const cleanLine = (str) =>
+    (str || '')
+      .replace(/^[-*•·▪–—\s]+/, '')
+      .replace(/^[|•\s-]+|[|•\s-]+$/g, '')
+      .trim();
+
+  // Break lines into segments if delimited by | or •
+  const segments = [];
+  for (const rawLine of rawLines) {
+    const cleaned = cleanLine(rawLine);
+    if (!cleaned) continue;
+
+    // Check if line contains explicit pipe or bullet delimiters
+    if (/[|•]/.test(cleaned)) {
+      const parts = cleaned.split(/[|•]/).map(cleanLine).filter(Boolean);
+      segments.push(...parts);
+    } else {
+      segments.push(cleaned);
+    }
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    let seg = segments[i];
+
+    // 1. Check if line is solely a score label (e.g. "CGPA", "Percentage")
+    if (SCORE_LABEL_ONLY_REGEX.test(seg)) {
+      pendingScoreLabel = seg.replace(/[:\s]+$/, '').trim();
+      continue;
+    }
+
+    // 2. Check for explicit score with label (e.g. "CGPA: 8.9", "Grade: 7.23/10")
+    const scoreWithLabelMatch = seg.match(SCORE_WITH_LABEL_REGEX);
+    if (scoreWithLabelMatch) {
+      const entry = getOrCreateEntry();
+      const scoreStr = scoreWithLabelMatch[0].trim();
+      if (!entry.score) {
+        entry.score = scoreStr;
+      }
+      seg = seg.replace(scoreWithLabelMatch[0], '').trim();
+      if (!seg) continue;
+    }
+
+    // 3. Check for standalone score value (e.g. "7.23/10", "85%")
+    const scoreValMatch = seg.match(SCORE_VALUE_REGEX);
+    if (scoreValMatch) {
+      const entry = getOrCreateEntry();
+      let val = scoreValMatch[0].trim();
+      if (pendingScoreLabel && !val.toLowerCase().includes(pendingScoreLabel.toLowerCase())) {
+        val = `${val} ${pendingScoreLabel}`.trim();
+        pendingScoreLabel = '';
+      }
+      if (!entry.score) {
+        entry.score = val;
+      }
+      seg = seg.replace(scoreValMatch[0], '').trim();
+      if (!seg) continue;
+    }
+
+    // 4. Check for dates / date ranges
+    let extractedDate = '';
+    const dateRangeMatch = seg.match(DATE_RANGE_REGEX);
+    if (dateRangeMatch) {
+      extractedDate = dateRangeMatch[0].trim();
+      seg = seg.replace(dateRangeMatch[0], '').trim();
+    } else {
+      const singleDateMatch = seg.match(SINGLE_DATE_REGEX);
+      if (singleDateMatch) {
+        extractedDate = singleDateMatch[0].trim();
+        seg = seg.replace(singleDateMatch[0], '').trim();
+      } else {
+        const yearMatch = seg.match(YEAR_ONLY_REGEX);
+        if (yearMatch) {
+          const idx = seg.indexOf(yearMatch[0]);
+          const beforeChar = idx > 0 ? seg[idx - 1] : ' ';
+          const afterChar = idx + 4 < seg.length ? seg[idx + 4] : ' ';
+          if (!/[a-zA-Z]/.test(beforeChar) && !/[a-zA-Z]/.test(afterChar)) {
+            extractedDate = yearMatch[0].trim();
+            seg = seg.replace(yearMatch[0], '').trim();
+          }
+        }
+      }
+    }
+
+    if (extractedDate) {
+      const entry = getOrCreateEntry();
+      if (!entry.year) {
+        entry.year = extractedDate;
+      } else if (!entry.year.includes(extractedDate)) {
+        entry.year = `${extractedDate} - ${entry.year}`;
+      }
+      seg = cleanLine(seg);
+      if (!seg) continue;
+    }
+
+    // 5. Check if seg ends with a trailing score label like "CGPA" (e.g. "B.E. in Computer Engineering CGPA")
+    const trailingScoreLabelMatch = seg.match(/\b(CGPA|GPA|Percentage|Score|Grade)\s*$/i);
+    if (trailingScoreLabelMatch) {
+      pendingScoreLabel = trailingScoreLabelMatch[1].trim();
+      seg = seg.replace(/\b(CGPA|GPA|Percentage|Score|Grade)\s*$/i, '').trim();
+    }
+
+    // 6. Check for Degree pattern
+    const degreeMatch = seg.match(DEGREE_REGEX);
+    if (degreeMatch) {
+      if (currentEntry && currentEntry.degree) {
+        finalizeEntry();
+      }
+      const entry = getOrCreateEntry();
+
+      const inMatch =
+        seg.match(/^(.*?)\s+in\s+(.*)$/i) || seg.match(/^(.*?)\s+[-–—]\s+(.*)$/i);
+      if (inMatch) {
+        entry.degree = inMatch[1].trim();
+        if (!entry.field) {
+          entry.field = inMatch[2].trim();
+        }
+      } else {
+        const degMatchExact = seg.match(DEGREE_REGEX);
+        if (degMatchExact && degMatchExact[0].length < seg.length) {
+          const degPrefix = degMatchExact[0].trim();
+          const remainder = seg.replace(degMatchExact[0], '').replace(/^[-–—,\s]+/, '').trim();
+          entry.degree = degPrefix;
+          if (remainder && !entry.field) entry.field = remainder;
+        } else {
+          entry.degree = seg;
+        }
+      }
+      continue;
+    }
+
+    // 7. Check for Institution pattern
+    const instMatch = seg.match(INSTITUTION_KEYWORD_REGEX);
+    if (instMatch) {
+      if (currentEntry && currentEntry.degree && currentEntry.institution) {
+        finalizeEntry();
+      }
+      const entry = getOrCreateEntry();
+      if (!entry.institution) {
+        entry.institution = seg;
+      } else {
+        entry.institution = `${entry.institution}, ${seg}`;
+      }
+      continue;
+    }
+
+    // 8. Check for Field of Study pattern
+    const fieldPrefixMatch = seg.match(/^(?:major|branch|discipline|specialization|field(?: of study)?):\s*(.*)/i);
+    if (fieldPrefixMatch) {
+      const entry = getOrCreateEntry();
+      if (!entry.field) entry.field = fieldPrefixMatch[1].trim();
+      continue;
+    } else if (FIELD_KEYWORD_REGEX.test(seg)) {
+      const entry = getOrCreateEntry();
+      if (!entry.field) {
+        entry.field = seg;
+        continue;
+      }
+    }
+
+    // 9. Unmatched text chunk
+    const entry = getOrCreateEntry();
+    if (!entry.degree && !entry.institution) {
+      entry.degree = seg;
+      warnings.push('Please check this education entry');
+    } else if (!entry.field && seg.length < 50) {
+      entry.field = seg;
+    } else {
+      warnings.push('Please check this education entry');
+    }
+  }
+
+  finalizeEntry();
+  return { entries, warnings };
 }
 
 /**
@@ -829,6 +1115,7 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
   let summary = '';
   const skillsList = [...extractedSkills];
   const education = [];
+  const eduLines = [];
   const experience = [];
   const projects = [];
   const certifications = [];
@@ -983,8 +1270,8 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
       if (isBulletLine(line)) {
         if (!activeExp) {
           activeExp = {
-            title: 'Software Engineer',
-            company: 'Tech Company',
+            title: '',
+            company: '',
             location: '',
             duration: '',
             bullets: [],
@@ -995,8 +1282,8 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
         finalizeExp();
         const parts = line.split(/[|•–—,-]/).map((p) => p.trim()).filter(Boolean);
         activeExp = {
-          title: parts[0] || 'Software Engineer',
-          company: parts[1] || 'Tech Company',
+          title: parts[0] || '',
+          company: parts[1] || '',
           location: parts[2] || '',
           duration: '',
           bullets: [],
@@ -1006,7 +1293,7 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
       if (isBulletLine(line)) {
         if (!activeProj) {
           activeProj = {
-            title: 'Technical Project',
+            title: '',
             technologies: [],
             duration: '',
             link: '',
@@ -1019,7 +1306,7 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
         const techInLine = extractSkillsFromText(line);
         const parts = line.split(/[|•–—]/).map((p) => p.trim()).filter(Boolean);
         activeProj = {
-          title: parts[0] || 'Technical Project',
+          title: parts[0] || '',
           technologies: techInLine,
           duration: '',
           link: '',
@@ -1027,19 +1314,7 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
         };
       }
     } else if (currentSection === 'edu') {
-      if (isBulletLine(line)) {
-        if (activeEdu) activeEdu.score = cleanBulletText(line);
-      } else {
-        finalizeEdu();
-        const parts = line.split(/[|•–—,-]/).map((p) => p.trim()).filter(Boolean);
-        activeEdu = {
-          degree: parts[0] || 'Bachelor of Technology',
-          institution: parts[1] || 'University',
-          field: parts[2] || '',
-          year: '',
-          score: '',
-        };
-      }
+      eduLines.push(line);
     } else if (currentSection === 'cert') {
       certifications.push(cleanBulletText(line));
     } else if (currentSection === 'achievements') {
@@ -1061,11 +1336,18 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
 
   finalizeAll();
 
+  const { entries: parsedEducation, warnings: eduWarnings } = parseEducationSection(eduLines);
+  parsedEducation.forEach((e) => education.push(e));
+
   const categorized = categorizeSkillsList(Array.from(new Set(skillsList)));
+
+  const cleanSummary = summary
+    ? summary.replace(/^[-*•·▪–—\s]+/, '').replace(/\s+/g, ' ').trim()
+    : '';
 
   return {
     contact: {
-      fullName: fullName || 'Candidate Name',
+      fullName: fullName || '',
       email: '',
       phone: '',
       location: location || '',
@@ -1073,7 +1355,7 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
       github: '',
       portfolio: '',
     },
-    summary,
+    summary: cleanSummary,
     skills: categorized,
     experience,
     projects,
@@ -1085,6 +1367,7 @@ function extractComprehensiveWithRules(text = '', extractedContacts = {}) {
     languages,
     interests,
     additionalSections,
+    _educationWarnings: eduWarnings,
   };
 }
 
@@ -1234,7 +1517,8 @@ async function loadResumeSource({ studentUserId, type, file = null, text = '' })
       buffer = file.buffer;
       isDocx =
         (file.originalname || '').toLowerCase().endsWith('.docx') ||
-        file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        buffer.slice(0, 2).toString('ascii') === 'PK';
 
       if (!isDocx && !buffer.slice(0, 4).toString('ascii').startsWith('%PDF')) {
         const err = new Error('Invalid file format: PDF must start with %PDF magic header.');
@@ -1243,14 +1527,18 @@ async function loadResumeSource({ studentUserId, type, file = null, text = '' })
         throw err;
       }
 
-      const extracted = await defaultExtractor(buffer);
+      const extracted = await defaultExtractor(buffer, {
+        filename: file.originalname || (isDocx ? 'resume.docx' : 'resume.pdf'),
+      });
       rawText = extracted.text;
     } else if (student.resumeUrl) {
       // Re-read raw stored file stream if no new file supplied
       const { stream, filename } = await getResumeStream(student.resumeUrl);
       buffer = await streamToBuffer(stream);
       isDocx = (filename || student.resumeUrl || '').toLowerCase().endsWith('.docx');
-      const extracted = await defaultExtractor(buffer);
+      const extracted = await defaultExtractor(buffer, {
+        filename: file?.originalname || filename || (isDocx ? 'resume.docx' : 'resume.pdf'),
+      });
       rawText = extracted.text;
     } else if (student.resumeProfile && (student.resumeProfile.summary || (student.resumeProfile.skills && student.resumeProfile.skills.length > 0))) {
       const normalized = normalizeResumeDataFromProfile(
@@ -1291,7 +1579,9 @@ async function loadResumeSource({ studentUserId, type, file = null, text = '' })
       const { stream, filename } = await getResumeStream(student.resumeUrl);
       buffer = await streamToBuffer(stream);
       isDocx = (filename || student.resumeUrl || '').toLowerCase().endsWith('.docx');
-      const extracted = await defaultExtractor(buffer);
+      const extracted = await defaultExtractor(buffer, {
+        filename: file.originalname || (isDocx ? 'resume.docx' : 'resume.pdf'),
+      });
       rawText = extracted.text;
     } else if (student.resumeProfile && (student.resumeProfile.summary || (student.resumeProfile.skills && student.resumeProfile.skills.length > 0))) {
       const normalized = normalizeResumeDataFromProfile(
@@ -1377,7 +1667,12 @@ async function loadResumeSource({ studentUserId, type, file = null, text = '' })
   // Source fact verification: verify every fact appears in raw text
   const { verifiedData, warnings: factWarnings } = verifySourceFacts(detokenized, rawText);
   const generalWarnings = computeResumeWarnings(verifiedData);
-  const warnings = [...factWarnings, ...generalWarnings];
+  const eduWarnings = Array.isArray(parsedTokenized._educationWarnings)
+    ? parsedTokenized._educationWarnings
+    : [];
+  delete verifiedData._educationWarnings;
+  delete detokenized._educationWarnings;
+  const warnings = [...factWarnings, ...generalWarnings, ...eduWarnings];
 
   return {
     resumeData: verifiedData,
@@ -1975,6 +2270,7 @@ async function generateCoverLetter({
   jobDescription = '',
   signal = null,
   isAborted = null,
+  resumeData = null,
 }) {
   // 1. Quota check
   const quotaCheck = await AiUsage.canMakeCall(studentUserId, 'tailor', 'student');
@@ -2019,8 +2315,24 @@ async function generateCoverLetter({
   const candidateName = student.user?.name || 'Candidate';
   const collegeName = student.college?.name || 'University';
   const branchName = student.branch || 'Engineering';
-  const confirmedSkills = (student.resumeProfile?.skills || []).map((s) => s.name || s);
-  const projects = (student.resumeProfile?.projects || []).map((p) => p.title);
+
+  let confirmedSkills = [];
+  if (resumeData?.skills && Array.isArray(resumeData.skills)) {
+    confirmedSkills = resumeData.skills.flatMap((c) =>
+      typeof c === 'string' ? [c] : c.items || []
+    );
+  }
+  if (confirmedSkills.length === 0) {
+    confirmedSkills = (student.resumeProfile?.skills || []).map((s) => s.name || s);
+  }
+
+  let projects = [];
+  if (resumeData?.projects && Array.isArray(resumeData.projects)) {
+    projects = resumeData.projects.map((p) => p.title || p.name).filter(Boolean);
+  }
+  if (projects.length === 0) {
+    projects = (student.resumeProfile?.projects || []).map((p) => p.title);
+  }
 
   let coverLetterText = '';
   let aiCoverSuccess = false;
@@ -2056,7 +2368,7 @@ Real Academic/Personal Projects: ${projects.slice(0, 3).join(', ')}`;
       projects.length > 0 ? ` (such as ${projects[0]})` : ''
     }, I have applied ${
       confirmedSkills.slice(0, 4).join(', ') || 'modern engineering technologies'
-    } to build scalable, robust software solutions. My hands-on experience designing modular components and optimizing application performance directly aligns with the technical rigor expected at ${effectiveCompany}.\n\nThank you for your time and consideration. I welcome the opportunity to discuss how my technical proficiencies and collaborative drive can support your team's upcoming milestones.\n\nSincerely,\n${candidateName}`;
+    } to build scalable and reliable software solutions. My hands-on experience designing modular components and optimizing application performance directly aligns with the technical rigor expected at ${effectiveCompany}.\n\nThank you for your time and consideration. I welcome the opportunity to discuss how my technical proficiencies and collaborative drive can support your team's upcoming milestones.\n\nSincerely,\n${candidateName}`;
   }
 
   // Record usage if fallback occurred (not already recorded by callAiWithQuotaAndRetry)
@@ -2175,17 +2487,32 @@ async function saveResumeVersion(arg1, arg2) {
   };
 }
 
-async function listResumeVersions(studentUserId) {
+async function listResumeVersions(studentUserId, options = {}) {
   let student = await Student.findOne({ user: studentUserId });
   if (!student) student = await Student.findById(studentUserId);
-  if (!student) return { versions: [] };
+  if (!student) return { versions: [], count: 0, total: 0, maxVersions: MAX_VERSIONS_PER_STUDENT };
 
+  const page = Math.max(1, parseInt(options.page, 10) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(options.limit, 10) || 10));
+  const skip = (page - 1) * limit;
+
+  const total = await ResumeVersion.countDocuments({ student: student._id });
   const versions = await ResumeVersion.find({ student: student._id })
     .select('name targetRole targetCompany targetDrive templateId atsScore baselineScore isDefault createdAt updatedAt')
     .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
     .lean();
 
-  return { versions, count: versions.length, maxVersions: MAX_VERSIONS_PER_STUDENT };
+  return {
+    versions,
+    count: versions.length,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit) || 1,
+    maxVersions: MAX_VERSIONS_PER_STUDENT,
+  };
 }
 
 async function getResumeVersion(versionId, studentUserId) {
@@ -2240,6 +2567,9 @@ module.exports = {
   normalizeResumeDataFromProfile,
   computeResumeWarnings,
   extractComprehensiveWithRules,
+  parseEducationSection,
+  DEGREE_REGEX,
+  INSTITUTION_KEYWORD_REGEX,
   verifySourceFacts,
   loadResumeSource,
   analyzeResumeTarget,

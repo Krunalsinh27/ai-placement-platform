@@ -25,9 +25,13 @@ const SkillEmbedding = require('./SkillEmbedding');
 const KnowledgeDocument = require('./KnowledgeDocument');
 const MockInterviewSession = require('./MockInterviewSession');
 const ResumeVersion = require('./ResumeVersion');
+const Resume = require('./Resume');
+const ResumeReview = require('./ResumeReview');
 const AiCallLog = require('./AiCallLog');
 const ConversationMeta = require('./ConversationMeta');
 const JdAnalysisCache = require('./JdAnalysisCache');
+const TailorSession = require('./TailorSession');
+const CoverLetter = require('./CoverLetter');
 
 module.exports = {
   User,
@@ -57,7 +61,11 @@ module.exports = {
   KnowledgeDocument,
   MockInterviewSession,
   ResumeVersion,
+  Resume,
+  ResumeReview,
   AiCallLog,
   ConversationMeta,
   JdAnalysisCache,
+  TailorSession,
+  CoverLetter,
 };

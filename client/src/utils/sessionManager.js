@@ -8,7 +8,7 @@ try {
   setAuthFailureHandler(() => {
     clearSessionData({ broadcast: false });
   });
-} catch (_) {}
+} catch (_) { }
 
 /**
  * Check whether a pathname belongs to a protected role route.
@@ -39,7 +39,7 @@ export const checkHasValidSession = () => {
       const raw = localStorage.getItem('user');
       user = raw ? JSON.parse(raw) : null;
     }
-  } catch (_) {}
+  } catch (_) { }
   return Boolean(token && user);
 };
 
@@ -112,7 +112,7 @@ export const loadScopedData = (prefix, userId, storage = null) => {
   } catch (_) {
     try {
       store.removeItem(key);
-    } catch (_) {}
+    } catch (_) { }
     return null;
   }
 };
@@ -136,7 +136,7 @@ export const clearScopedData = (prefix, userId = null, storage = null) => {
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 };
 
 /**
@@ -150,7 +150,7 @@ export const clearSessionData = (options = {}) => {
   // 1. Clear in-memory token from Axios API headers
   try {
     setAccessToken(null);
-  } catch (_) {}
+  } catch (_) { }
 
   // 2. Clear all user data from localStorage
   try {
@@ -173,14 +173,14 @@ export const clearSessionData = (options = {}) => {
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // 3. Purge all sessionStorage items entirely
   try {
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.clear();
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // 4. Purge browser CacheStorage if available
   try {
@@ -188,9 +188,9 @@ export const clearSessionData = (options = {}) => {
       window.caches
         .keys()
         .then((cacheNames) => Promise.all(cacheNames.map((name) => window.caches.delete(name))))
-        .catch(() => {});
+        .catch(() => { });
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // 5. Invoke all registered React context/component reset handlers
   resetHandlers.forEach((handler) => {
@@ -206,7 +206,7 @@ export const clearSessionData = (options = {}) => {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('placement:session_cleared'));
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // 7. Cross-tab synchronization via BroadcastChannel and localStorage storage event
   if (broadcast) {
@@ -216,13 +216,13 @@ export const clearSessionData = (options = {}) => {
         channel.postMessage({ type: 'LOGOUT', timestamp: Date.now() });
         channel.close();
       }
-    } catch (_) {}
+    } catch (_) { }
 
     try {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('auth_logout_timestamp', Date.now().toString());
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 };
 
@@ -238,14 +238,22 @@ export const initSessionSecurity = () => {
 
   // 1. Back/Forward Cache (bfcache) protection via pageshow
   window.addEventListener('pageshow', (event) => {
+    // Only act on Back/Forward Cache (bfcache) restoration (event.persisted === true).
+    // Normal loads and reloads (event.persisted === false) must be handled solely by AuthContext.initAuth.
+    if (!event?.persisted) return;
+
     const pathname = window.location.pathname || '';
     const isProtected = isProtectedPath(pathname);
     const hasSession = checkHasValidSession();
 
-    // If restored from bfcache or navigating back to a protected view without session:
-    if ((event.persisted || !hasSession) && isProtected) {
+    // If restored from bfcache without an active session on a protected route:
+    if (isProtected && !hasSession) {
       clearSessionData({ broadcast: false });
-      window.location.replace('/login');
+      if (typeof window.location?.replace === 'function') {
+        window.location.replace('/login');
+      } else if (window.location) {
+        window.location.href = '/login';
+      }
     }
   });
 
@@ -263,7 +271,7 @@ export const initSessionSecurity = () => {
         }
       };
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // 3. Fallback cross-tab listener via storage event
   window.addEventListener('storage', (event) => {

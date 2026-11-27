@@ -1,12 +1,26 @@
+const path = require('path');
+const dotenv = require('dotenv');
 const mongoose = require('mongoose');
+
+// Ensure environment variables are loaded if not already initialized
+if (!process.env.MONGO_URI) {
+  dotenv.config({ path: path.resolve(__dirname, '../.env') });
+}
 
 /**
  * Connect to MongoDB Database
  */
 const connectDB = async () => {
+  if (!process.env.MONGO_URI) {
+    const errorMsg = 'FATAL: MONGO_URI is not defined. Refusing to connect to unconfigured database.';
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI);
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    const sanitizedHost = (conn.connection.host || '').replace(/:\/\/.*@/, '://***:***@');
+    console.log(`MongoDB Connected: ${sanitizedHost} [database: ${conn.connection.name}]`);
 
     // Safe migration: ensure existing TPO/admin users without isApproved field are marked approved
     try {
@@ -24,8 +38,7 @@ const connectDB = async () => {
     }
   } catch (error) {
     console.error(`MongoDB Connection Error: ${error.message}`);
-    // Do not terminate process in development if Mongo is down, but log warning
-    // In production you may exit: process.exit(1);
+    throw error;
   }
 };
 

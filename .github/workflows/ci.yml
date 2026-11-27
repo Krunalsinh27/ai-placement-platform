@@ -61,9 +61,23 @@ jobs:
           TEST_KEEP_GOING: 1
         run: npm run test:fresh
 
+      - name: Run AI evaluation benchmark
+        working-directory: ./server
+        env:
+          TZ: UTC
+          NODE_ENV: test
+          AI_PROVIDER: mock
+          MONGO_URI_TEST: mongodb://127.0.0.1:27017/placement_management_test
+          JWT_SECRET: supersecret_ci_jwt_key_must_be_over_32_characters_long_for_security
+        run: npm run ai:eval
+
       - name: Install client dependencies
         working-directory: ./client
         run: npm ci
+
+      - name: Run client automated tests
+        working-directory: ./client
+        run: npm test
 
       - name: Build client production bundle
         working-directory: ./client

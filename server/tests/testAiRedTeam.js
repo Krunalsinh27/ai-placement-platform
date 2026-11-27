@@ -13,6 +13,7 @@
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
 process.env.AI_PROVIDER = 'mock';
+process.env.AI_PROVIDER_CHAIN = 'mock';
 
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');

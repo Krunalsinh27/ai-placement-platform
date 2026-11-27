@@ -317,6 +317,299 @@ async function runResilienceTests() {
       await AiUsage.deleteMany({ user: testStudentUser });
     }
 
+    // ========================================================
+    // TEST 5: Comprehensive Redis Lifecycle & Readiness (Scenarios 1-10)
+    // ========================================================
+    console.log('\n5. Testing Comprehensive Redis Client Lifecycle & Readiness (Scenarios 1-10)...');
+
+    const unhandledRejections = [];
+    const rejectionHandler = (reason) => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', rejectionHandler);
+
+    try {
+      // ----------------------------------------------------
+      // Scenario 1: Redis already ready before application initialization
+      // ----------------------------------------------------
+      console.log('  Scenario 1: Redis already ready before store initialization...');
+      const readyClient = new Redis('redis://127.0.0.1:6379', {
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+      });
+      await new Promise((resolve) => readyClient.once('ready', resolve));
+      assert.strictEqual(readyClient.status, 'ready');
+
+      const readyStore = createFallbackStore('rl:test_scen1:', readyClient);
+      readyStore.init({ windowMs: 60000 });
+      assert.strictEqual(readyStore.consecutiveFailures, 0);
+      assert.strictEqual(readyStore._isCircuitOpen(), false);
+
+      const readyInc = await readyStore.increment('user_ready_init');
+      assert.strictEqual(readyInc.totalHits, 1);
+      console.log('  ✓ Scenario 1 PASS: Ready Redis initializes cleanly with 0 failures');
+      await readyClient.quit();
+
+      // ----------------------------------------------------
+      // Scenario 2: Redis connecting when rate limiter initializes
+      // ----------------------------------------------------
+      console.log('  Scenario 2: Redis connecting when rate limiter initializes...');
+      const connectingClient = new Redis('redis://127.0.0.1:6379', {
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+      });
+      assert.strictEqual(connectingClient.status, 'connecting', 'Client must start in connecting status');
+
+      const connectingStore = createFallbackStore('rl:test_scen2:', connectingClient);
+      connectingStore.init({ windowMs: 60000 });
+      assert.strictEqual(connectingStore.consecutiveFailures, 0, 'Must not record failure on connection in progress');
+      assert.strictEqual(connectingStore._isCircuitOpen(), false, 'Circuit must not open on startup');
+
+      // Wait 100ms for connection to complete
+      await new Promise((r) => setTimeout(r, 100));
+      assert.strictEqual(connectingClient.status, 'ready');
+      const connInc = await connectingStore.increment('user_conn_init');
+      assert.strictEqual(connInc.totalHits, 1);
+      console.log('  ✓ Scenario 2 PASS: Connecting client initializes without tripping circuit');
+      await connectingClient.quit();
+
+      // ----------------------------------------------------
+      // Scenario 3: First request during Redis connection establishment
+      // ----------------------------------------------------
+      console.log('  Scenario 3: First request arrives while Redis is still connecting...');
+      const firstReqClient = new Redis('redis://127.0.0.1:6379', {
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+      });
+      assert.strictEqual(firstReqClient.status, 'connecting');
+
+      const firstReqStore = createFallbackStore('rl:test_scen3:', firstReqClient);
+      firstReqStore.init({ windowMs: 60000 });
+
+      // Immediate request while still connecting (does not wait for ready manually)
+      const firstInc = await firstReqStore.increment('user_instant');
+      assert(firstInc, 'Increment during connection must succeed');
+      assert.strictEqual(firstInc.totalHits, 1);
+      assert.strictEqual(firstReqStore.consecutiveFailures, 0);
+      console.log('  ✓ Scenario 3 PASS: First request during connection establishment uses Redis successfully');
+      await firstReqClient.quit();
+
+      // ----------------------------------------------------
+      // Scenario 4: Redis command failure handling
+      // ----------------------------------------------------
+      console.log('  Scenario 4: Redis command failure falls back to memory safely...');
+      const failingMockClient = {
+        status: 'ready',
+        call: async () => {
+          throw new Error('READONLY You cant write against a read only replica');
+        },
+      };
+
+      const failingStore = createFallbackStore('rl:test_scen4:', failingMockClient);
+      failingStore.init({ windowMs: 60000 });
+
+      const failInc = await failingStore.increment('user_fail_cmd');
+      assert(failInc, 'Should fall back to MemoryStore on Redis command failure');
+      assert.strictEqual(failInc.totalHits, 1);
+      assert.strictEqual(failingStore.consecutiveFailures, 1, 'Should record 1 failure');
+      console.log('  ✓ Scenario 4 PASS: Command failure falls back to memory and records failure');
+
+      // ----------------------------------------------------
+      // Scenario 5: In-memory fallback enforcement
+      // ----------------------------------------------------
+      console.log('  Scenario 5: In-memory fallback strictly enforces rate limits...');
+      const deadPortClient = new Redis('redis://127.0.0.1:6397', {
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+        retryStrategy: () => null,
+      });
+      deadPortClient.on('error', () => {});
+
+      const fallbackMemStore = createFallbackStore('rl:test_scen5:', deadPortClient);
+      fallbackMemStore.init({ windowMs: 60000 });
+
+      const h1 = await fallbackMemStore.increment('user_strict');
+      assert.strictEqual(h1.totalHits, 1, 'First in-memory hit must be 1');
+      const h2 = await fallbackMemStore.increment('user_strict');
+      assert.strictEqual(h2.totalHits, 2, 'Second in-memory hit must be 2');
+      const h3 = await fallbackMemStore.increment('user_strict');
+      assert.strictEqual(h3.totalHits, 3, 'Third in-memory hit must be 3');
+      console.log('  ✓ Scenario 5 PASS: In-memory fallback increments correctly when Redis is down');
+      deadPortClient.disconnect();
+
+      // ----------------------------------------------------
+      // Scenario 6: Circuit breaker activation after 3 consecutive failures
+      // ----------------------------------------------------
+      console.log('  Scenario 6: Circuit breaker activates after 3 failures and skips Redis...');
+      const cbClient = {
+        status: 'ready',
+        call: async () => {
+          throw new Error('ETIMEDOUT');
+        },
+      };
+      const cbStore = createFallbackStore('rl:test_scen6:', cbClient);
+      cbStore.init({ windowMs: 60000 });
+
+      await cbStore.increment('cb_user_1');
+      await cbStore.increment('cb_user_2');
+      await cbStore.increment('cb_user_3');
+      assert.strictEqual(cbStore.consecutiveFailures, 3);
+      assert.strictEqual(cbStore._isCircuitOpen(), true, 'Circuit breaker must be open');
+
+      let cbRedisCalled = false;
+      cbClient.call = async () => {
+        cbRedisCalled = true;
+      };
+      await cbStore.increment('cb_user_4');
+      assert.strictEqual(cbRedisCalled, false, 'Circuit open must bypass Redis call');
+      console.log('  ✓ Scenario 6 PASS: Circuit breaker trips after 3 failures and bypasses Redis');
+
+      // ----------------------------------------------------
+      // Scenario 7: Redis recovery after connection failure
+      // ----------------------------------------------------
+      console.log('  Scenario 7: Redis recovery after failure resets circuit and resumes Redis...');
+      let mockRedisRecovered = false;
+      const recClient = {
+        status: 'ready',
+        call: async (...args) => {
+          if (!mockRedisRecovered) throw new Error('ECONNREFUSED');
+          const cmd = String(args[0] || '').toUpperCase();
+          if (cmd === 'SCRIPT') return 'mock_sha';
+          if (cmd === 'EVAL' || cmd === 'EVALSHA') return [1, 60000];
+          return 'OK';
+        },
+      };
+      const recStore = createFallbackStore('rl:test_scen7:', recClient);
+      recStore.init({ windowMs: 60000 });
+
+      await recStore.increment('rec_1');
+      await recStore.increment('rec_2');
+      await recStore.increment('rec_3');
+      assert.strictEqual(recStore._isCircuitOpen(), true);
+
+      // Simulate recovery and window expiration
+      mockRedisRecovered = true;
+      recStore.circuitOpenUntil = Date.now() - 100;
+      assert.strictEqual(recStore._isCircuitOpen(), false);
+
+      const recRes = await recStore.increment('rec_probe');
+      assert.strictEqual(recRes.totalHits, 1);
+      assert.strictEqual(recStore.consecutiveFailures, 0);
+      assert.strictEqual(recStore._isCircuitOpen(), false);
+      console.log('  ✓ Scenario 7 PASS: Probe on recovered Redis resets failures and closes circuit');
+
+      // ----------------------------------------------------
+      // Scenario 8: Real Redis increment, decrement, and reset
+      // ----------------------------------------------------
+      console.log('  Scenario 8: Real Docker Redis-backed increment, decrement, and reset...');
+      const realClient = new Redis('redis://127.0.0.1:6379', {
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+      });
+      const realStore = createFallbackStore('rl:test_scen8:', realClient);
+      realStore.init({ windowMs: 60000 });
+
+      await realStore.resetKey('counter_test');
+      const inc1 = await realStore.increment('counter_test');
+      assert.strictEqual(inc1.totalHits, 1, 'First hit must be 1');
+
+      const inc2 = await realStore.increment('counter_test');
+      assert.strictEqual(inc2.totalHits, 2, 'Second hit must be 2');
+
+      await realStore.decrement('counter_test');
+      const getDecr = await realStore.get('counter_test');
+      assert.strictEqual(getDecr.totalHits, 1, 'After decrement, hits must be 1');
+
+      await realStore.resetKey('counter_test');
+      const incAfterReset = await realStore.increment('counter_test');
+      assert.strictEqual(incAfterReset.totalHits, 1, 'After resetKey, hits must be 1');
+      console.log('  ✓ Scenario 8 PASS: Real Redis increment, decrement, and resetKey operate accurately');
+      await realClient.quit();
+
+      // ----------------------------------------------------
+      // Scenario 9: Multiple limiters sharing dedicated client safely
+      // ----------------------------------------------------
+      console.log('  Scenario 9: Multiple limiters sharing dedicated client without interference...');
+      const sharedClient = getRateLimitRedisClient();
+      const s1 = createFallbackStore('rl:shared_login:', sharedClient);
+      const s2 = createFallbackStore('rl:shared_otp:', sharedClient);
+      const s3 = createFallbackStore('rl:shared_ai:', sharedClient);
+
+      s1.init({ windowMs: 60000 });
+      s2.init({ windowMs: 60000 });
+      s3.init({ windowMs: 60000 });
+
+      const [rShared1, rShared2, rShared3] = await Promise.all([
+        s1.increment('user_common'),
+        s2.increment('user_common'),
+        s3.increment('user_common'),
+      ]);
+
+      assert.strictEqual(rShared1.totalHits, 1, 'Store 1 hits must be 1');
+      assert.strictEqual(rShared2.totalHits, 1, 'Store 2 hits must be 1');
+      assert.strictEqual(rShared3.totalHits, 1, 'Store 3 hits must be 1');
+
+      // Verify second hit on s1 does not affect s2 or s3
+      const rShared1Second = await s1.increment('user_common');
+      assert.strictEqual(rShared1Second.totalHits, 2);
+
+      const checkS2 = await s2.get('user_common');
+      assert.strictEqual(checkS2.totalHits, 1, 'Store 2 must remain isolated at 1');
+      console.log('  ✓ Scenario 9 PASS: Multiple limiters share dedicated client with isolated counters');
+
+      // ----------------------------------------------------
+      // Scenario 9b: GeneralRedisStore non-blocking init, reconnect preloading, and deduplication
+      // ----------------------------------------------------
+      console.log('  Scenario 9b: GeneralRedisStore non-blocking init, deduplicated preloading, & reconnect...');
+      const { createRedisStore, GeneralRedisStore } = require('../middleware/rateLimitMiddleware');
+      const genClient = new Redis('redis://127.0.0.1:6379', {
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+      });
+
+      const genStore = createRedisStore('rl:test_gen_scen:', genClient);
+      const tGenInit = Date.now();
+      genStore.init({ windowMs: 60000 });
+      const genInitDuration = Date.now() - tGenInit;
+      assert(genInitDuration < 100, `genStore.init() must be non-blocking (<100ms), took ${genInitDuration}ms`);
+
+      // Allow background ready preloading to settle
+      await new Promise((r) => setTimeout(r, 40));
+      const genInc1 = await genStore.increment('gen_user_1');
+      assert.strictEqual(genInc1.totalHits, 1);
+
+      // Verify deduplicated preloading does not throw on concurrent triggers
+      await Promise.all([
+        genStore._safePreloadScripts(),
+        genStore._safePreloadScripts(),
+        genStore._safePreloadScripts(),
+      ]);
+
+      // Simulate reconnect event
+      genClient.emit('ready');
+      await new Promise((r) => setTimeout(r, 30));
+      const genInc2 = await genStore.increment('gen_user_1');
+      assert.strictEqual(genInc2.totalHits, 2, 'Counter must increment after simulated reconnect');
+      console.log('  ✓ Scenario 9b PASS: GeneralRedisStore non-blocking init & reconnect preload verified');
+      await genClient.quit();
+
+      // ----------------------------------------------------
+      // Scenario 10: Zero unhandled promise rejections
+      // ----------------------------------------------------
+      console.log('  Scenario 10: Verifying zero unhandled promise rejections...');
+      // Wait 150ms for any background timers or late rejections to surface
+      await new Promise((r) => setTimeout(r, 150));
+      assert.strictEqual(
+        unhandledRejections.length,
+        0,
+        `Expected 0 unhandled promise rejections, got ${unhandledRejections.length}: ${unhandledRejections.join(', ')}`
+      );
+      console.log('  ✓ Scenario 10 PASS: Zero unhandled promise rejections detected across all tests');
+
+    } finally {
+      process.removeListener('unhandledRejection', rejectionHandler);
+    }
+
     console.log('\n======================================================');
     console.log('   ALL REDIS RESILIENCE & AI BUDGET TESTS PASSED!     ');
     console.log('======================================================\n');

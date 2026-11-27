@@ -651,6 +651,281 @@ const deleteDrive = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Recruiter-side college-wise recruitment applicant analytics for multi-college and single-college drives
+ * @route   GET /api/drives/:id/applicant-analytics
+ * @access  Private (Recruiter from hiring company, Superadmin, TPO from participating college)
+ */
+const getDriveApplicantAnalytics = async (req, res, next) => {
+  try {
+    const driveId = req.params.id || req.params.driveId;
+    const drive = await Drive.findById(driveId).populate('company college colleges');
+    if (!drive) {
+      return res.status(404).json({ success: false, message: 'Drive not found' });
+    }
+
+    // Authorization: recruiter must belong to hiring company; superadmin allowed; TPO must be from participating college
+    if (req.user.role === 'recruiter') {
+      const recruiterCompId = (req.user.company?._id || req.user.company)?.toString();
+      const driveCompId = (drive.company?._id || drive.company)?.toString();
+      if (!recruiterCompId || !driveCompId || recruiterCompId !== driveCompId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized: You can only view applicant analytics for your company drives',
+        });
+      }
+    } else if (req.user.role === 'tpo' || req.user.role === 'admin') {
+      const userColId = (req.user.college?._id || req.user.college)?.toString();
+      const driveCollegeIds = [
+        (drive.college?._id || drive.college)?.toString(),
+        ...(Array.isArray(drive.colleges) ? drive.colleges.map((c) => (c._id || c).toString()) : []),
+      ].filter(Boolean);
+      if (!userColId || !driveCollegeIds.includes(userColId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized: You can only view analytics for drives associated with your college',
+        });
+      }
+    } else if (req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to access recruitment applicant analytics',
+      });
+    }
+
+    // 1. Resolve authoritative invited colleges
+    const invitedCollegeMap = new Map();
+    if (drive.college) {
+      invitedCollegeMap.set(drive.college._id.toString(), {
+        _id: drive.college._id.toString(),
+        name: drive.college.name,
+        code: drive.college.code || '',
+        city: drive.college.city || '',
+        state: drive.college.state || '',
+      });
+    }
+    if (Array.isArray(drive.colleges)) {
+      for (const col of drive.colleges) {
+        if (col && col._id) {
+          invitedCollegeMap.set(col._id.toString(), {
+            _id: col._id.toString(),
+            name: col.name,
+            code: col.code || '',
+            city: col.city || '',
+            state: col.state || '',
+          });
+        }
+      }
+    }
+
+    // 2. Fetch all applications for this drive
+    const applications = await Application.find({ drive: drive._id })
+      .populate({
+        path: 'student',
+        populate: [
+          { path: 'user', select: 'name email phone' },
+          { path: 'college', select: 'name code city state' },
+        ],
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // 3. Initialize metrics per invited college
+    const collegeAnalytics = {};
+    for (const [colId, colMeta] of invitedCollegeMap.entries()) {
+      collegeAnalytics[colId] = {
+        collegeId: colId,
+        collegeName: colMeta.name,
+        collegeCode: colMeta.code,
+        city: colMeta.city,
+        state: colMeta.state,
+        totalApplications: 0,
+        uniqueApplicants: 0,
+        uniqueStudentSet: new Set(),
+        statuses: {
+          applied: 0,
+          shortlisted: 0,
+          interview: 0,
+          selected: 0,
+          rejected: 0,
+        },
+        branches: {},
+        cgpaSum: 0,
+        cgpaCount: 0,
+      };
+    }
+
+    // Track overall drive metrics
+    const overallUniqueStudentSet = new Set();
+    const overallStatuses = {
+      applied: 0,
+      shortlisted: 0,
+      interview: 0,
+      selected: 0,
+      rejected: 0,
+    };
+
+    // 4. Process applications
+    const transformedApplicants = [];
+
+    for (const app of applications) {
+      const student = app.student;
+      if (!student) continue;
+
+      const studentId = student._id.toString();
+      const studentCollege = student.college;
+      const studentCollegeId = (studentCollege?._id || studentCollege)?.toString();
+
+      overallUniqueStudentSet.add(studentId);
+      if (overallStatuses[app.status] !== undefined) {
+        overallStatuses[app.status]++;
+      }
+
+      // If the student's college is one of the invited colleges (or dynamic fallback)
+      if (studentCollegeId) {
+        if (!collegeAnalytics[studentCollegeId]) {
+          const cName = studentCollege?.name || 'Affiliated College';
+          collegeAnalytics[studentCollegeId] = {
+            collegeId: studentCollegeId,
+            collegeName: cName,
+            collegeCode: studentCollege?.code || '',
+            city: studentCollege?.city || '',
+            state: studentCollege?.state || '',
+            totalApplications: 0,
+            uniqueApplicants: 0,
+            uniqueStudentSet: new Set(),
+            statuses: { applied: 0, shortlisted: 0, interview: 0, selected: 0, rejected: 0 },
+            branches: {},
+            cgpaSum: 0,
+            cgpaCount: 0,
+          };
+        }
+
+        const colStat = collegeAnalytics[studentCollegeId];
+        colStat.totalApplications++;
+        colStat.uniqueStudentSet.add(studentId);
+
+        if (colStat.statuses[app.status] !== undefined) {
+          colStat.statuses[app.status]++;
+        }
+
+        if (student.branch) {
+          colStat.branches[student.branch] = (colStat.branches[student.branch] || 0) + 1;
+        }
+
+        if (student.cgpa !== undefined && student.cgpa !== null && !isNaN(student.cgpa)) {
+          colStat.cgpaSum += Number(student.cgpa);
+          colStat.cgpaCount++;
+        }
+      }
+
+      transformedApplicants.push({
+        _id: app._id,
+        applicationId: app._id,
+        studentId: student._id,
+        name: student.user?.name || 'Candidate',
+        email: student.user?.email || '',
+        phone: student.user?.phone || student.phone || '',
+        enrollmentNo: student.enrollmentNo || '',
+        branch: student.branch || '',
+        cgpa: student.cgpa ?? null,
+        collegeId: studentCollegeId || null,
+        collegeName: studentCollege?.name || collegeAnalytics[studentCollegeId]?.collegeName || 'N/A',
+        status: app.status,
+        appliedAt: app.createdAt,
+        resumeUrl: app.resumeUrl || student.resumeUrl || null,
+        snapshotResume: app.snapshotResume || null,
+      });
+    }
+
+    // Finalize college array
+    const collegesReport = Object.values(collegeAnalytics).map((col) => {
+      const uniqueCount = col.uniqueStudentSet.size;
+      const avgCgpa = col.cgpaCount > 0 ? Math.round((col.cgpaSum / col.cgpaCount) * 100) / 100 : null;
+      const selectionRate = uniqueCount > 0 ? Math.round((col.statuses.selected / uniqueCount) * 1000) / 10 : 0;
+      return {
+        collegeId: col.collegeId,
+        collegeName: col.collegeName,
+        collegeCode: col.collegeCode,
+        city: col.city,
+        state: col.state,
+        totalApplications: col.totalApplications,
+        uniqueApplicants: uniqueCount,
+        statuses: col.statuses,
+        branches: col.branches,
+        averageCgpa: avgCgpa,
+        selectionRate,
+      };
+    });
+
+    // Sort colleges by unique applicants descending
+    collegesReport.sort((a, b) => b.uniqueApplicants - a.uniqueApplicants);
+
+    // Apply filtering and pagination to applicant list
+    const filterCollegeId = req.query.collegeId;
+    const filterStatus = req.query.status;
+    const search = (req.query.search || '').toLowerCase().trim();
+
+    let filteredApplicants = transformedApplicants;
+
+    if (filterCollegeId && filterCollegeId !== 'all') {
+      filteredApplicants = filteredApplicants.filter((a) => a.collegeId === filterCollegeId);
+    }
+
+    if (filterStatus && filterStatus !== 'all') {
+      filteredApplicants = filteredApplicants.filter((a) => a.status === filterStatus);
+    }
+
+    if (search) {
+      filteredApplicants = filteredApplicants.filter((a) => {
+        return (
+          a.name.toLowerCase().includes(search) ||
+          a.enrollmentNo.toLowerCase().includes(search) ||
+          a.branch.toLowerCase().includes(search) ||
+          a.email.toLowerCase().includes(search) ||
+          a.collegeName.toLowerCase().includes(search)
+        );
+      });
+    }
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const totalCount = filteredApplicants.length;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+    const paginatedApplicants = filteredApplicants.slice((page - 1) * limit, page * limit);
+
+    res.status(200).json({
+      success: true,
+      drive: {
+        _id: drive._id,
+        role: drive.role,
+        companyName: drive.company?.name || 'Company',
+        status: drive.status,
+        driveDate: drive.driveDate,
+        packageLpa: drive.packageLpa,
+        allowedBranches: drive.allowedBranches,
+      },
+      summary: {
+        totalApplications: applications.length,
+        uniqueApplicants: overallUniqueStudentSet.size,
+        invitedCollegesCount: invitedCollegeMap.size,
+        participatingCollegesCount: collegesReport.filter((c) => c.totalApplications > 0).length,
+        statuses: overallStatuses,
+      },
+      colleges: collegesReport,
+      applicants: paginatedApplicants,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        pages: totalPages,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createDrive,
   getDrives,
@@ -660,5 +935,6 @@ module.exports = {
   deleteDrive,
   autoCloseExpiredDrives,
   reopenDrive,
+  getDriveApplicantAnalytics,
 };
 

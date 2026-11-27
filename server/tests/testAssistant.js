@@ -1,6 +1,7 @@
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
 process.env.AI_PROVIDER = 'mock';
+process.env.AI_PROVIDER_CHAIN = 'mock';
 
 const express = require('express');
 const mongoose = require('mongoose');

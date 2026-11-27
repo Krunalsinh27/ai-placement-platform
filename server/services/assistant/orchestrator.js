@@ -13,6 +13,7 @@ const {
   getConversationContext,
 } = require('./conversationService');
 const { callAiChatWithTools, isAiConfigured } = require('../ai/aiClient');
+const { redactPII } = require('../ai/redactor');
 const { AiUsage } = require('../../models');
 const {
   matchRuleBasedIntent,
@@ -44,6 +45,70 @@ CRITICAL SECURITY & PLATFORM DATA RULES:
    - Keep answers clear, professional, and well-structured with GitHub-flavored markdown.`;
 
 /**
+ * Sanitizes and truncates tool results before passing them to the LLM context.
+ * Strips personal contact fields, runs PII redaction on strings, caps arrays at 25 items,
+ * and bounds output character length to prevent prompt stuffing.
+ */
+function sanitizeToolOutputForLlm(data, maxArrayLen = 25, maxChars = 15000) {
+  if (data === null || data === undefined) return '{}';
+
+  function cleanValue(val, keyName = '') {
+    if (val === null || val === undefined) return val;
+
+    const lowerKey = String(keyName).toLowerCase();
+    if (['phone', 'phonenumber', 'contactnumber', 'mobile', 'email', 'studentemail', 'personalemail'].includes(lowerKey)) {
+      return '[CONTACT_REDACTED]';
+    }
+
+    if (typeof val === 'string') {
+      return redactPII(val);
+    }
+
+    if (Array.isArray(val)) {
+      const sliced = val.slice(0, maxArrayLen).map((item) => cleanValue(item, keyName));
+      if (val.length > maxArrayLen) {
+        sliced.push({ _truncated: true, totalItems: val.length, showing: maxArrayLen });
+      }
+      return sliced;
+    }
+
+    if (typeof val === 'object') {
+      const cleanedObj = {};
+      for (const [k, v] of Object.entries(val)) {
+        cleanedObj[k] = cleanValue(v, k);
+      }
+      return cleanedObj;
+    }
+
+    return val;
+  }
+
+  const cleaned = cleanValue(data);
+  let json = JSON.stringify(cleaned);
+  if (json.length > maxChars) {
+    json = json.slice(0, maxChars) + '...[TRUNCATED_FOR_SIZE]';
+  }
+  return json;
+}
+
+/**
+ * Validates and sanitizes a conversation ID.
+ * Rejects literal 'null', 'undefined', empty strings, or non-strings and generates a safe fresh ObjectId.
+ */
+function sanitizeConversationId(id) {
+  if (
+    typeof id === 'string' &&
+    id.trim().length > 0 &&
+    id.trim().toLowerCase() !== 'null' &&
+    id.trim().toLowerCase() !== 'undefined' &&
+    id.trim() !== '[object Object]'
+  ) {
+    return id.trim();
+  }
+  return new mongoose.Types.ObjectId().toString();
+}
+
+/**
  * Runs the orchestrator for a single user turn (JSON request / response)
  */
 async function processAssistantTurn({
@@ -54,7 +119,7 @@ async function processAssistantTurn({
   streamSender = null,
 }) {
   const normRole = String(scope.role || 'student').toLowerCase();
-  const convId = conversationId || new mongoose.Types.ObjectId().toString();
+  const convId = sanitizeConversationId(conversationId);
   const trimmedQ = String(question || '').trim().slice(0, 1500);
 
   // 0. Deterministic curated help knowledge base check: Help queries consume 0 quota and bypass rate limit
@@ -167,8 +232,8 @@ async function processAssistantTurn({
   for (const m of recentMessages) {
     messages.push(m);
   }
-  // Append current user message
-  messages.push({ role: 'user', content: trimmedQ });
+  // Append current user message (redact PII before provider transmission)
+  messages.push({ role: 'user', content: redactPII(trimmedQ) });
 
   // 5. Tool Declarations for this role
   const tools = getToolsForRole(normRole);
@@ -340,7 +405,7 @@ async function processAssistantTurn({
         role: 'tool',
         name: fnName,
         tool_call_id: tc.id,
-        content: JSON.stringify(toolResult),
+        content: sanitizeToolOutputForLlm(toolResult),
       });
     }
 
@@ -426,7 +491,7 @@ async function executeRuleBasedFallback({
   isRateLimited = false,
 }) {
   const normRole = String(scope.role || 'student').toLowerCase();
-  const convId = conversationId || new mongoose.Types.ObjectId().toString();
+  const convId = sanitizeConversationId(conversationId);
   const trimmedQ = String(question || '').trim();
 
   const dailyUsage = await AiUsage.getUserDailyUsage(userId, normRole);
@@ -591,4 +656,5 @@ module.exports = {
   SYSTEM_POLICY_PROMPT,
   processAssistantTurn,
   executeRuleBasedFallback,
+  sanitizeToolOutputForLlm,
 };

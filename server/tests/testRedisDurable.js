@@ -283,8 +283,9 @@ async function runRedisDurableTests() {
       htmlBody: '<p>Testing non-throwing queue</p>',
     });
     assert(enqueuedOffline, 'enqueueEmail must return the created EmailLog doc');
-    assert.strictEqual(enqueuedOffline.status, 'queued', 'EmailLog status must be queued when Redis is down');
-    console.log('✓ enqueueEmail does not throw when Redis is unreachable, leaves EmailLog as queued');
+    const expectedStatus = isRedisReachable ? 'queued' : 'failed';
+    assert.strictEqual(enqueuedOffline.status, expectedStatus, `EmailLog status must be ${expectedStatus} (isRedisReachable: ${isRedisReachable})`);
+    console.log(`✓ enqueueEmail does not throw, records EmailLog as ${expectedStatus} based on Redis reachability`);
 
     // 2. Create an EmailLog directly older than 2 minutes
     const offlineLog = await EmailLog.create({

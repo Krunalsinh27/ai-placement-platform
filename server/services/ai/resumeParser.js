@@ -10,6 +10,7 @@ const { redactPII } = require('./redactor');
 const { normalizeSkill, sanitizeSkillList, extractSkillsFromText } = require('./skillsDictionary');
 const { callAiWithQuotaAndRetry } = require('./aiClient');
 const { getSkillEvidence } = require('./matchingEngine');
+const { parseEducationSection } = require('../resumeBuilder/resumeBuilderService');
 
 // Strict Zod schema for validated LLM output
 const ResumeProfileZodSchema = z.object({
@@ -106,6 +107,8 @@ function extractWithRules(text) {
 
   const rawLines = (text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const education = [];
+  const eduLines = [];
+  const summaryLines = [];
   const experience = [];
   const projects = [];
   const certifications = [];
@@ -305,39 +308,7 @@ function extractWithRules(text) {
 
     // 3. EDUCATION SECTION
     else if (currentSection === 'edu') {
-      const yearMatch = line.match(/\b(20\d{2}(?:\s*(?:-|–|—|to)\s*20\d{2})?)\b/);
-      const year = yearMatch ? yearMatch[0].trim() : '';
-      const textWithoutYear = yearMatch ? line.replace(yearMatch[0], '').trim() : line;
-
-      const parts = textWithoutYear.replace(/[|•\s-]+$/, '').split(/\s*[|•]\s*|\s+-\s+|,\s+/).map((p) => p.trim()).filter(Boolean);
-
-      let degree = '';
-      let field = '';
-      let institution = '';
-
-      if (parts.length >= 2) {
-        degree = parts[0];
-        institution = parts[1];
-        if (parts[2] && !field) field = parts[2];
-      } else if (parts.length === 1) {
-        degree = parts[0];
-      }
-
-      // Check for "in <field>" or "of <field>"
-      const inMatch = degree.match(/^(.*?)\s+(?:in|of)\s+(.*)$/i);
-      if (inMatch) {
-        degree = inMatch[1].trim();
-        if (!field) field = inMatch[2].trim();
-      }
-
-      finalizeEdu();
-      activeEdu = {
-        degree: degree || line,
-        field: field || '',
-        institution: institution || '',
-        year: year || '',
-      };
-      finalizeEdu();
+      eduLines.push(line);
     }
 
     // 4. CERTIFICATIONS
@@ -347,13 +318,20 @@ function extractWithRules(text) {
         certifications.push(cleaned);
       }
     }
+
+    // 5. SUMMARY SECTION
+    else if (currentSection === 'summary') {
+      summaryLines.push(cleanBulletText(line));
+    }
   }
 
   finalizeExp();
   finalizeProj();
-  finalizeEdu();
 
-  const summary = `Candidate with technical competencies in ${extractedSkills.slice(0, 5).join(', ') || 'software development'}.`;
+  const { entries: parsedEdu } = parseEducationSection(eduLines);
+  parsedEdu.forEach((e) => education.push(e));
+
+  const summary = summaryLines.join(' ').replace(/^[-*•·▪–—\s]+/, '').trim();
 
   return {
     skills: extractedSkills,
@@ -381,8 +359,10 @@ async function parseStudentResume(student, options = {}) {
     throw err;
   }
 
+  const userId = student.user?._id || student.user;
+
   // 1. Extract text and compute SHA-256 hash
-  const { text, hash, unreadable, error: extractErr } = await extractResumeText(student.resumeUrl);
+  const { text, hash, unreadable, error: extractErr } = await extractResumeText(student.resumeUrl, { userId });
 
   if (unreadable) {
     student.resumeProfile = {
@@ -424,7 +404,6 @@ async function parseStudentResume(student, options = {}) {
   const sanitizedText = redactPII(text);
 
   // 4. Call AI with retry & schema validation
-  const userId = student.user?._id || student.user;
   const aiResult = await callAiWithQuotaAndRetry({
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: `Extract structured profile information from the following resume document data block:\n\n<RESUME_DOCUMENT>\n${sanitizedText}\n</RESUME_DOCUMENT>`,

@@ -14,8 +14,10 @@ import {
   User,
   Info,
   X,
+  ExternalLink,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { openResumeInNewTab, openSnapshotResumeInNewTab } from '../../utils/resumeViewer';
 
 const RankedApplicantsView = ({ driveId, driveRole = 'Drive' }) => {
   const [loading, setLoading] = useState(true);
@@ -191,6 +193,42 @@ const RankedApplicantsView = ({ driveId, driveRole = 'Drive' }) => {
                           <span>•</span>
                           <span>{item.student?.branch}</span>
                         </div>
+                        {item.hasResumeSnapshot ? (
+                          <div className="mt-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openSnapshotResumeInNewTab(
+                                  item.applicationId,
+                                  `${item.student?.name || 'Candidate'}'s Submitted Resume`
+                                )
+                              }
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                            >
+                              <span>View submitted resume</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        ) : item.student?.hasResume ? (
+                          <div className="mt-1 flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openResumeInNewTab(
+                                  item.student?._id,
+                                  `${item.student?.name || 'Candidate'}'s Resume`
+                                )
+                              }
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
+                            >
+                              <span>Current resume</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </button>
+                            <span className="text-[10px] text-slate-400 font-normal">
+                              (legacy application)
+                            </span>
+                          </div>
+                        ) : null}
                       </td>
 
                       {/* Match Score & Progress Bar */}

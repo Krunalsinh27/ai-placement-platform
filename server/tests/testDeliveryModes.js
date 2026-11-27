@@ -75,11 +75,11 @@ async function runDeliveryTests() {
     console.log('--- Setting up Test Data ---');
     let collegeA = await College.findOne({ code: 'NITD' });
     if (!collegeA) {
-      collegeA = await College.create({ name: 'NIT Delhi', code: 'NITD', location: 'Delhi' });
+      collegeA = await College.create({ name: 'NIT Delhi', code: 'NITD', city: 'Delhi', state: 'Delhi', location: 'Delhi', status: 'approved' });
     }
     let collegeB = await College.findOne({ code: 'PICT' });
     if (!collegeB) {
-      collegeB = await College.create({ name: 'PICT Pune', code: 'PICT', location: 'Pune' });
+      collegeB = await College.create({ name: 'PICT Pune', code: 'PICT', city: 'Pune', state: 'Maharashtra', location: 'Pune', status: 'approved' });
     }
 
     let companyA = await Company.findOne({ name: 'Google' });

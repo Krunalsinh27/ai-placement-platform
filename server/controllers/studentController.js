@@ -230,30 +230,37 @@ const streamResume = async (req, res, next) => {
       isAuthorized = true;
     }
 
-    // 2. Superadmin or Admin
-    if (!isAuthorized && (req.user.role === 'superadmin' || req.user.role === 'admin')) {
+    // 2. Superadmin (global platform administrative access)
+    if (!isAuthorized && req.user.role === 'superadmin') {
       isAuthorized = true;
     }
 
-    // 3. TPO of the same college
-    if (!isAuthorized && req.user.role === 'tpo') {
+    // 3. TPO or Admin of the same college
+    if (!isAuthorized && (req.user.role === 'tpo' || req.user.role === 'admin')) {
       if (userCollegeId && studentCollegeId && userCollegeId === studentCollegeId) {
         isAuthorized = true;
       }
     }
 
     // 4. Recruiter who has received an application from this student for one of their drives/requirements
+    // GATED: Recruiter can ONLY stream a student's current live resume for LEGACY applications
+    // without a resume snapshot. Applications with snapshots must use the scoped snapshot PDF endpoint.
     if (!isAuthorized && req.user.role === 'recruiter') {
       const companyId = (req.user.company?._id || req.user.company)?.toString();
       if (companyId) {
         const companyDrives = await Drive.find({ company: companyId }).select('_id');
         const driveIds = companyDrives.map((d) => d._id);
         if (driveIds.length > 0) {
-          const applicationExists = await Application.exists({
+          const legacyApplicationExists = await Application.exists({
             student: student._id,
             drive: { $in: driveIds },
+            $or: [
+              { resumeSnapshot: { $exists: false } },
+              { 'resumeSnapshot.data': null },
+              { 'resumeSnapshot.data': { $exists: false } },
+            ],
           });
-          if (applicationExists) {
+          if (legacyApplicationExists) {
             isAuthorized = true;
           }
         }

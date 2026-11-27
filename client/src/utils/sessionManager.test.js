@@ -324,4 +324,157 @@ describe('Privacy and Session Security Test Suite', () => {
     expect(saveScopedData('draft', null, { some: 'data' })).toBe(false);
     expect(loadScopedData('draft', null)).toBeNull();
   });
+
+  // =========================================================================
+  // RELOAD & BFCACHE REGRESSION TESTS: AVOID PREMATURE LOGOUT ON REFRESH
+  // =========================================================================
+
+  it('7. (a) pageshow with persisted false on a protected path with no in-memory token does NOT clear data or redirect', () => {
+    initSessionSecurity();
+
+    // User metadata and drafts in storage prior to reload
+    const user = { _id: 'student_123', role: 'student', name: 'Student One' };
+    mockLocalStorage.setItem('user', JSON.stringify(user));
+    mockSessionStorage.setItem('resume_draft', JSON.stringify({ title: 'My Draft' }));
+
+    // In-memory access token is null right after browser reload (F5)
+    setAccessToken(null);
+
+    // Protected path
+    mockLocation.pathname = '/student/resume-studio';
+
+    expect(pageShowListeners.length).toBeGreaterThan(0);
+    const pageshowHandler = pageShowListeners[0];
+
+    // Trigger normal page reload pageshow (persisted: false)
+    pageshowHandler({ persisted: false });
+
+    // Assert data is NOT cleared (AuthContext.initAuth will restore session)
+    expect(mockLocalStorage.getItem('user')).toBeTruthy();
+    expect(mockSessionStorage.getItem('resume_draft')).toBeTruthy();
+
+    // Assert no redirect occurs
+    expect(mockLocation.replace).not.toHaveBeenCalled();
+    expect(mockLocation.pathname).toBe('/student/resume-studio');
+  });
+
+  it('8. (b) pageshow with persisted true and no session still redirects to /login and clears data', () => {
+    initSessionSecurity();
+
+    // No active session
+    setAccessToken(null);
+    mockLocalStorage.clear();
+    mockSessionStorage.setItem('stale_cache', 'confidential');
+
+    mockLocation.pathname = '/student/dashboard';
+
+    expect(pageShowListeners.length).toBeGreaterThan(0);
+    const pageshowHandler = pageShowListeners[0];
+
+    // Trigger bfcache restoration without valid session
+    pageshowHandler({ persisted: true });
+
+    // Assert redirect to /login and storage purged
+    expect(mockLocation.replace).toHaveBeenCalledWith('/login');
+    expect(mockLocation.pathname).toBe('/login');
+    expect(mockSessionStorage.length).toBe(0);
+    expect(mockSessionStorage.getItem('stale_cache')).toBeNull();
+  });
+
+  it('9. (c) reload simulation where /auth/refresh succeeds keeps the user on the same page and logged in', () => {
+    initSessionSecurity();
+
+    // Prior state before reload
+    const studentUser = { _id: 'student_456', role: 'student', name: 'Alice' };
+    mockLocalStorage.setItem('user', JSON.stringify(studentUser));
+    mockSessionStorage.setItem('editor_state', JSON.stringify({ activeTab: 'projects' }));
+    mockLocation.pathname = '/student/resume-studio/6b08918f38c828e2292d91f0';
+
+    // Reload occurs: in-memory token resets to null
+    setAccessToken(null);
+
+    // Browser fires pageshow (persisted: false) on normal reload
+    const pageshowHandler = pageShowListeners[0];
+    pageshowHandler({ persisted: false });
+
+    // Verify pageshow does NOT redirect or clear data
+    expect(mockLocation.replace).not.toHaveBeenCalled();
+    expect(mockLocation.pathname).toBe('/student/resume-studio/6b08918f38c828e2292d91f0');
+    expect(mockLocalStorage.getItem('user')).toBeTruthy();
+
+    // Simulation of AuthContext.initAuth: /auth/refresh succeeds and returns new token
+    const refreshedToken = 'fresh_jwt_access_token_abc123';
+    setAccessToken(refreshedToken);
+
+    // User is fully authenticated on the same deep protected page
+    expect(getAccessToken()).toBe(refreshedToken);
+    expect(checkHasValidSession()).toBe(true);
+    expect(mockLocation.pathname).toBe('/student/resume-studio/6b08918f38c828e2292d91f0');
+    expect(mockLocation.replace).not.toHaveBeenCalled();
+  });
+
+  it('10. (d) reload simulation where /auth/refresh returns 401 ends on /login with data cleared', () => {
+    initSessionSecurity();
+
+    // Prior user metadata in localStorage
+    const expiredUser = { _id: 'expired_user_789', role: 'student', name: 'Bob' };
+    mockLocalStorage.setItem('user', JSON.stringify(expiredUser));
+    mockSessionStorage.setItem('student_work', 'unsaved changes');
+    mockLocation.pathname = '/admin/dashboard';
+
+    // Reload occurs: in-memory token resets to null
+    setAccessToken(null);
+
+    // Browser fires pageshow (persisted: false)
+    const pageshowHandler = pageShowListeners[0];
+    pageshowHandler({ persisted: false });
+
+    // pageshow itself does not kick user out yet (gives AuthContext a chance)
+    expect(mockLocation.replace).not.toHaveBeenCalled();
+
+    // AuthContext.initAuth executes: /auth/refresh returns 401 (refresh token expired/revoked)
+    // AuthContext handles unauthenticated response by invoking local logout
+    clearSessionData({ broadcast: false });
+    mockLocation.replace('/login');
+
+    // Verify user is redirected to /login with all session data purged
+    expect(mockLocation.replace).toHaveBeenCalledWith('/login');
+    expect(mockLocation.pathname).toBe('/login');
+    expect(getAccessToken()).toBeNull();
+    expect(mockLocalStorage.getItem('user')).toBeNull();
+    expect(mockSessionStorage.length).toBe(0);
+    expect(checkHasValidSession()).toBe(false);
+  });
+
+  it('11. (e) logout then Back button: still blocked from viewing protected data', () => {
+    initSessionSecurity();
+
+    // User is authenticated on protected route
+    setAccessToken('valid_token_xyz');
+    mockLocalStorage.setItem('user', JSON.stringify({ _id: 'user_xyz', role: 'recruiter' }));
+    mockSessionStorage.setItem('recruiter_notes', 'confidential notes');
+    mockLocation.pathname = '/recruiter/dashboard';
+
+    // User logs out
+    clearSessionData({ broadcast: true });
+    expect(getAccessToken()).toBeNull();
+    expect(mockLocalStorage.getItem('user')).toBeNull();
+    expect(mockSessionStorage.length).toBe(0);
+
+    // App navigates to /login
+    mockLocation.pathname = '/login';
+
+    // User clicks browser "Back" button to return to /recruiter/dashboard
+    mockLocation.pathname = '/recruiter/dashboard';
+
+    // Browser attempts to restore from bfcache (persisted: true)
+    const pageshowHandler = pageShowListeners[0];
+    pageshowHandler({ persisted: true });
+
+    // Assert user is blocked: redirected to /login and data purged
+    expect(mockLocation.replace).toHaveBeenCalledWith('/login');
+    expect(mockLocation.pathname).toBe('/login');
+    expect(mockSessionStorage.length).toBe(0);
+    expect(checkHasValidSession()).toBe(false);
+  });
 });

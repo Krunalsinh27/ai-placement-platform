@@ -745,6 +745,8 @@ function scoreResumeForTarget({
 
   return {
     atsScore: effectiveAtsScore,
+    overallScore: effectiveAtsScore,
+    scoringVersion: SCORING_VERSION,
     breakdown,
     matchedSkills: atsResult.matchedSkills || [],
     missingRequired: atsResult.missingRequired || [],
@@ -981,7 +983,7 @@ async function analyzeResumeAgainstTarget(student, target = {}, options = {}) {
   let resumeText = '';
   if (student.resumeUrl) {
     try {
-      const extracted = await extractResumeText(student.resumeUrl);
+      const extracted = await extractResumeText(student.resumeUrl, { userId: student.user?._id || student.user });
       if (extracted?.text) resumeText = extracted.text;
     } catch (_) {}
   }

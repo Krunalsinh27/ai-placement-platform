@@ -164,26 +164,12 @@ class EmailQueue {
             ]).finally(() => clearTimeout(timer));
           }
         } catch (queueErr) {
-          // SECURITY: Never log REDIS_URL. Fall back to in-memory queue so email delivery doesn't stall.
-          console.warn('[EmailQueue] Redis/BullMQ unavailable, falling back to in-memory delivery:', queueErr.message || queueErr.name || 'Queue offline');
-          this.queue.push({
-            logId: log._id,
-            user,
-            recipientEmail,
-            recipientName,
-            type,
-            subject,
-            htmlBody,
-            textBody,
-            attachments,
-            replyTo,
-            attempts: 0,
-          });
-          setImmediate(() => {
-            this.processQueue().catch((err) =>
-              console.error('[EmailQueue] Error processing queue:', err)
-            );
-          });
+          // SECURITY: Never log REDIS_URL.
+          console.error('[EmailQueue] Redis/BullMQ unavailable for durable email delivery:', queueErr.message || queueErr.name || 'Queue offline');
+          log.status = 'failed';
+          log.error = `Queue unavailable: ${queueErr.message || 'BullMQ timeout'}`;
+          await log.save();
+          return log;
         }
       } else {
         // In-memory queue
@@ -272,26 +258,11 @@ class EmailQueue {
           ]).finally(() => clearTimeout(timer));
         }
       } catch (queueErr) {
-        console.warn('[EmailQueue] Redis/BullMQ unavailable for re-send, falling back to in-memory delivery:', queueErr.message || queueErr.name || 'Queue offline');
-        this.queue.push({
-          logId: log._id,
-          user: log.user,
-          recipientEmail: log.recipientEmail,
-          recipientName: log.recipientName,
-          type: log.type,
-          subject: log.subject,
-          htmlBody: log.htmlBody,
-          textBody: log.textBody,
-          attachments: log.metadata?.attachments || [],
-          replyTo: log.replyTo,
-          attempts: 0,
-        });
-
-        setImmediate(() => {
-          this.processQueue().catch((err) =>
-            console.error('[EmailQueue] Error in resend processing loop:', err)
-          );
-        });
+        console.error('[EmailQueue] Redis/BullMQ unavailable for re-send:', queueErr.message || queueErr.name || 'Queue offline');
+        log.status = 'failed';
+        log.error = `Queue unavailable: ${queueErr.message || 'BullMQ timeout'}`;
+        await log.save();
+        return log;
       }
     } else {
       this.queue.push({

@@ -167,9 +167,17 @@ const askAssistant = async (req, res, next) => {
       });
     }
 
+    const cleanConvId =
+      typeof conversationId === 'string' &&
+      conversationId.trim().length > 0 &&
+      conversationId.trim().toLowerCase() !== 'null' &&
+      conversationId.trim().toLowerCase() !== 'undefined'
+        ? conversationId.trim()
+        : null;
+
     const result = await processAssistantTurn({
       question: question.trim(),
-      conversationId: conversationId || null,
+      conversationId: cleanConvId,
       userId: req.user._id,
       scope,
     });
@@ -227,6 +235,14 @@ const streamAssistantChat = async (req, res, next) => {
       });
     }
 
+    const cleanConvId =
+      typeof conversationId === 'string' &&
+      conversationId.trim().length > 0 &&
+      conversationId.trim().toLowerCase() !== 'null' &&
+      conversationId.trim().toLowerCase() !== 'undefined'
+        ? conversationId.trim()
+        : null;
+
     // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -247,13 +263,13 @@ const streamAssistantChat = async (req, res, next) => {
 
     const turnResult = await processAssistantTurn({
       question: question.trim(),
-      conversationId: conversationId || null,
+      conversationId: cleanConvId,
       userId: req.user._id,
       scope,
       streamSender,
     });
 
-    const finalConvId = turnResult?.conversationId || conversationId;
+    const finalConvId = turnResult?.conversationId || cleanConvId;
 
     res.end();
 
@@ -306,6 +322,9 @@ const listConversations = async (req, res, next) => {
 const getConversation = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
+    if (!conversationId || conversationId === 'null' || conversationId === 'undefined') {
+      return res.status(400).json({ success: false, message: 'Invalid conversation ID' });
+    }
     const messages = await getConversationMessages(conversationId, req.user._id);
     return res.status(200).json({
       success: true,
@@ -325,6 +344,9 @@ const getConversation = async (req, res, next) => {
 const deleteConversationHandler = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
+    if (!conversationId || conversationId === 'null' || conversationId === 'undefined') {
+      return res.status(400).json({ success: false, message: 'Invalid conversation ID' });
+    }
 
     // Check conversation existence across ChatLog and ConversationMeta
     const existingLog = await ChatLog.findOne({ conversationId });
@@ -365,6 +387,9 @@ const deleteConversationHandler = async (req, res, next) => {
 const updateConversation = async (req, res, next) => {
   try {
     const { conversationId } = req.params;
+    if (!conversationId || conversationId === 'null' || conversationId === 'undefined') {
+      return res.status(400).json({ success: false, message: 'Invalid conversation ID' });
+    }
     const { title, pinned } = req.body || {};
 
     if (title === undefined && pinned === undefined) {

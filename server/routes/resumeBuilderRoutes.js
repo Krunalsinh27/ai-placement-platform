@@ -23,24 +23,17 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
 });
 
-// All routes require student authentication
+// Student authentication & authorization
 router.use(protect);
 router.use(authorize('student'));
 
-// Source Normalization (Supports multipart file upload or JSON)
 router.post('/source', upload.single('file'), loadSourceHandler);
-
-// Target Analysis
 router.post('/analyze-target', analyzeTargetHandler);
-
-// Tailoring, PDF Export & Base Resume
 router.get('/base', getBaseResume);
 router.get('/quota', getQuotaHandler);
 router.post('/tailor', aiLimiter, aiRequestBudget(60000), tailorResumeHandler);
 router.post('/cover-letter', aiLimiter, aiRequestBudget(60000), generateCoverLetterHandler);
 router.post('/export-pdf', exportPdfHandler);
-
-// Version Control Routes (Max 5 per student)
 router.get('/versions', listVersionsHandler);
 router.post('/versions', saveVersionHandler);
 router.get('/versions/:id', getVersionHandler);

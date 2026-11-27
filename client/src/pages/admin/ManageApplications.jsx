@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import Table from '../../components/common/Table';
 import Pagination from '../../components/common/Pagination';
-import { openResumeInNewTab } from '../../utils/resumeViewer';
+import { openResumeInNewTab, openSnapshotResumeInNewTab } from '../../utils/resumeViewer';
 import {
   FileCheck2,
   Search,
@@ -12,6 +12,11 @@ import {
   Users,
   Briefcase,
   CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  Printer,
+  RotateCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -35,6 +40,7 @@ const ManageApplications = () => {
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState(null);
   const [page, setPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
   const limit = 10;
 
   // Fetch drives list
@@ -124,6 +130,47 @@ const ManageApplications = () => {
     }
   };
 
+  const handleExport = async (format) => {
+    if (!selectedDriveId) {
+      toast.error('Please select a placement drive first');
+      return;
+    }
+    setIsExporting(true);
+    try {
+      const response = await api.get(`/applications/drive/${selectedDriveId}/export/${format}`, {
+        responseType: 'blob',
+      });
+      const mimeTypes = {
+        csv: 'text/csv;charset=utf-8;',
+        excel: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        pdf: 'application/pdf',
+      };
+      const blob = new Blob([response.data], {
+        type: mimeTypes[format] || 'application/octet-stream',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const ext = format === 'excel' ? 'xlsx' : format;
+      const safeRole = (currentDrive?.role || 'Drive').replace(/[^a-zA-Z0-9_\-]/g, '_');
+      link.setAttribute('download', `applicants_${safeRole}_${Date.now()}.${ext}`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success(`Exported applicants (${format.toUpperCase()}) successfully`);
+    } catch (err) {
+      console.error(`Export ${format} failed:`, err);
+      toast.error(err.response?.data?.message || `Failed to export ${format.toUpperCase()}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
   const currentDrive = drives.find((d) => d._id === selectedDriveId);
 
   const filteredApplications = applications.filter((app) => {
@@ -200,22 +247,53 @@ const ManageApplications = () => {
     {
       header: 'Resume',
       accessor: (row) => {
-        if (!row.student?.resumeUrl) {
-          return <span className="text-slate-400 text-[11px]">Not uploaded</span>;
+        const hasSnapshot = Boolean(row.resumeSnapshot && row.resumeSnapshot.data);
+
+        if (hasSnapshot) {
+          return (
+            <button
+              type="button"
+              onClick={() =>
+                openSnapshotResumeInNewTab(
+                  row._id,
+                  `${row.student?.user?.name || 'Applicant'}'s Submitted Resume`
+                )
+              }
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs cursor-pointer border border-indigo-200 transition-colors shadow-2xs"
+              title="View the exact resume submitted at application time"
+            >
+              <span>View submitted resume</span>
+              <ExternalLink className="w-3 h-3" />
+            </button>
+          );
         }
 
-        const studentId = row.student._id || row.student;
+        if (row.student?.resumeUrl) {
+          const studentId = row.student._id || row.student;
 
-        return (
-          <button
-            type="button"
-            onClick={() => openResumeInNewTab(studentId, `${row.student?.user?.name || 'Student'}'s Resume`)}
-            className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-semibold text-xs cursor-pointer"
-          >
-            <span>PDF</span>
-            <ExternalLink className="w-3 h-3" />
-          </button>
-        );
+          return (
+            <div className="flex flex-col items-start gap-0.5">
+              <button
+                type="button"
+                onClick={() =>
+                  openResumeInNewTab(
+                    studentId,
+                    `${row.student?.user?.name || 'Student'}'s Resume`
+                  )
+                }
+                className="inline-flex items-center gap-1 text-slate-700 hover:text-indigo-600 font-semibold text-xs cursor-pointer"
+              >
+                <span>Current resume</span>
+                <ExternalLink className="w-3 h-3" />
+              </button>
+              <span className="text-[10px] text-slate-400 font-medium">
+                (legacy application)
+              </span>
+            </div>
+          );
+        }
+
+        return <span className="text-slate-400 text-[11px]">Not uploaded</span>;
       },
     },
     {
@@ -298,7 +376,51 @@ const ManageApplications = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Export and Print Buttons (Phase E) */}
+            <div className="flex items-center gap-1.5 print:hidden">
+              <button
+                type="button"
+                onClick={() => handleExport('csv')}
+                disabled={isExporting || applications.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-2xs"
+                title="Export CSV"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <span>CSV</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('excel')}
+                disabled={isExporting || applications.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-2xs"
+                title="Export Excel (.xlsx)"
+              >
+                <Download className="w-3.5 h-3.5 text-sky-600" />
+                <span>Excel</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('pdf')}
+                disabled={isExporting || applications.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-2xs"
+                title="Download PDF"
+              >
+                <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                <span>PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={handlePrint}
+                disabled={applications.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-2xs"
+                title="Print Candidate Roster"
+              >
+                <Printer className="w-3.5 h-3.5 text-slate-600" />
+                <span>Print</span>
+              </button>
+            </div>
+
             <div className="text-right">
               <span className="text-xs text-slate-400 block font-medium">
                 Total Applicants
@@ -309,7 +431,7 @@ const ManageApplications = () => {
             </div>
 
             {/* Search */}
-            <div className="relative w-48 sm:w-56">
+            <div className="relative w-48 sm:w-56 print:hidden">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"

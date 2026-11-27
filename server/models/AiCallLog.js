@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { redactPII } = require('../services/ai/redactor');
 
 const aiCallLogSchema = new mongoose.Schema(
   {
@@ -134,9 +135,9 @@ aiCallLogSchema.statics.logCall = async function ({
     const cTokens = completionTokens !== null ? completionTokens : estimateTokensFromText(completionText);
     const cost = estimateCost(provider, pTokens, cTokens);
 
-    // Sanitize error message to ensure no PII or sensitive stack traces
+    // Sanitize error message to ensure no PII, API keys, credentials, or sensitive tokens are logged
     const sanitizedError = errorMessage
-      ? String(errorMessage).replace(/Bearer\s+[A-Za-z0-9\-_.]+/gi, 'Bearer [REDACTED]').slice(0, 500)
+      ? redactPII(String(errorMessage)).slice(0, 500)
       : null;
 
     return await this.create({

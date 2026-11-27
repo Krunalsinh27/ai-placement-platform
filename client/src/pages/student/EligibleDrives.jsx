@@ -19,8 +19,11 @@ import {
   ArrowUpDown,
   BookMarked,
   Check,
+  Eye,
+  FileText,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import StudioPreview from './resume-studio/components/StudioPreview';
 
 const EligibleDrives = () => {
   const [loading, setLoading] = useState(true);
@@ -30,6 +33,13 @@ const EligibleDrives = () => {
   const [search, setSearch] = useState('');
   const [studentCriteria, setStudentCriteria] = useState(null);
   const [sortBy, setSortBy] = useState('recommended'); // 'recommended' | 'deadline' | 'package'
+
+  // Apply Modal & Resume Picker state (Phase 10)
+  const [applyModalDrive, setApplyModalDrive] = useState(null);
+  const [studentResumes, setStudentResumes] = useState([]);
+  const [selectedResumeId, setSelectedResumeId] = useState('');
+  const [resumesLoading, setResumesLoading] = useState(false);
+  const [showResumePreview, setShowResumePreview] = useState(false);
 
   // Skill Gap Modal state
   const [showSkillGapModal, setShowSkillGapModal] = useState(false);
@@ -71,13 +81,43 @@ const EligibleDrives = () => {
     fetchData();
   }, [sortBy]);
 
-  const handleApply = async (driveId) => {
+  const handleOpenApplyModal = async (drive) => {
+    setApplyModalDrive(drive);
+    setShowResumePreview(false);
+    setResumesLoading(true);
+    try {
+      const res = await api.get('/resume-studio/resumes');
+      if (res.data?.success && Array.isArray(res.data.resumes)) {
+        const list = res.data.resumes;
+        setStudentResumes(list);
+        const primary = list.find((r) => r.isPrimary) || list[0];
+        if (primary) {
+          setSelectedResumeId(primary._id);
+        } else {
+          setSelectedResumeId('');
+        }
+      }
+    } catch (err) {
+      // Resume studio may be empty or error; fallback gracefully
+      setStudentResumes([]);
+      setSelectedResumeId('');
+    } finally {
+      setResumesLoading(false);
+    }
+  };
+
+  const handleApply = async (driveId, resumeId = null) => {
     setApplyingId(driveId);
     try {
-      const res = await api.post('/applications', { driveId });
+      const payload = { driveId };
+      if (resumeId) {
+        payload.resumeId = resumeId;
+      }
+      const res = await api.post('/applications', payload);
       if (res.data.success) {
         toast.success('Application submitted successfully!');
         setAppliedDriveIds((prev) => new Set([...prev, driveId]));
+        setApplyModalDrive(null);
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Failed to submit application';
@@ -372,7 +412,7 @@ const EligibleDrives = () => {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => handleApply(drive._id)}
+                      onClick={() => handleOpenApplyModal(drive)}
                       disabled={isApplying}
                       className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors shadow-xs disabled:opacity-60 cursor-pointer"
                     >
@@ -524,6 +564,159 @@ const EligibleDrives = () => {
                 className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold cursor-pointer transition-colors"
               >
                 Close Roadmap
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Resume Picker & Apply Modal (Phase 10) */}
+      {applyModalDrive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Apply to {applyModalDrive.company?.name || 'Drive'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Role: <strong className="text-slate-700">{applyModalDrive.role}</strong> • Package:{' '}
+                    <strong className="text-emerald-600">₹{applyModalDrive.packageLpa} LPA</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setApplyModalDrive(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                  Select Resume for this Application
+                </label>
+                <p className="text-xs text-slate-500 mb-3">
+                  A snapshot of the selected resume will be attached to your application and preserved permanently.
+                </p>
+
+                {resumesLoading ? (
+                  <div className="p-6 text-center text-xs text-slate-500">
+                    <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                    Loading your resumes...
+                  </div>
+                ) : studentResumes.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {studentResumes.map((r) => {
+                      const isSelected = selectedResumeId === r._id;
+                      return (
+                        <div
+                          key={r._id}
+                          onClick={() => setSelectedResumeId(r._id)}
+                          className={`p-3.5 rounded-xl border-2 cursor-pointer transition flex items-center justify-between ${
+                            isSelected
+                              ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600/30'
+                              : 'border-slate-200 hover:border-slate-300 bg-white'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                              <FileText className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-900">{r.title}</span>
+                                {r.isPrimary && (
+                                  <span className="text-[10px] bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
+                                    Primary
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-slate-500 capitalize">
+                                Template: {r.templateId} • Updated {new Date(r.updatedAt || Date.now()).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {isSelected && (
+                              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center">
+                                <Check className="w-3 h-3" />
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+                    <p className="font-semibold">No Resume Builder variants found.</p>
+                    <p className="mt-0.5 text-amber-800">
+                      Your application will proceed using your registered college profile and default resume.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Resume Preview Toggle */}
+              {selectedResumeId && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowResumePreview(!showResumePreview)}
+                    className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-semibold"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>{showResumePreview ? 'Hide Preview' : 'Preview Selected Resume'}</span>
+                  </button>
+
+                  {showResumePreview && (
+                    <div className="mt-3 p-4 bg-slate-100 rounded-xl max-h-[350px] overflow-y-auto">
+                      {(() => {
+                        const curResume = studentResumes.find((r) => r._id === selectedResumeId);
+                        if (!curResume) return null;
+                        return (
+                          <StudioPreview
+                            resumeData={curResume.data || {}}
+                            templateId={curResume.templateId || 'modern'}
+                            sectionVisibility={{}}
+                          />
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setApplyModalDrive(null)}
+                className="px-4 py-2 rounded-xl text-slate-600 hover:text-slate-800 text-xs font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleApply(applyModalDrive._id, selectedResumeId)}
+                disabled={applyingId === applyModalDrive._id}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-xs disabled:opacity-60"
+              >
+                {applyingId === applyModalDrive._id ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <span>Submit Application</span>
+                )}
               </button>
             </div>
           </div>

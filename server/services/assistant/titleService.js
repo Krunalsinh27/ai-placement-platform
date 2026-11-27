@@ -12,6 +12,7 @@
 const { ConversationMeta, ChatLog } = require('../../models');
 const { callAiWithQuotaAndRetry, isAiConfigured } = require('../ai/aiClient');
 const { isAiFeatureEnabled } = require('../../utils/featureFlags');
+const { redactPII } = require('../ai/redactor');
 
 // Regex for pure greetings
 const GREETING_ONLY_REGEX = /^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening)|howdy|hola|namaste|greetings|sup|yo)(?:\s+(?:there|bot|assistant|all|team))?$/i;
@@ -108,7 +109,7 @@ async function generateConversationTitle({ question, userId = null }) {
   }
 
   try {
-    const cleanQuestion = String(question || '').trim().slice(0, 300);
+    const cleanQuestion = redactPII(String(question || '').trim().slice(0, 300));
     const systemPrompt =
       'You are a concise title generator. Generate a 3-6 word topic title summarizing the user question in the user\'s language. Rules: Do NOT use quotes. Do NOT end with punctuation. Max 60 characters. Return ONLY the title text, nothing else.';
     const userPrompt = `User question: "${cleanQuestion}"`;
@@ -166,17 +167,28 @@ async function generateConversationTitle({ question, userId = null }) {
  * @returns {Promise<object|null>} The saved or existing ConversationMeta record
  */
 async function generateAndSaveTitle({ conversationId, userId, streamSender = null }) {
-  if (!conversationId || !userId) return null;
+  if (
+    !conversationId ||
+    typeof conversationId !== 'string' ||
+    !conversationId.trim() ||
+    conversationId.trim().toLowerCase() === 'null' ||
+    conversationId.trim().toLowerCase() === 'undefined' ||
+    !userId
+  ) {
+    return null;
+  }
+
+  const cleanConvId = conversationId.trim();
 
   try {
     // 1. Check if metadata already exists
-    const existing = await ConversationMeta.findOne({ conversationId });
+    const existing = await ConversationMeta.findOne({ conversationId: cleanConvId });
     if (existing && existing.title) {
       return existing;
     }
 
     // 2. Fetch conversation messages
-    const logs = await ChatLog.find({ conversationId })
+    const logs = await ChatLog.find({ conversationId: cleanConvId })
       .sort({ createdAt: 1 })
       .lean();
 
@@ -212,10 +224,10 @@ async function generateAndSaveTitle({ conversationId, userId, streamSender = nul
 
     // 4. Save metadata atomically
     const meta = await ConversationMeta.findOneAndUpdate(
-      { conversationId },
+      { conversationId: cleanConvId },
       {
         $setOnInsert: {
-          conversationId,
+          conversationId: cleanConvId,
           user: userId,
           title,
           titleSource: source,

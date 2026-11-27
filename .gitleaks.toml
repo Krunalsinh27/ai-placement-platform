@@ -2,13 +2,22 @@
 title = "Placement Platform Gitleaks Config"
 
 [allowlist]
-description = "Allowlist test suites and mock test fixture tokens"
+description = "Allowlist test suites, mock test fixtures, CI secrets, and documentation examples"
 paths = [
   '''(?i)server/tests/.*''',
   '''(?i)client/tests/.*''',
+  '''(?i).*?\.env\.example''',
+  '''(?i)\.github/workflows/ci\.yml''',
 ]
 regexes = [
   '''mock_dummy_jwt_secret_for_local_tests_only_32_chars''',
   '''testsecret_at_least_32_characters_long_for_test''',
+  '''supersecret_ci_jwt_key_must_be_over_32_characters_long_for_security''',
+  '''supersecretjwtkey_placement_system_2026_at_least_32_chars''',
+  '''supersecretjwtrefreshkey_placement_system_2026_at_least_32_chars''',
+  '''super_secret_admin_user''',
+  '''extremely_secret_password_98765''',
+  '''my_confidential_mongo_atlas_pass''',
+  '''secret_pwd_99''',
 ]
 

@@ -111,6 +111,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    previousRefreshTokenHash: {
+      type: String,
+      default: null,
+    },
+    previousRefreshTokenExpiresAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
