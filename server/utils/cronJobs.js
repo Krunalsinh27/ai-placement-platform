@@ -360,7 +360,13 @@ const executeCronJob = async (jobName) => {
     case 'aptitude-test-monitor': {
       const submitted = await autoSubmitExpiredTestAttempts();
       const absentees = await handleWindowEndAbsentees();
-      return { submitted, absentees };
+      const { autoCompletePlatformTestRounds } = require('../services/roundCompletionService');
+      const completionResult = await autoCompletePlatformTestRounds();
+      return { submitted, absentees, completionResult };
+    }
+    case 'reconcile-drive-requests': {
+      const { reconcileDriveRequests } = require('../services/driveReconciliationService');
+      return await reconcileDriveRequests({ dryRun: false, limit: 100 });
     }
     default:
       console.warn(`[CRON] Unknown scheduled job: ${jobName}`);
@@ -399,7 +405,14 @@ const registerBullCronSchedulers = async () => {
       { name: 'aptitude-test-monitor' }
     );
 
-    console.log('[CRON] Registered BullMQ job schedulers (hourly cleanup, 5m reminders, 1m test monitor).');
+    // 4. Every 15 minutes: reconcile DriveRequest and Drive relationships
+    await queue.upsertJobScheduler(
+      'reconcile-drive-requests',
+      { pattern: '*/15 * * * *' },
+      { name: 'reconcile-drive-requests' }
+    );
+
+    console.log('[CRON] Registered BullMQ job schedulers (hourly cleanup, 5m reminders, 1m test monitor, 15m drive reconciliation).');
   } catch (err) {
     console.error('[CRON] Error registering BullMQ job schedulers:', err.message);
   }
@@ -428,9 +441,17 @@ const initCronJobs = async () => {
     cron.schedule('* * * * *', async () => {
       await autoSubmitExpiredTestAttempts();
       await handleWindowEndAbsentees();
+      const { autoCompletePlatformTestRounds } = require('../services/roundCompletionService');
+      await autoCompletePlatformTestRounds();
     });
 
-    console.log('[CRON] Initialized node-cron: Hourly account cleanup, 5-minute reminder scanner, and 1-minute aptitude test monitor active.');
+    // 4. Run every 15 minutes: reconcile DriveRequest and Drive relationships
+    cron.schedule('*/15 * * * *', async () => {
+      const { reconcileDriveRequests } = require('../services/driveReconciliationService');
+      await reconcileDriveRequests({ dryRun: false, limit: 100 });
+    });
+
+    console.log('[CRON] Initialized node-cron: Hourly account cleanup, 5-minute reminder scanner, 1-minute aptitude test monitor, and 15-minute drive reconciliation active.');
   }
 };
 

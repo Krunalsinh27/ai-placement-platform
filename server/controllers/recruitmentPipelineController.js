@@ -28,6 +28,7 @@ const {
 const { createNotification, notifyUser } = require('../utils/notificationService');
 const { formatIST } = require('../utils/emailTemplates');
 const { parseISTDateTime } = require('../utils/dateTime');
+const { deriveRoundStatus } = require('../services/roundCompletionService');
 
 /**
  * Helper to check TPO or Recruiter drive ownership
@@ -337,6 +338,10 @@ const autoSplitRoundBatches = async (req, res, next) => {
       return res.status(authCheck.status).json({ success: false, message: authCheck.message });
     }
 
+    if (round.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Cannot split batches: Round is completed.' });
+    }
+
     const {
       slots,
       capacity,
@@ -393,6 +398,10 @@ const moveParticipantBatch = async (req, res, next) => {
 
     if (!participant) {
       return res.status(404).json({ success: false, message: 'Participant not found' });
+    }
+
+    if (participant.round?.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Cannot move batch: Round is completed.' });
     }
 
     const authCheck = verifyOwningRecruiterAccess(participant.round?.drive, req.user);
@@ -501,7 +510,7 @@ const updateBulkAttendance = async (req, res, next) => {
  */
 const updateRoundSettings = async (req, res, next) => {
   try {
-    const round = await Round.findById(req.params.id).populate({
+    let round = await Round.findById(req.params.id).populate({
       path: 'drive',
       populate: [
         { path: 'company', select: 'name' },
@@ -515,6 +524,10 @@ const updateRoundSettings = async (req, res, next) => {
     const authCheck = verifyOwningRecruiterAccess(round.drive, req.user);
     if (!authCheck.allowed) {
       return res.status(authCheck.status).json({ success: false, message: authCheck.message });
+    }
+
+    if (round.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Cannot modify settings: Round is completed.' });
     }
 
     const {
@@ -568,6 +581,35 @@ const updateRoundSettings = async (req, res, next) => {
       }
     }
 
+    const storedStartMs = round.testWindowStart ? new Date(round.testWindowStart).getTime() : null;
+    const storedEndMs = round.testWindowEnd ? new Date(round.testWindowEnd).getTime() : null;
+    const storedDuration = round.durationMinutes !== null && round.durationMinutes !== undefined ? Number(round.durationMinutes) : null;
+
+    const nowMs = Date.now();
+    const isLive = round.status === 'live' || (storedStartMs && storedEndMs && nowMs >= storedStartMs && nowMs <= storedEndMs);
+
+    const incomingStartMs = testWindowStart !== undefined && testWindowStart !== null && testWindowStart !== ''
+      ? new Date(testWindowStart).getTime()
+      : null;
+    const incomingEndMs = testWindowEnd !== undefined && testWindowEnd !== null && testWindowEnd !== ''
+      ? new Date(testWindowEnd).getTime()
+      : null;
+    const incomingDuration = durationMinutes !== undefined && durationMinutes !== null && durationMinutes !== ''
+      ? Number(durationMinutes)
+      : null;
+
+    const startChanged = testWindowStart !== undefined && Math.abs((incomingStartMs ?? 0) - (storedStartMs ?? 0)) > 60000;
+    const endChanged = testWindowEnd !== undefined && Math.abs((incomingEndMs ?? 0) - (storedEndMs ?? 0)) > 60000;
+    const durationChanged = durationMinutes !== undefined && incomingDuration !== storedDuration;
+    const windowChanged = startChanged || endChanged || durationChanged;
+
+    if (isLive && windowChanged) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot modify test window schedule or duration while the test is live.',
+      });
+    }
+
     // Delivery mode specific validations
     if (targetDeliveryMode === 'platform_test') {
       if (targetType !== 'aptitude' && targetType !== 'coding') {
@@ -575,6 +617,67 @@ const updateRoundSettings = async (req, res, next) => {
           success: false,
           message: 'Platform test delivery mode is only allowed for aptitude and coding rounds. Interviews and group discussions cannot use platform test.',
         });
+      }
+
+      const startToCheck = testWindowStart !== undefined ? testWindowStart : round.testWindowStart;
+      const endToCheck = testWindowEnd !== undefined ? testWindowEnd : round.testWindowEnd;
+      const durationToCheck = durationMinutes !== undefined ? durationMinutes : round.durationMinutes;
+
+      if (!startToCheck || (typeof startToCheck === 'string' && !startToCheck.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test Window Start is required when delivery mode is set to on-platform test.',
+        });
+      }
+
+      if (!endToCheck || (typeof endToCheck === 'string' && !endToCheck.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test Window End is required when delivery mode is set to on-platform test.',
+        });
+      }
+
+      const durNum = Number(durationToCheck);
+      if (durationToCheck === undefined || durationToCheck === null || durationToCheck === '' || isNaN(durNum) || durNum <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test duration is required and must be at least 1 minute when delivery mode is set to on-platform test.',
+        });
+      }
+
+      const startMs = new Date(startToCheck).getTime();
+      const endMs = new Date(endToCheck).getTime();
+      if (isNaN(startMs) || isNaN(endMs)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date/time format for test window schedule.',
+        });
+      }
+
+      // ONLY validate start in past when testWindowStart actually CHANGED
+      if (startChanged && startMs < Date.now() - 2 * 60 * 1000) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test Window Start cannot be in the past. Please select a current or future time.',
+        });
+      }
+
+      // ONLY validate end > start and duration <= window length when window/duration actually CHANGED or initial schedule
+      if (windowChanged || !round.testWindowStart || !round.testWindowEnd) {
+        if (endMs <= startMs) {
+          return res.status(400).json({
+            success: false,
+            message: 'Test Window End must be after Test Window Start.',
+          });
+        }
+
+        const windowMinutes = Math.round((endMs - startMs) / 60000);
+        if (durNum > windowMinutes) {
+          return res.status(400).json({
+            success: false,
+            message: `Test duration (${durNum} mins) cannot exceed test window length (${windowMinutes} mins).`,
+          });
+        }
       }
     }
 
@@ -719,7 +822,99 @@ const updateRoundSettings = async (req, res, next) => {
       round.name = name.trim();
     }
 
-    await round.save();
+    if (round.deliveryMode === 'platform_test' && round.status !== 'completed' && round.status !== 'cancelled') {
+      round.status = deriveRoundStatus(round);
+    }
+
+    // Backend double-save safety: retry once on VersionError, or map to HTTP 409
+    try {
+      await round.save();
+    } catch (saveErr) {
+      if (saveErr.name === 'VersionError') {
+        const freshRound = await Round.findById(req.params.id).populate({
+          path: 'drive',
+          populate: [
+            { path: 'company', select: 'name' },
+            { path: 'college', select: 'name' },
+          ],
+        });
+        if (!freshRound) {
+          return res.status(404).json({ success: false, message: 'Round not found' });
+        }
+        if (type) freshRound.type = type;
+        if (deliveryMode !== undefined) {
+          freshRound.deliveryMode = deliveryMode;
+          if (deliveryMode === 'platform_test' || deliveryMode === 'online_external') {
+            freshRound.mode = 'online';
+          } else if (deliveryMode === 'offline_campus') {
+            freshRound.mode = 'offline';
+          }
+        }
+        if (mode !== undefined && !deliveryMode) {
+          freshRound.mode = mode || '';
+        }
+        if (testWindowStart !== undefined) {
+          freshRound.testWindowStart = testWindowStart ? parseISTDateTime(testWindowStart) : null;
+        }
+        if (testWindowEnd !== undefined) {
+          freshRound.testWindowEnd = testWindowEnd ? parseISTDateTime(testWindowEnd) : null;
+        }
+        if (reportByTime !== undefined) {
+          freshRound.reportByTime = reportByTime ? reportByTime.trim() : '';
+        }
+        if (date !== undefined) {
+          freshRound.date = date ? parseISTDateTime(date) : null;
+        }
+        if (durationMinutes !== undefined) {
+          freshRound.durationMinutes =
+            durationMinutes !== '' && durationMinutes !== null ? Number(durationMinutes) : null;
+        }
+        if (venueOrLink !== undefined) {
+          freshRound.venueOrLink = venueOrLink ? venueOrLink.trim() : '';
+        }
+        if (instructions !== undefined) {
+          freshRound.instructions = instructions ? instructions.trim() : '';
+        }
+        if (cutoffScore !== undefined) {
+          freshRound.cutoffScore =
+            cutoffScore !== '' && cutoffScore !== null ? Number(cutoffScore) : null;
+        }
+        if (shuffleQuestions !== undefined) {
+          freshRound.shuffleQuestions = Boolean(shuffleQuestions);
+        }
+        if (shuffleOptions !== undefined) {
+          freshRound.shuffleOptions = Boolean(shuffleOptions);
+        }
+        if (negativeMarking !== undefined) {
+          freshRound.negativeMarking = Boolean(negativeMarking);
+        }
+        if (showScoreToStudents !== undefined) {
+          freshRound.showScoreToStudents = Boolean(showScoreToStudents);
+        }
+        if (name && name.trim()) {
+          freshRound.name = name.trim();
+        }
+
+        if (freshRound.deliveryMode === 'platform_test' && freshRound.status !== 'completed' && freshRound.status !== 'cancelled') {
+          freshRound.status = deriveRoundStatus(freshRound);
+        }
+
+        try {
+          await freshRound.save();
+          round = freshRound;
+        } catch (retryErr) {
+          if (retryErr.name === 'VersionError') {
+            return res.status(409).json({
+              success: false,
+              message: 'Settings were modified concurrently by another request. Please refresh and try again.',
+            });
+          }
+          throw retryErr;
+        }
+      } else {
+        throw saveErr;
+      }
+    }
 
     // If notifyStudents is requested AND there are actual schedule changes, notify all participants
     let notifiedCount = 0;
@@ -758,6 +953,12 @@ const updateRoundSettings = async (req, res, next) => {
       notifiedCount,
     });
   } catch (error) {
+    if (error.name === 'VersionError' || error.status === 409) {
+      return res.status(409).json({
+        success: false,
+        message: 'Settings were modified concurrently by another request. Please refresh and try again.',
+      });
+    }
     next(error);
   }
 };

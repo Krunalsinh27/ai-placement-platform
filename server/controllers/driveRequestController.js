@@ -1,12 +1,14 @@
 const mongoose = require('mongoose');
-const { DriveRequest, JobRequirement, Company, College, Drive } = require('../models');
+const { DriveRequest, JobRequirement, Company, College, Drive, Application, Offer, User } = require('../models');
 const {
   notifyNewDriveRequest,
   notifyDriveRequestResponse,
   notifyDrivePublished,
+  createNotification,
 } = require('../utils/notificationService');
 const { getEndOfDayIST } = require('../utils/pipelineService');
 const { parseISTDateTime } = require('../utils/dateTime');
+const { reconcileDriveRequests } = require('../services/driveReconciliationService');
 
 /**
  * Helper to format status timeline with human-readable labels
@@ -14,10 +16,11 @@ const { parseISTDateTime } = require('../utils/dateTime');
 const formatTimeline = (timeline) => {
   const statusLabels = {
     pending: 'Request Sent',
-    accepted: 'Drive Accepted',
+    accepted: 'Drive Accepted by TPO (Awaiting Recruiter Confirmation)',
+    recruiter_confirmed: 'Schedule Confirmed by Recruiter (Ready to Publish)',
     rejected: 'Drive Rejected',
     reschedule_proposed: 'Reschedule Proposed',
-    scheduled: 'Drive Confirmed & Scheduled',
+    scheduled: 'Drive Confirmed & Published to Students',
     completed: 'Drive Completed',
     cancelled: 'Request Cancelled',
   };
@@ -248,22 +251,35 @@ const createDriveRequests = async (req, res, next) => {
  */
 const getDriveRequests = async (req, res, next) => {
   try {
-    const { status, mode, college, company, jobRequirement } = req.query;
+    const { status, mode, college, company, jobRequirement, section } = req.query;
     const filter = {};
 
     // Role-based scoping
     if (req.user.role === 'recruiter') {
       const companyId = req.user.company?._id || req.user.company;
       if (!companyId) {
-        return res.status(200).json({ success: true, count: 0, requests: [] });
+        return res.status(200).json({ success: true, count: 0, requests: [], summary: {}, groupedRequirements: [] });
       }
       filter.company = companyId;
     } else if (req.user.role === 'tpo' || req.user.role === 'admin') {
       const collegeId = req.user.college?._id || req.user.college;
       if (!collegeId) {
-        return res.status(200).json({ success: true, count: 0, requests: [] });
+        return res.status(200).json({ success: true, count: 0, requests: [], summary: {}, groupedRequirements: [] });
       }
       filter.college = collegeId;
+    }
+
+    // Base scope for summary counts
+    const baseScope = { ...filter };
+
+    // Section filtering: 'active' vs 'previous'
+    const activeStatuses = ['pending', 'accepted', 'reschedule_proposed', 'recruiter_confirmed', 'scheduled'];
+    const previousStatuses = ['completed', 'cancelled', 'rejected'];
+
+    if (section === 'active') {
+      filter.status = { $in: activeStatuses };
+    } else if (section === 'previous') {
+      filter.status = { $in: previousStatuses };
     }
 
     // Optional query filters (role-scoped boundaries cannot be overridden)
@@ -296,22 +312,150 @@ const getDriveRequests = async (req, res, next) => {
       .populate('jobRequirement')
       .populate('company', 'name logoUrl industry website hrContact')
       .populate('college', 'name code city state contactEmail contactPhone')
-      .populate('drive', 'role driveDate status')
+      .populate('drive', 'role driveDate status isPublished publishedAt')
       .populate('messages.sender', 'name role email')
       .populate('timeline.updatedBy', 'name role')
       .sort({ updatedAt: -1, createdAt: -1 })
       .skip(skip)
       .limit(limitNum);
 
+    // Compute scope-wide KPI summary
+    const allScopedRequests = await DriveRequest.find(baseScope).select('status');
+    const totalActive = allScopedRequests.filter((r) => activeStatuses.includes(r.status)).length;
+    const totalPrevious = allScopedRequests.filter((r) => previousStatuses.includes(r.status)).length;
+    const pendingTpoReview = allScopedRequests.filter((r) => r.status === 'pending').length;
+    const rescheduleProposed = allScopedRequests.filter((r) => r.status === 'reschedule_proposed').length;
+    const awaitingRecruiterConfirmation = allScopedRequests.filter((r) => r.status === 'accepted').length;
+    const recruiterConfirmed = allScopedRequests.filter((r) => r.status === 'recruiter_confirmed').length;
+    const publishedDrives = allScopedRequests.filter((r) => r.status === 'scheduled').length;
+
+    const actionRequired =
+      req.user.role === 'recruiter'
+        ? awaitingRecruiterConfirmation + rescheduleProposed
+        : pendingTpoReview + recruiterConfirmed;
+
+    const summary = {
+      totalActive,
+      totalPrevious,
+      pendingTpoReview,
+      rescheduleProposed,
+      awaitingRecruiterConfirmation,
+      recruiterConfirmed,
+      publishedDrives,
+      actionRequired,
+    };
+
+    // Aggregate Application & Offer stats for drives in this batch
+    const driveIds = requests
+      .map((r) => r.drive?._id || r.drive)
+      .filter((d) => d && mongoose.Types.ObjectId.isValid(d));
+
+    const statsMap = new Map();
+    if (driveIds.length > 0) {
+      const appStats = await Application.aggregate([
+        { $match: { drive: { $in: driveIds } } },
+        {
+          $group: {
+            _id: '$drive',
+            applied: { $sum: 1 },
+            shortlisted: {
+              $sum: { $cond: [{ $in: ['$status', ['shortlisted', 'selected']] }, 1, 0] },
+            },
+            selected: {
+              $sum: { $cond: [{ $eq: ['$status', 'selected'] }, 1, 0] },
+            },
+          },
+        },
+      ]);
+
+      const offerStats = await Offer.aggregate([
+        { $match: { drive: { $in: driveIds } } },
+        {
+          $group: {
+            _id: '$drive',
+            offers: { $sum: 1 },
+          },
+        },
+      ]);
+
+      appStats.forEach((s) => {
+        statsMap.set(s._id.toString(), {
+          applied: s.applied || 0,
+          shortlisted: s.shortlisted || 0,
+          selected: s.selected || 0,
+          offers: 0,
+        });
+      });
+
+      offerStats.forEach((o) => {
+        const existing = statsMap.get(o._id.toString()) || { applied: 0, shortlisted: 0, selected: 0, offers: 0 };
+        existing.offers = o.offers || 0;
+        statsMap.set(o._id.toString(), existing);
+      });
+    }
+
     const formattedRequests = requests.map((r) => {
       const doc = r.toObject();
       doc.statusTimeline = formatTimeline(doc.timeline);
+
+      // Preserve historical requirements from snapshot if parent requirement was closed or soft-deleted
+      if (!doc.jobRequirement && doc.jobRequirementSnapshot?.title) {
+        doc.jobRequirement = {
+          _id: doc.jobRequirementSnapshot._id || doc._id,
+          ...doc.jobRequirementSnapshot,
+          isArchivedRequirement: true,
+        };
+      }
+
+      const driveIdStr = (doc.drive?._id || doc.drive)?.toString();
+      doc.stats = (driveIdStr && statsMap.get(driveIdStr)) || {
+        applied: 0,
+        shortlisted: 0,
+        selected: 0,
+        offers: 0,
+      };
+
       return doc;
     });
+
+    // Group by Job Requirement for Job-wise college responses view
+    const groupMap = new Map();
+    formattedRequests.forEach((reqItem) => {
+      const reqId =
+        reqItem.jobRequirement?._id?.toString() ||
+        reqItem.jobRequirementSnapshot?.title ||
+        reqItem._id.toString();
+
+      if (!groupMap.has(reqId)) {
+        groupMap.set(reqId, {
+          requirementId: reqId,
+          requirement: reqItem.jobRequirement || {
+            title: reqItem.jobRequirementSnapshot?.title || 'Placement Requirement',
+            packageLpa: reqItem.jobRequirementSnapshot?.packageLpa,
+            allowedBranches: reqItem.jobRequirementSnapshot?.allowedBranches || [],
+            location: reqItem.jobRequirementSnapshot?.location || 'Multiple Locations',
+          },
+          company: reqItem.company,
+          collegeRequests: [],
+          stats: { applied: 0, shortlisted: 0, selected: 0, offers: 0 },
+        });
+      }
+
+      const group = groupMap.get(reqId);
+      group.collegeRequests.push(reqItem);
+      group.stats.applied += reqItem.stats?.applied || 0;
+      group.stats.shortlisted += reqItem.stats?.shortlisted || 0;
+      group.stats.selected += reqItem.stats?.selected || 0;
+      group.stats.offers += reqItem.stats?.offers || 0;
+    });
+
+    const groupedRequirements = Array.from(groupMap.values());
 
     res.status(200).json({
       success: true,
       data: formattedRequests,
+      summary,
+      groupedRequirements,
       page: pageNum,
       limit: limitNum,
       total,
@@ -518,39 +662,9 @@ const respondToDriveRequest = async (req, res, next) => {
         updatedBy: req.user._id,
         updatedByRole: 'tpo',
         updatedByName: req.user.name,
-        note: note || `Drive accepted for confirmed date: ${confirmed.toLocaleDateString()}`,
+        note: note || `Drive accepted by TPO for ${confirmed.toLocaleDateString()}. Awaiting recruiter confirmation.`,
         date: new Date(),
       });
-
-      // Synchronize with college Drive system
-      const jobReq = await JobRequirement.findById(request.jobRequirement);
-      if (jobReq && !request.drive) {
-        // Last date to apply is 24 hours prior to drive date by default
-        const applyDeadline = new Date(confirmed.getTime() - 24 * 60 * 60 * 1000);
-        const deadlineDate = applyDeadline > new Date() ? applyDeadline : new Date(confirmed);
-        const driveDoc = await Drive.create({
-          company: request.company,
-          college: request.college,
-          colleges: [request.college],
-          requiredSkills: jobReq.skills || [],
-          jobRequirement: jobReq._id,
-          driveRequest: request._id,
-          role: jobReq.title,
-          packageLpa: jobReq.packageLpa,
-          location: jobReq.location || (request.mode === 'virtual' ? 'Virtual / Remote' : 'Campus Placement'),
-          venueOrMeetingLink: request.mode === 'virtual' ? 'Virtual Meeting' : 'Campus Placement Cell',
-          mode: request.mode || 'on-campus',
-          minCgpa: jobReq.minCgpa || 0,
-          maxBacklogs: jobReq.maxBacklogs || 0,
-          allowedBranches: jobReq.allowedBranches || ['CSE', 'IT'],
-          lastDateToApply: getEndOfDayIST(deadlineDate),
-          driveDate: confirmed,
-          status: 'open',
-          applicationsClosed: false,
-          listFrozenAt: null,
-        });
-        request.drive = driveDoc._id;
-      }
     }
 
     // Handle REJECT
@@ -703,14 +817,16 @@ const acceptTpoProposedDate = async (req, res, next) => {
       });
     }
 
-    request.status = 'scheduled';
+    request.status = 'recruiter_confirmed';
     request.confirmedDate = confirmed;
+    request.recruiterConfirmedAt = new Date();
+    request.recruiterConfirmedBy = req.user._id;
     request.timeline.push({
-      status: 'scheduled',
+      status: 'recruiter_confirmed',
       updatedBy: req.user._id,
       updatedByRole: 'recruiter',
       updatedByName: req.user.name,
-      note: note || `Recruiter accepted TPO proposed date: ${confirmed.toLocaleDateString()}`,
+      note: note || `Recruiter accepted TPO proposed date: ${confirmed.toLocaleDateString()}. Ready for TPO to publish to students.`,
       date: new Date(),
     });
 
@@ -722,32 +838,6 @@ const acceptTpoProposedDate = async (req, res, next) => {
         text: message.trim(),
         date: new Date(),
       });
-    }
-
-    // Create / link Drive if not yet linked
-    const jobReq = await JobRequirement.findById(request.jobRequirement);
-    if (jobReq && !request.drive) {
-      const applyDeadline = new Date(confirmed.getTime() - 24 * 60 * 60 * 1000);
-      const driveDoc = await Drive.create({
-        company: request.company,
-        college: request.college,
-        colleges: [request.college],
-        requiredSkills: jobReq.skills || [],
-        jobRequirement: jobReq._id,
-        driveRequest: request._id,
-        role: jobReq.title,
-        packageLpa: jobReq.packageLpa,
-        location: jobReq.location || (request.mode === 'virtual' ? 'Virtual / Remote' : 'Campus Placement'),
-        venueOrMeetingLink: request.mode === 'virtual' ? 'Virtual Meeting' : 'Campus Placement Cell',
-        mode: request.mode || 'on-campus',
-        minCgpa: jobReq.minCgpa || 0,
-        maxBacklogs: jobReq.maxBacklogs || 0,
-        allowedBranches: jobReq.allowedBranches || ['CSE', 'IT'],
-        lastDateToApply: applyDeadline > new Date() ? applyDeadline : new Date(confirmed),
-        driveDate: confirmed,
-        status: 'open',
-      });
-      request.drive = driveDoc._id;
     }
 
     await request.save();
@@ -763,24 +853,145 @@ const acceptTpoProposedDate = async (req, res, next) => {
     doc.statusTimeline = formatTimeline(doc.timeline);
 
     // Notify TPOs that recruiter confirmed the proposed date
-    const tpoOfficers = await require('../models').User.find({
+    const tpoOfficers = await User.find({
       college: request.college,
       role: { $in: ['tpo', 'admin'] },
       isApproved: true,
     }).select('_id');
 
     for (const tpo of tpoOfficers) {
-      require('../utils/notificationService').createNotification({
+      createNotification({
         user: tpo._id,
         type: 'request_response',
-        message: `${updated.company?.name || 'Recruiter'} confirmed and accepted your proposed drive date for "${updated.jobRequirement?.title}" (${confirmed.toLocaleDateString()})`,
+        message: `${updated.company?.name || 'Recruiter'} confirmed and accepted your proposed drive date for "${updated.jobRequirement?.title || 'Drive'}" (${confirmed.toLocaleDateString()}). Ready for TPO publication.`,
         link: '/admin/drive-requests',
       }).catch((err) => console.error('Failed to notify TPO:', err));
     }
 
     res.status(200).json({
       success: true,
-      message: `Drive officially confirmed and scheduled for ${confirmed.toLocaleDateString()}`,
+      message: `Drive schedule confirmed by recruiter for ${confirmed.toLocaleDateString()}. Ready for TPO to publish.`,
+      request: doc,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Recruiter confirms drive schedule for an accepted or reschedule-proposed drive request
+ * @route   PUT /api/drive-requests/:id/confirm-schedule
+ * @access  Private (Recruiter only)
+ */
+const confirmDriveSchedule = async (req, res, next) => {
+  try {
+    const { selectedDate, note, message } = req.body;
+
+    const request = await DriveRequest.findById(req.params.id);
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Drive request not found',
+      });
+    }
+
+    // Company ownership check
+    const companyId = req.user.company?._id || req.user.company;
+    if (
+      req.user.role !== 'superadmin' &&
+      (!companyId || request.company.toString() !== companyId.toString())
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to confirm this drive request',
+      });
+    }
+
+    if (!['accepted', 'reschedule_proposed', 'pending'].includes(request.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot confirm schedule for a drive request in "${request.status}" status.`,
+      });
+    }
+
+    let confirmedDate = request.confirmedDate;
+    if (selectedDate) {
+      const parsed = parseISTDateTime(selectedDate);
+      if (isNaN(parsed.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date format for selectedDate',
+        });
+      }
+      confirmedDate = parsed;
+    } else if (!confirmedDate && request.proposedDates?.length > 0) {
+      confirmedDate = request.proposedDates[0];
+    }
+
+    if (!confirmedDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'A confirmed drive date is required to confirm schedule',
+      });
+    }
+
+    request.status = 'recruiter_confirmed';
+    request.confirmedDate = confirmedDate;
+    request.recruiterConfirmedAt = new Date();
+    request.recruiterConfirmedBy = req.user._id;
+
+    request.timeline.push({
+      status: 'recruiter_confirmed',
+      updatedBy: req.user._id,
+      updatedByRole: 'recruiter',
+      updatedByName: req.user.name,
+      note:
+        note ||
+        `Recruiter confirmed drive schedule for ${new Date(confirmedDate).toLocaleDateString()}. Ready for TPO to publish to students.`,
+      date: new Date(),
+    });
+
+    if (message && message.trim()) {
+      request.messages.push({
+        sender: req.user._id,
+        senderRole: 'recruiter',
+        senderName: req.user.name,
+        text: message.trim(),
+        date: new Date(),
+      });
+    }
+
+    await request.save();
+
+    const updated = await DriveRequest.findById(request._id)
+      .populate('jobRequirement')
+      .populate('company', 'name logoUrl industry website hrContact')
+      .populate('college', 'name code city state contactEmail contactPhone')
+      .populate('drive', 'role driveDate status')
+      .populate('messages.sender', 'name role email');
+
+    const doc = updated.toObject();
+    doc.statusTimeline = formatTimeline(doc.timeline);
+
+    // Notify TPOs that recruiter confirmed schedule
+    const tpoOfficers = await User.find({
+      college: request.college,
+      role: { $in: ['tpo', 'admin'] },
+      isApproved: true,
+    }).select('_id');
+
+    for (const tpo of tpoOfficers) {
+      createNotification({
+        user: tpo._id,
+        type: 'request_response',
+        message: `${updated.company?.name || 'Recruiter'} confirmed drive schedule for "${updated.jobRequirement?.title || 'Drive'}". Ready for publication.`,
+        link: '/admin/drive-requests',
+      }).catch((err) => console.error('Failed to notify TPO:', err));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Drive schedule confirmed by recruiter. Ready for TPO to publish to students.`,
       request: doc,
     });
   } catch (error) {
@@ -891,10 +1102,10 @@ const finalizeAndPublishDrive = async (req, res, next) => {
       });
     }
 
-    if (['rejected', 'cancelled'].includes(request.status)) {
+    if (!['recruiter_confirmed', 'scheduled'].includes(request.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot finalize a ${request.status} drive request`,
+        message: `Cannot publish drive to students before recruiter confirms the drive schedule. Current request status: "${request.status}".`,
       });
     }
 
@@ -1009,91 +1220,209 @@ const finalizeAndPublishDrive = async (req, res, next) => {
       finalBranches = selectedBranchesUpper;
     }
 
-    // 5. Create or Update Drive
-    let driveDoc;
-    if (request.drive) {
-      driveDoc = await Drive.findById(request.drive);
-    }
+    // 5. Cross-Document Consistency: Replica-Set Transaction with Standalone Idempotent Fallback
+    const executeConsistentFinalization = async () => {
+      let session = null;
+      let inTx = false;
+      try {
+        session = await mongoose.startSession();
+        session.startTransaction();
+        inTx = true;
+      } catch (_) {
+        inTx = false;
+        if (session) {
+          try {
+            await session.endSession();
+          } catch (_) {}
+          session = null;
+        }
+      }
 
-    if (driveDoc) {
-      driveDoc.college = request.college;
-      driveDoc.jobRequirement = jobReq._id;
-      driveDoc.driveRequest = request._id;
-      driveDoc.role = jobReq.title;
-      driveDoc.packageLpa = jobReq.packageLpa;
-      driveDoc.location = jobReq.location || 'College Campus';
-      const finalLastDateObj = getEndOfDayIST(lastDateObj);
+      const runWork = async (activeSession) => {
+        const sessionOpts = activeSession ? { session: activeSession } : {};
 
-      driveDoc.venueOrMeetingLink = venueOrMeetingLink.trim();
-      driveDoc.mode = request.mode || 'on-campus';
-      driveDoc.minCgpa = finalMinCgpa;
-      driveDoc.maxBacklogs = finalMaxBacklogs;
-      driveDoc.allowedBranches = finalBranches;
-      driveDoc.lastDateToApply = finalLastDateObj;
-      driveDoc.driveDate = driveDateObj;
-      driveDoc.status = 'open';
-      driveDoc.applicationsClosed = false;
-      driveDoc.listFrozenAt = null;
-      await driveDoc.save();
-    } else {
-      const finalLastDateObj = getEndOfDayIST(lastDateObj);
+        let driveDoc = null;
+        if (request.drive) {
+          driveDoc = await Drive.findById(request.drive).setOptions(sessionOpts);
+        }
+        if (!driveDoc) {
+          driveDoc = await Drive.findOne({ driveRequest: request._id }).setOptions(sessionOpts);
+        }
 
-      driveDoc = await Drive.create({
-        company: request.company._id || request.company,
-        college: request.college,
-        colleges: [request.college],
-        requiredSkills: jobReq.skills || [],
-        jobRequirement: jobReq._id,
-        driveRequest: request._id,
-        role: jobReq.title,
-        packageLpa: jobReq.packageLpa,
-        location: jobReq.location || 'College Campus',
-        venueOrMeetingLink: venueOrMeetingLink.trim(),
-        mode: request.mode || 'on-campus',
-        minCgpa: finalMinCgpa,
-        maxBacklogs: finalMaxBacklogs,
-        allowedBranches: finalBranches,
-        lastDateToApply: finalLastDateObj,
-        driveDate: driveDateObj,
-        status: 'open',
-        applicationsClosed: false,
-        listFrozenAt: null,
-      });
-      request.drive = driveDoc._id;
-    }
+        const finalLastDateObj = getEndOfDayIST(lastDateObj);
 
-    // 6. Update DriveRequest status to scheduled
-    request.status = 'scheduled';
-    request.confirmedDate = driveDateObj;
+        if (driveDoc) {
+          // Existing drive: update details
+          driveDoc.college = request.college;
+          driveDoc.colleges = [request.college];
+          driveDoc.jobRequirement = jobReq._id;
+          driveDoc.driveRequest = request._id;
+          driveDoc.role = jobReq.title;
+          driveDoc.packageLpa = jobReq.packageLpa;
+          driveDoc.location = jobReq.location || 'College Campus';
+          driveDoc.venueOrMeetingLink = venueOrMeetingLink.trim();
+          driveDoc.mode = request.mode || 'on-campus';
+          driveDoc.minCgpa = finalMinCgpa;
+          driveDoc.maxBacklogs = finalMaxBacklogs;
+          driveDoc.allowedBranches = finalBranches;
+          driveDoc.lastDateToApply = finalLastDateObj;
+          driveDoc.driveDate = driveDateObj;
+          driveDoc.status = 'open';
+          driveDoc.applicationsClosed = false;
+          driveDoc.listFrozenAt = null;
+          driveDoc.isPublished = true;
+          driveDoc.publishedAt = driveDoc.publishedAt || new Date();
+          await driveDoc.save(sessionOpts);
+        } else {
+          // Create new drive; if a concurrent request creates it first,
+          // the unique sparse index on driveRequest throws an E11000 duplicate key error.
+          try {
+            if (activeSession) {
+              const createdArr = await Drive.create(
+                [
+                  {
+                    company: request.company._id || request.company,
+                    college: request.college,
+                    colleges: [request.college],
+                    requiredSkills: jobReq.skills || [],
+                    jobRequirement: jobReq._id,
+                    driveRequest: request._id,
+                    role: jobReq.title,
+                    packageLpa: jobReq.packageLpa,
+                    location: jobReq.location || 'College Campus',
+                    venueOrMeetingLink: venueOrMeetingLink.trim(),
+                    mode: request.mode || 'on-campus',
+                    minCgpa: finalMinCgpa,
+                    maxBacklogs: finalMaxBacklogs,
+                    allowedBranches: finalBranches,
+                    lastDateToApply: finalLastDateObj,
+                    driveDate: driveDateObj,
+                    status: 'open',
+                    isPublished: true,
+                    publishedAt: new Date(),
+                    applicationsClosed: false,
+                    listFrozenAt: null,
+                  },
+                ],
+                { session: activeSession }
+              );
+              driveDoc = createdArr[0];
+            } else {
+              driveDoc = await Drive.create({
+                company: request.company._id || request.company,
+                college: request.college,
+                colleges: [request.college],
+                requiredSkills: jobReq.skills || [],
+                jobRequirement: jobReq._id,
+                driveRequest: request._id,
+                role: jobReq.title,
+                packageLpa: jobReq.packageLpa,
+                location: jobReq.location || 'College Campus',
+                venueOrMeetingLink: venueOrMeetingLink.trim(),
+                mode: request.mode || 'on-campus',
+                minCgpa: finalMinCgpa,
+                maxBacklogs: finalMaxBacklogs,
+                allowedBranches: finalBranches,
+                lastDateToApply: finalLastDateObj,
+                driveDate: driveDateObj,
+                status: 'open',
+                isPublished: true,
+                publishedAt: new Date(),
+                applicationsClosed: false,
+                listFrozenAt: null,
+              });
+            }
+          } catch (createErr) {
+            if (createErr.code === 11000 || (createErr.message && createErr.message.includes('E11000'))) {
+              // Concurrent winner already created the drive; fetch it atomically
+              driveDoc = await Drive.findOne({ driveRequest: request._id }).setOptions(sessionOpts);
+              if (!driveDoc) throw createErr;
+            } else {
+              throw createErr;
+            }
+          }
+        }
 
-    request.timeline.push({
-      status: 'scheduled',
-      updatedBy: req.user._id,
-      updatedByRole: 'tpo',
-      updatedByName: req.user.name,
-      note:
-        note ||
-        `Drive finalized and published by TPO for ${driveDateObj.toLocaleDateString()}. Venue: ${venueOrMeetingLink.trim()}`,
-      date: new Date(),
-    });
+        // Atomically update DriveRequest with drive reference and scheduled status
+        const updateFields = {
+          drive: driveDoc._id,
+          status: 'scheduled',
+          confirmedDate: driveDateObj,
+          tpoPublishedAt: request.tpoPublishedAt || new Date(),
+          tpoPublishedBy: request.tpoPublishedBy || req.user._id,
+        };
 
-    if (message && message.trim()) {
-      request.messages.push({
-        sender: req.user._id,
-        senderRole: 'tpo',
-        senderName: req.user.name,
-        text: message.trim(),
-        date: new Date(),
-      });
-    }
+        const timelineEntry = {
+          status: 'scheduled',
+          updatedBy: req.user._id,
+          updatedByRole: 'tpo',
+          updatedByName: req.user.name,
+          note:
+            note ||
+            `Drive finalized and published by TPO for ${driveDateObj.toLocaleDateString()}. Venue: ${venueOrMeetingLink.trim()}`,
+          date: new Date(),
+        };
 
-    await request.save();
+        const pushFields = {
+          timeline: timelineEntry,
+        };
 
-    const updated = await DriveRequest.findById(request._id)
-      .populate('jobRequirement')
-      .populate('company', 'name logoUrl industry website hrContact')
-      .populate('college', 'name code city state contactEmail contactPhone')
-      .populate('drive');
+        if (message && message.trim()) {
+          pushFields.messages = {
+            sender: req.user._id,
+            senderRole: 'tpo',
+            senderName: req.user.name,
+            text: message.trim(),
+            date: new Date(),
+          };
+        }
+
+        const updated = await DriveRequest.findByIdAndUpdate(
+          request._id,
+          {
+            $set: updateFields,
+            $push: pushFields,
+          },
+          { new: true, ...sessionOpts }
+        )
+          .populate('jobRequirement')
+          .populate('company', 'name logoUrl industry website hrContact')
+          .populate('college', 'name code city state contactEmail contactPhone')
+          .populate('drive');
+
+        return { driveDoc, updated };
+      };
+
+      if (inTx && session) {
+        try {
+          const result = await runWork(session);
+          await session.commitTransaction();
+          return result;
+        } catch (txErr) {
+          try {
+            await session.abortTransaction();
+          } catch (_) {}
+          // If transaction write/commit is disallowed by standalone MongoDB, fallback to idempotency mechanism
+          if (
+            txErr.message &&
+            (txErr.message.includes('replica set member') ||
+              txErr.message.includes('Transaction numbers') ||
+              txErr.message.includes('standalone'))
+          ) {
+            return await runWork(null);
+          }
+          throw txErr;
+        } finally {
+          try {
+            await session.endSession();
+          } catch (_) {}
+        }
+      } else {
+        return await runWork(null);
+      }
+    };
+
+    const { driveDoc, updated } = await executeConsistentFinalization();
 
     const doc = updated.toObject();
     doc.statusTimeline = formatTimeline(doc.timeline);
@@ -1123,6 +1452,109 @@ const finalizeAndPublishDrive = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Get diagnostic drive request reconciliation report
+ * @route   GET /api/drive-requests/reconciliation/report
+ * @access  Private (TPO / Admin / Superadmin)
+ */
+const getDriveReconciliationReport = async (req, res, next) => {
+  try {
+    let collegeId = null;
+
+    if (req.user.role === 'superadmin') {
+      collegeId = req.query.collegeId || null;
+    } else if (req.user.role === 'tpo' || req.user.role === 'admin') {
+      collegeId = req.user.college?._id || req.user.college;
+      if (!collegeId) {
+        return res.status(403).json({
+          success: false,
+          message: 'No college associated with your account',
+        });
+      }
+      // If TPO tries to pass a query param for another college, reject with 403
+      if (req.query.collegeId && req.query.collegeId.toString() !== collegeId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to view reconciliation report for another college',
+        });
+      }
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to access reconciliation reports',
+      });
+    }
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const dryRun = req.query.dryRun !== 'false';
+
+    const report = await reconcileDriveRequests({
+      collegeId,
+      limit,
+      dryRun,
+    });
+
+    res.status(200).json({
+      success: true,
+      report,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Run drive request reconciliation & safe repair
+ * @route   POST /api/drive-requests/reconciliation/run
+ * @access  Private (Admin / Superadmin / TPO)
+ */
+const runDriveReconciliation = async (req, res, next) => {
+  try {
+    let collegeId = null;
+
+    if (req.user.role === 'superadmin') {
+      collegeId = req.body?.collegeId || req.query?.collegeId || null;
+    } else if (req.user.role === 'tpo' || req.user.role === 'admin') {
+      collegeId = req.user.college?._id || req.user.college;
+      if (!collegeId) {
+        return res.status(403).json({
+          success: false,
+          message: 'No college associated with your account',
+        });
+      }
+      // If TPO tries to run reconciliation for another college, reject with 403
+      const requestedCollege = req.body?.collegeId || req.query?.collegeId;
+      if (requestedCollege && requestedCollege.toString() !== collegeId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to run reconciliation for another college',
+        });
+      }
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to run reconciliation',
+      });
+    }
+
+    const limit = Math.min(Math.max(parseInt(req.body?.limit || req.query?.limit, 10) || 100, 1), 500);
+
+    const report = await reconcileDriveRequests({
+      collegeId,
+      limit,
+      dryRun: false,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Drive reconciliation executed successfully',
+      report,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createDriveRequests,
   getDriveRequests,
@@ -1130,6 +1562,9 @@ module.exports = {
   cancelDriveRequest,
   respondToDriveRequest,
   acceptTpoProposedDate,
+  confirmDriveSchedule,
   finalizeAndPublishDrive,
   addMessage,
+  getDriveReconciliationReport,
+  runDriveReconciliation,
 };

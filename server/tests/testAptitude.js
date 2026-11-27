@@ -71,11 +71,11 @@ async function runAptitudeTests() {
     console.log('--- Setting up Test Data ---');
     let collegeA = await College.findOne({ code: 'NITD' });
     if (!collegeA) {
-      collegeA = await College.create({ name: 'NIT Delhi', code: 'NITD', location: 'Delhi' });
+      collegeA = await College.create({ name: 'NIT Delhi', code: 'NITD', location: 'Delhi', city: 'Delhi', state: 'Delhi', status: 'approved' });
     }
     let collegeB = await College.findOne({ code: 'PICT' });
     if (!collegeB) {
-      collegeB = await College.create({ name: 'PICT Pune', code: 'PICT', location: 'Pune' });
+      collegeB = await College.create({ name: 'PICT Pune', code: 'PICT', location: 'Pune', city: 'Pune', state: 'Maharashtra', status: 'approved' });
     }
 
     let companyA = await Company.findOne({ name: 'Google' });
@@ -582,6 +582,11 @@ async function runAptitudeTests() {
     // ------------------------------------------------------------------------
     console.log('\n--- Test 10: TPO Re-test Flow ---');
 
+    // Ensure active test window for testing active re-test grant
+    round.testWindowEnd = new Date(Date.now() + 60 * 60 * 1000);
+    round.status = 'live';
+    await round.save();
+
     // TPO grants retest for Student 2
     const retestRes = await fetch(`${BASE_URL}/tests/${round._id}/retest/${student2._id}`, {
       method: 'PUT',
@@ -603,6 +608,21 @@ async function runAptitudeTests() {
       throw new Error(`Participant not reset to pending: attendance=${recheckP2.attendance}, score=${recheckP2.score}`);
     }
     console.log('✓ Test 10: TPO successfully granted re-test, resetting attempt and participant state');
+
+    // Verify: Retest on ended/completed round is strictly blocked with 400
+    round.testWindowEnd = new Date(Date.now() - 10 * 60 * 1000);
+    round.status = 'completed';
+    await round.save();
+
+    const blockedRetestRes = await fetch(`${BASE_URL}/tests/${round._id}/retest/${student2._id}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${tpoAToken}` },
+    });
+    const blockedData = await blockedRetestRes.json();
+    if (blockedRetestRes.status !== 400 || !blockedData.message.includes('Cannot grant retest for a completed round')) {
+      throw new Error(`Expected 400 blocked retest on completed round, got: ${blockedRetestRes.status}`);
+    }
+    console.log('✓ Test 10B: Retest on ended/completed round is strictly blocked with 400');
 
     // ------------------------------------------------------------------------
     // TEST 11: RBAC & 403 Forbidden Cases

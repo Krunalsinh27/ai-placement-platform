@@ -673,6 +673,7 @@ async function runPipelineTests() {
       driveDate: futureDriveDate,
       lastDateToApply: futureDeadline,
       status: 'open',
+      isPublished: true,
       applicationsClosed: false,
       listFrozenAt: null,
     });

@@ -101,6 +101,14 @@ const createDrive = async (req, res, next) => {
     const isPastDeadline = applyDeadline ? new Date() > applyDeadline : false;
     const driveStatus = isPastDeadline ? 'closed' : status || 'open';
 
+    // Disallow linking recruiter job requirements or drive requests via direct drive creation
+    if (req.body.jobRequirement || req.body.driveRequest) {
+      return res.status(400).json({
+        success: false,
+        message: 'Direct drive creation cannot be linked to recruiter job requirements or drive requests. Recruiter-originated drives must follow the mutual approval workflow.',
+      });
+    }
+
     const collegeId = req.user.college?._id || req.user.college;
 
     const { sanitizeSkillList } = require('../services/ai');
@@ -109,6 +117,8 @@ const createDrive = async (req, res, next) => {
       college: collegeId,
       colleges: Array.isArray(colleges) && colleges.length > 0 ? colleges : (collegeId ? [collegeId] : []),
       company,
+      jobRequirement: null,
+      driveRequest: null,
       role: role.trim(),
       packageLpa: Number(packageLpa),
       location: location.trim(),
@@ -120,6 +130,8 @@ const createDrive = async (req, res, next) => {
       lastDateToApply: applyDeadline,
       driveDate: parseISTDateTime(driveDate),
       status: driveStatus,
+      isPublished: req.body.isPublished !== undefined ? Boolean(req.body.isPublished) : driveStatus === 'open',
+      publishedAt: driveStatus === 'open' ? new Date() : null,
       applicationsClosed: isPastDeadline,
       listFrozenAt: isPastDeadline ? new Date() : null,
     });
@@ -163,8 +175,9 @@ const getDrives = async (req, res, next) => {
         query.$or = [{ college: collegeId }, { colleges: collegeId }];
       }
     } else if (req.user.role === 'student') {
-      // Students only see open drives from their own college
+      // Students only see open, published drives from their own college
       query.status = 'open';
+      query.isPublished = { $ne: false };
       const studentCollegeId = req.user.college?._id || req.user.college;
       if (studentCollegeId) {
         query.$or = [{ college: studentCollegeId }, { colleges: studentCollegeId }];
@@ -221,15 +234,23 @@ const getDrives = async (req, res, next) => {
       .skip(skip)
       .limit(limitNum);
 
+    const formattedDrives = drives.map((d) => {
+      const obj = d.toObject();
+      if (req.user.role === 'student') {
+        obj.isPublished = d.isPublished !== undefined ? d.isPublished : true;
+      }
+      return obj;
+    });
+
     res.status(200).json({
       success: true,
-      data: drives,
+      data: formattedDrives,
       page: pageNum,
       limit: limitNum,
       total,
       totalPages: Math.ceil(total / limitNum) || 1,
-      count: drives.length,
-      drives,
+      count: formattedDrives.length,
+      drives: formattedDrives,
     });
   } catch (error) {
     next(error);
@@ -268,6 +289,8 @@ const getEligibleDrives = async (req, res, next) => {
       student.college?._id || student.college || req.user.college?._id || req.user.college;
 
     const eligibleQuery = {
+      status: 'open',
+      isPublished: { $ne: false },
       minCgpa: { $lte: student.cgpa },
       maxBacklogs: { $gte: student.backlogs },
       allowedBranches: student.branch.toUpperCase(),
@@ -295,6 +318,8 @@ const getEligibleDrives = async (req, res, next) => {
       .map((d) => {
         const obj = d.toObject();
         obj.applicationsClosed = Boolean(d.applicationsClosed);
+        // Normalize historical legacy drives (where isPublished is undefined in DB) to true under backward compatibility policy
+        obj.isPublished = d.isPublished !== undefined ? d.isPublished : true;
         try {
           const matchResult = computeMatchScore(student, d);
           const whyRec = buildRuleBasedExplanation(matchResult, d.role);

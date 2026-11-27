@@ -24,15 +24,30 @@ import {
   MapPin,
   Laptop,
   GitBranch,
+  Layers,
+  Users,
+  Award,
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { toISTInputValue } from '../../utils/dateTime';
 
 const ManageDriveRequests = () => {
   const [requests, setRequests] = useState([]);
+  const [groupedRequirements, setGroupedRequirements] = useState([]);
   const [requirements, setRequirements] = useState([]);
   const [colleges, setColleges] = useState([]);
+  const [summary, setSummary] = useState({});
   const [loading, setLoading] = useState(true);
+
+  // Section switcher: 'active' | 'previous'
+  const [section, setSection] = useState('active');
+
+  // View mode: 'job_wise' | 'list'
+  const [viewMode, setViewMode] = useState('job_wise');
 
   // Filter state
   const [statusFilter, setStatusFilter] = useState('all');
@@ -53,7 +68,12 @@ const ManageDriveRequests = () => {
   const [chatMessage, setChatMessage] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
 
-  // Accept Reschedule Modal State
+  // Confirm Schedule Modal State (Recruiter confirmation)
+  const [isConfirmScheduleOpen, setIsConfirmScheduleOpen] = useState(false);
+  const [selectedConfirmDate, setSelectedConfirmDate] = useState('');
+  const [confirmingSchedule, setConfirmingSchedule] = useState(false);
+
+  // Accept Reschedule Modal State (TPO proposed dates)
   const [isAcceptRescheduleOpen, setIsAcceptRescheduleOpen] = useState(false);
   const [selectedTpoDate, setSelectedTpoDate] = useState('');
   const [acceptingReschedule, setAcceptingReschedule] = useState(false);
@@ -63,20 +83,21 @@ const ManageDriveRequests = () => {
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = async (targetSection = section) => {
     try {
       setLoading(true);
       const [reqsRes, jobsRes, colRes] = await Promise.allSettled([
-        api.get('/drive-requests'),
+        api.get(`/drive-requests?section=${targetSection}`),
         api.get('/job-requirements'),
         api.get('/colleges'),
       ]);
 
       if (reqsRes.status === 'fulfilled' && reqsRes.value.data.success) {
         setRequests(reqsRes.value.data.requests || []);
+        setGroupedRequirements(reqsRes.value.data.groupedRequirements || []);
+        setSummary(reqsRes.value.data.summary || {});
       }
       if (jobsRes.status === 'fulfilled' && jobsRes.value.data.success) {
-        // Only published requirements can be sent
         const publishedOnly = (jobsRes.value.data.requirements || []).filter(
           (j) => j.status === 'published'
         );
@@ -94,30 +115,50 @@ const ManageDriveRequests = () => {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchData(section);
+  }, [section]);
 
-  // Filter requests
+  // Filter requests for list view
   const filteredRequests = requests.filter((r) => {
     const matchesStatus =
       statusFilter === 'all' ||
       (statusFilter === 'scheduled'
-        ? ['accepted', 'scheduled'].includes(r.status)
+        ? ['accepted', 'recruiter_confirmed', 'scheduled'].includes(r.status)
         : r.status === statusFilter);
 
     const matchesSearch =
       r.college?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.college?.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.jobRequirement?.title?.toLowerCase().includes(searchTerm.toLowerCase());
+      r.jobRequirement?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.jobRequirementSnapshot?.title?.toLowerCase().includes(searchTerm.toLowerCase());
 
     return matchesStatus && matchesSearch;
   });
 
-  // KPI metrics
-  const pendingCount = requests.filter((r) => r.status === 'pending').length;
-  const rescheduleCount = requests.filter((r) => r.status === 'reschedule_proposed').length;
-  const scheduledCount = requests.filter((r) => ['accepted', 'scheduled'].includes(r.status)).length;
-  const totalCount = requests.length;
+  // Filter grouped requirements for job-wise view
+  const filteredGrouped = groupedRequirements
+    .map((grp) => {
+      const matchingColleges = grp.collegeRequests.filter((r) => {
+        const matchesStatus =
+          statusFilter === 'all' ||
+          (statusFilter === 'scheduled'
+            ? ['accepted', 'recruiter_confirmed', 'scheduled'].includes(r.status)
+            : r.status === statusFilter);
+
+        const matchesSearch =
+          r.college?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          r.college?.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          grp.requirement?.title?.toLowerCase().includes(searchTerm.toLowerCase());
+
+        return matchesStatus && matchesSearch;
+      });
+
+      return {
+        ...grp,
+        collegeRequests: matchingColleges,
+      };
+    })
+    .filter((grp) => grp.collegeRequests.length > 0);
 
   // Add / Remove Proposed Dates
   const handleAddDateInput = () => {
@@ -175,12 +216,11 @@ const ManageDriveRequests = () => {
       if (res.data.success) {
         toast.success(res.data.message || 'Drive request(s) sent successfully!');
         setIsSendModalOpen(false);
-        // Reset form
         setSelectedRequirement('');
         setSelectedColleges([]);
         setProposedDates(['']);
         setInitialMessage('');
-        fetchData();
+        fetchData(section);
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Failed to send drive request';
@@ -208,12 +248,44 @@ const ManageDriveRequests = () => {
           messages: updatedMessages,
         }));
         setChatMessage('');
-        fetchData();
+        fetchData(section);
       }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to send message');
     } finally {
       setSendingMessage(false);
+    }
+  };
+
+  // Confirm Schedule
+  const handleConfirmSchedule = async () => {
+    if (!selectedRequest) return;
+    const dateToConfirm =
+      selectedConfirmDate ||
+      selectedRequest.confirmedDate ||
+      selectedRequest.proposedDates?.[0];
+
+    if (!dateToConfirm) {
+      toast.error('Please select a drive date to confirm');
+      return;
+    }
+
+    try {
+      setConfirmingSchedule(true);
+      const res = await api.put(`/drive-requests/${selectedRequest._id}/confirm-schedule`, {
+        selectedDate: dateToConfirm,
+      });
+
+      if (res.data.success) {
+        toast.success('Drive schedule confirmed! Awaiting TPO publication to students.');
+        setIsConfirmScheduleOpen(false);
+        setIsDetailModalOpen(false);
+        fetchData(section);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to confirm drive schedule');
+    } finally {
+      setConfirmingSchedule(false);
     }
   };
 
@@ -232,10 +304,10 @@ const ManageDriveRequests = () => {
       );
 
       if (res.data.success) {
-        toast.success('Confirmed drive date! Placement drive has been scheduled.');
+        toast.success('Confirmed drive date! Ready for TPO to publish to students.');
         setIsAcceptRescheduleOpen(false);
         setIsDetailModalOpen(false);
-        fetchData();
+        fetchData(section);
       }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept proposed date');
@@ -258,7 +330,7 @@ const ManageDriveRequests = () => {
         toast.success('Drive request cancelled');
         setIsCancelModalOpen(false);
         setIsDetailModalOpen(false);
-        fetchData();
+        fetchData(section);
       }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to cancel request');
@@ -284,11 +356,24 @@ const ManageDriveRequests = () => {
           </span>
         );
       case 'accepted':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+            <Clock className="w-3.5 h-3.5 text-amber-700" />
+            <span>Action Required: TPO Accepted • Confirm Schedule</span>
+          </span>
+        );
+      case 'recruiter_confirmed':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-200">
+            <CheckCircle2 className="w-3.5 h-3.5 text-sky-600" />
+            <span>Confirmed by You • Ready for TPO to Publish</span>
+          </span>
+        );
       case 'scheduled':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Drive Confirmed & Scheduled</span>
+            <span>Published to Students • Live</span>
           </span>
         );
       case 'rejected':
@@ -303,6 +388,13 @@ const ManageDriveRequests = () => {
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-300">
             <Ban className="w-3.5 h-3.5 text-slate-500" />
             <span>Cancelled</span>
+          </span>
+        );
+      case 'completed':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-300">
+            <CheckCircle2 className="w-3.5 h-3.5 text-slate-500" />
+            <span>Drive Completed</span>
           </span>
         );
       default:
@@ -321,13 +413,13 @@ const ManageDriveRequests = () => {
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30 mb-2">
             <CalendarCheck className="w-3.5 h-3.5" />
-            <span>Campus Drive Collaboration</span>
+            <span>Recruiter Campus Drive Portal</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-            Drive Requests
+            Drive Requests &amp; Placement Lifecycle
           </h1>
           <p className="text-slate-300 text-xs sm:text-sm mt-1 max-w-xl">
-            Propose recruitment drives to accredited colleges, negotiate schedules with Training & Placement Officers, and lock confirmed drive dates.
+            Propose recruitment drives, negotiate dates with college TPOs, confirm locked drive dates, and track applicant conversions from interview to offer.
           </p>
         </div>
 
@@ -348,32 +440,82 @@ const ManageDriveRequests = () => {
         </button>
       </div>
 
-      {/* KPI Cards */}
+      {/* Primary Section Switcher Tabs: Active Drives vs Previous Drives */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl">
+          <button
+            onClick={() => setSection('active')}
+            className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              section === 'active'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Briefcase className="w-4 h-4 text-indigo-600" />
+            <span>Active Drives</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700">
+              {summary.totalActive ?? requests.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setSection('previous')}
+            className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              section === 'previous'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Archive className="w-4 h-4 text-slate-500" />
+            <span>Previous Drives (Archive)</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-200 text-slate-700">
+              {summary.totalPrevious ?? 0}
+            </span>
+          </button>
+        </div>
+
+        {/* View Mode Toggle: Job-wise vs List */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl self-start sm:self-auto">
+          <button
+            onClick={() => setViewMode('job_wise')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              viewMode === 'job_wise'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Job-wise View</span>
+          </button>
+          <button
+            onClick={() => setViewMode('list')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              viewMode === 'list'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Filter className="w-3.5 h-3.5 text-slate-600" />
+            <span>All Requests</span>
+          </button>
+        </div>
+      </div>
+
+      {/* KPI Summary Tiles */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Total Sent
+              {section === 'active' ? 'Active Outreach' : 'Historical Outreaches'}
             </span>
             <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-700">
               <Send className="w-4 h-4" />
             </div>
           </div>
-          <span className="text-2xl sm:text-3xl font-black text-slate-900">{totalCount}</span>
-          <span className="text-[11px] text-slate-500 block mt-1">College outreach requests</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Pending Review
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700">
-              <Clock className="w-4 h-4" />
-            </div>
-          </div>
-          <span className="text-2xl sm:text-3xl font-black text-amber-600">{pendingCount}</span>
-          <span className="text-[11px] text-slate-500 block mt-1">Awaiting TPO response</span>
+          <span className="text-2xl sm:text-3xl font-black text-slate-900">
+            {section === 'active' ? (summary.totalActive ?? requests.length) : (summary.totalPrevious ?? requests.length)}
+          </span>
+          <span className="text-[11px] text-slate-500 block mt-1">Colleges contacted</span>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
@@ -381,29 +523,48 @@ const ManageDriveRequests = () => {
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Action Required
             </span>
-            <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700">
+            <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700">
               <AlertCircle className="w-4 h-4" />
             </div>
           </div>
-          <span className="text-2xl sm:text-3xl font-black text-indigo-600">
-            {rescheduleCount}
+          <span className="text-2xl sm:text-3xl font-black text-amber-600">
+            {summary.actionRequired ?? (summary.awaitingRecruiterConfirmation || 0) + (summary.rescheduleProposed || 0)}
           </span>
-          <span className="text-[11px] text-slate-500 block mt-1">TPO proposed new dates</span>
+          <span className="text-[11px] text-slate-500 block mt-1">
+            {summary.awaitingRecruiterConfirmation
+              ? `${summary.awaitingRecruiterConfirmation} awaiting your confirmation`
+              : 'TPO responses ready'}
+          </span>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Confirmed Drives
+              Ready / Confirmed
             </span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700">
+            <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
-          <span className="text-2xl sm:text-3xl font-black text-emerald-600">
-            {scheduledCount}
+          <span className="text-2xl sm:text-3xl font-black text-indigo-600">
+            {summary.recruiterConfirmed ?? 0}
           </span>
-          <span className="text-[11px] text-slate-500 block mt-1">Locked on academic calendar</span>
+          <span className="text-[11px] text-slate-500 block mt-1">Ready for TPO publication</span>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Published &amp; Live
+            </span>
+            <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700">
+              <Sparkles className="w-4 h-4" />
+            </div>
+          </div>
+          <span className="text-2xl sm:text-3xl font-black text-emerald-600">
+            {summary.publishedDrives ?? 0}
+          </span>
+          <span className="text-[11px] text-slate-500 block mt-1">Open for student applications</span>
         </div>
       </div>
 
@@ -413,15 +574,20 @@ const ManageDriveRequests = () => {
           {/* Status Tabs */}
           <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
             {[
-              { id: 'all', label: 'All Requests', count: requests.length },
-              { id: 'pending', label: 'Pending', count: pendingCount },
-              { id: 'reschedule_proposed', label: 'Reschedule Proposed', count: rescheduleCount },
-              { id: 'scheduled', label: 'Confirmed', count: scheduledCount },
-              {
-                id: 'rejected',
-                label: 'Declined',
-                count: requests.filter((r) => r.status === 'rejected').length,
-              },
+              { id: 'all', label: 'All', count: requests.length },
+              ...(section === 'active'
+                ? [
+                    { id: 'pending', label: 'Pending TPO', count: summary.pendingTpoReview ?? 0 },
+                    { id: 'accepted', label: 'Awaiting Your Confirmation', count: summary.awaitingRecruiterConfirmation ?? 0 },
+                    { id: 'reschedule_proposed', label: 'Reschedule Proposed', count: summary.rescheduleProposed ?? 0 },
+                    { id: 'recruiter_confirmed', label: 'Ready to Publish', count: summary.recruiterConfirmed ?? 0 },
+                    { id: 'scheduled', label: 'Published & Live', count: summary.publishedDrives ?? 0 },
+                  ]
+                : [
+                    { id: 'completed', label: 'Completed Drives', count: requests.filter((r) => r.status === 'completed').length },
+                    { id: 'cancelled', label: 'Cancelled', count: requests.filter((r) => r.status === 'cancelled').length },
+                    { id: 'rejected', label: 'Declined', count: requests.filter((r) => r.status === 'rejected').length },
+                  ]),
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -458,23 +624,25 @@ const ManageDriveRequests = () => {
         </div>
       </div>
 
-      {/* Requests List */}
+      {/* Main Content Area */}
       {loading ? (
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-40 bg-slate-200 rounded-2xl animate-pulse" />
+            <div key={i} className="h-44 bg-slate-200 rounded-3xl animate-pulse" />
           ))}
         </div>
-      ) : filteredRequests.length === 0 ? (
+      ) : requests.length === 0 ? (
         <div className="text-center py-16 px-4 rounded-3xl bg-white border border-dashed border-slate-200 shadow-xs">
           <CalendarCheck className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-slate-800">No drive requests found</h3>
+          <h3 className="text-base font-bold text-slate-800">
+            {section === 'active' ? 'No active drive requests' : 'No previous drive records in archive'}
+          </h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-4">
-            {searchTerm || statusFilter !== 'all'
-              ? 'Try modifying your search or status filters.'
-              : 'Start your college campus recruitment outreach by proposing your first placement drive!'}
+            {section === 'active'
+              ? 'Send recruitment proposals to accredited institutions to schedule placement drives.'
+              : 'Past, rejected, and completed placement drives will appear here.'}
           </p>
-          {requirements.length > 0 && (
+          {requirements.length > 0 && section === 'active' && (
             <button
               onClick={() => setIsSendModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"
@@ -484,13 +652,261 @@ const ManageDriveRequests = () => {
             </button>
           )}
         </div>
+      ) : viewMode === 'job_wise' ? (
+        /* =========================================================================
+           JOB-WISE BREAKDOWN VIEW (Parent Requirement with College Responses)
+           ========================================================================= */
+        <div className="space-y-6">
+          {filteredGrouped.map((grp) => {
+            const req = grp.requirement || {};
+            const isArchived = Boolean(req.isArchivedRequirement);
+
+            return (
+              <div
+                key={grp.requirementId}
+                className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden"
+              >
+                {/* Parent Requirement Header Card */}
+                <div className="p-6 bg-gradient-to-r from-slate-50 via-indigo-50/30 to-white border-b border-slate-200/80">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="p-1.5 rounded-lg bg-indigo-600 text-white font-bold text-xs">
+                          <Briefcase className="w-4 h-4" />
+                        </span>
+                        <h2 className="text-lg font-black text-slate-900 tracking-tight">
+                          {req.title}
+                        </h2>
+                        {isArchived ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                            Archived Requirement (Historical Snapshot Preserved)
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            Published Requirement
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-slate-600 flex flex-wrap items-center gap-3">
+                        <span className="font-bold text-indigo-700 text-sm">
+                          {req.packageLpa ? `${req.packageLpa} LPA` : 'Competitive'}
+                        </span>
+                        <span>•</span>
+                        <span>Batch: <strong className="text-slate-800">{req.batchYear || 'All'}</strong></span>
+                        <span>•</span>
+                        <span>Location: <strong className="text-slate-800">{req.location || 'Multiple'}</strong></span>
+                        {req.allowedBranches && req.allowedBranches.length > 0 && (
+                          <>
+                            <span>•</span>
+                            <span>Branches: <strong className="text-slate-800">{req.allowedBranches.join(', ')}</strong></span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+
+                    {/* Aggregate Stats Pill */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-700 shadow-2xs flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>{grp.collegeRequests.length} Colleges Reached</span>
+                      </div>
+                      <div className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>{grp.stats.applied} Applied</span>
+                      </div>
+                      <div className="px-3 py-1.5 rounded-xl bg-sky-50 border border-sky-200 text-xs font-bold text-sky-800 flex items-center gap-1.5">
+                        <span>{grp.stats.shortlisted} Shortlisted</span>
+                      </div>
+                      <div className="px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs font-bold text-indigo-800 flex items-center gap-1.5">
+                        <Award className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>{grp.stats.offers} Offers</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Child College Responses List */}
+                <div className="divide-y divide-slate-100">
+                  {grp.collegeRequests.map((collegeReq) => {
+                    const driveId = collegeReq.drive?._id || collegeReq.drive;
+                    const collegeStats = collegeReq.stats || { applied: 0, shortlisted: 0, selected: 0, offers: 0 };
+
+                    return (
+                      <div
+                        key={collegeReq._id}
+                        className={`p-5 transition-colors hover:bg-slate-50/60 ${
+                          collegeReq.status === 'accepted'
+                            ? 'bg-amber-50/30'
+                            : collegeReq.status === 'reschedule_proposed'
+                            ? 'bg-indigo-50/20'
+                            : ''
+                        }`}
+                      >
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                          {/* College Identification & Details */}
+                          <div className="space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-bold text-slate-900 text-sm">
+                                {collegeReq.college?.name}
+                              </h3>
+                              <span className="text-[11px] px-2 py-0.5 rounded-md font-semibold bg-slate-100 text-slate-700">
+                                {collegeReq.college?.code}
+                              </span>
+                              {getStatusBadge(collegeReq.status)}
+                            </div>
+
+                            <p className="text-xs text-slate-500 flex flex-wrap items-center gap-3">
+                              <span className="flex items-center gap-1">
+                                <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                                {collegeReq.college?.city}, {collegeReq.college?.state}
+                              </span>
+                              <span>•</span>
+                              <span className="capitalize font-medium text-slate-700 flex items-center gap-1">
+                                {collegeReq.mode === 'virtual' ? (
+                                  <>
+                                    <Laptop className="w-3.5 h-3.5 text-sky-600" />
+                                    Virtual Drive
+                                  </>
+                                ) : (
+                                  <>
+                                    <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                                    On-Campus Drive
+                                  </>
+                                )}
+                              </span>
+                              <span>•</span>
+                              <span>
+                                Drive Date:{' '}
+                                <strong className="text-slate-800">
+                                  {collegeReq.confirmedDate
+                                    ? new Date(collegeReq.confirmedDate).toLocaleDateString()
+                                    : collegeReq.proposedDates?.[0]
+                                    ? `${new Date(collegeReq.proposedDates[0]).toLocaleDateString()} (Proposed)`
+                                    : 'Pending'}
+                                </strong>
+                              </span>
+                            </p>
+
+                            {/* College Specific Applicant Conversion Metrics */}
+                            <div className="flex items-center gap-2 pt-1 text-[11px]">
+                              <span className="text-slate-500 font-medium">Conversion:</span>
+                              <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
+                                {collegeStats.applied} Applied
+                              </span>
+                              <span>→</span>
+                              <span className="px-2 py-0.5 rounded bg-sky-50 text-sky-800 font-bold">
+                                {collegeStats.shortlisted} Shortlisted
+                              </span>
+                              <span>→</span>
+                              <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 font-bold">
+                                {collegeStats.selected} Selected
+                              </span>
+                              <span>→</span>
+                              <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 font-bold">
+                                {collegeStats.offers} Offers
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons for this specific college response */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            {/* CONFIRM SCHEDULE: Shown when TPO accepted the request */}
+                            {collegeReq.status === 'accepted' && (
+                              <button
+                                onClick={() => {
+                                  setSelectedRequest(collegeReq);
+                                  setSelectedConfirmDate(
+                                    collegeReq.confirmedDate || collegeReq.proposedDates?.[0] || ''
+                                  );
+                                  setIsConfirmScheduleOpen(true);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer animate-pulse"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Confirm Schedule</span>
+                              </button>
+                            )}
+
+                            {/* RESCHEDULE ACTION: Shown when TPO proposed alternative dates */}
+                            {collegeReq.status === 'reschedule_proposed' && (
+                              <button
+                                onClick={() => {
+                                  setSelectedRequest(collegeReq);
+                                  if (collegeReq.tpoProposedDates && collegeReq.tpoProposedDates.length > 0) {
+                                    setSelectedTpoDate(collegeReq.tpoProposedDates[0]);
+                                  }
+                                  setIsAcceptRescheduleOpen(true);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Review Proposed Date</span>
+                              </button>
+                            )}
+
+                            {/* PIPELINE LINK: Shown when drive is confirmed / published */}
+                            {['scheduled'].includes(collegeReq.status) && (
+                              <Link
+                                to={
+                                  driveId
+                                    ? `/recruiter/drives/${driveId}/pipeline`
+                                    : '/recruiter/pipeline'
+                                }
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                              >
+                                <GitBranch className="w-3.5 h-3.5" />
+                                <span>View Pipeline</span>
+                              </Link>
+                            )}
+
+                            {/* TIMELINE & CHAT */}
+                            <button
+                              onClick={() => {
+                                setSelectedRequest(collegeReq);
+                                setIsDetailModalOpen(true);
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 text-slate-500" />
+                              <span>Timeline &amp; Chat ({collegeReq.messages?.length || 0})</span>
+                            </button>
+
+                            {/* CANCEL REQUEST */}
+                            {['pending', 'reschedule_proposed'].includes(collegeReq.status) && (
+                              <button
+                                onClick={() => {
+                                  setSelectedRequest(collegeReq);
+                                  setIsCancelModalOpen(true);
+                                }}
+                                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 border border-red-200 transition-all cursor-pointer"
+                              >
+                                <Ban className="w-3.5 h-3.5" />
+                                <span>Cancel</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
+        /* =========================================================================
+           ALL REQUESTS LIST VIEW (Flat Cards)
+           ========================================================================= */
         <div className="space-y-4">
           {filteredRequests.map((req) => (
             <div
               key={req._id}
               className={`bg-white rounded-2xl border p-5 sm:p-6 transition-all hover:shadow-md ${
-                req.status === 'reschedule_proposed'
+                req.status === 'accepted'
+                  ? 'border-amber-300 ring-2 ring-amber-500/10'
+                  : req.status === 'reschedule_proposed'
                   ? 'border-indigo-300 ring-2 ring-indigo-500/10'
                   : 'border-slate-200/80 shadow-xs'
               }`}
@@ -530,8 +946,42 @@ const ManageDriveRequests = () => {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-                  {/* Action button for Confirmed Drives: Open Pipeline */}
-                  {['accepted', 'scheduled'].includes(req.status) && (
+                  {/* CONFIRM SCHEDULE */}
+                  {req.status === 'accepted' && (
+                    <button
+                      onClick={() => {
+                        setSelectedRequest(req);
+                        setSelectedConfirmDate(
+                          req.confirmedDate || req.proposedDates?.[0] || ''
+                        );
+                        setIsConfirmScheduleOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Confirm Schedule</span>
+                    </button>
+                  )}
+
+                  {/* ACTION FOR RESCHEDULE */}
+                  {req.status === 'reschedule_proposed' && (
+                    <button
+                      onClick={() => {
+                        setSelectedRequest(req);
+                        if (req.tpoProposedDates && req.tpoProposedDates.length > 0) {
+                          setSelectedTpoDate(req.tpoProposedDates[0]);
+                        }
+                        setIsAcceptRescheduleOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Review Proposed Date</span>
+                    </button>
+                  )}
+
+                  {/* PIPELINE LINK */}
+                  {['scheduled'].includes(req.status) && (
                     <Link
                       to={
                         req.drive?._id || req.drive
@@ -545,23 +995,6 @@ const ManageDriveRequests = () => {
                     </Link>
                   )}
 
-                  {/* Action button if reschedule was proposed by TPO */}
-                  {req.status === 'reschedule_proposed' && (
-                    <button
-                      onClick={() => {
-                        setSelectedRequest(req);
-                        if (req.tpoProposedDates && req.tpoProposedDates.length > 0) {
-                          setSelectedTpoDate(req.tpoProposedDates[0]);
-                        }
-                        setIsAcceptRescheduleOpen(true);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Review & Accept Proposed Date</span>
-                    </button>
-                  )}
-
                   <button
                     onClick={() => {
                       setSelectedRequest(req);
@@ -570,7 +1003,7 @@ const ManageDriveRequests = () => {
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
                   >
                     <MessageSquare className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Timeline & Chat ({req.messages?.length || 0})</span>
+                    <span>Timeline &amp; Chat ({req.messages?.length || 0})</span>
                   </button>
 
                   {['pending', 'reschedule_proposed'].includes(req.status) && (
@@ -596,17 +1029,18 @@ const ManageDriveRequests = () => {
                     Job Requirement
                   </span>
                   <p className="font-bold text-slate-800 text-sm">
-                    {req.jobRequirement?.title}
+                    {req.jobRequirement?.title || req.jobRequirementSnapshot?.title}
                   </p>
                   <p className="text-indigo-600 font-extrabold mt-0.5">
-                    {req.jobRequirement?.packageLpa} LPA • {req.jobRequirement?.openings} Openings (Batch {req.jobRequirement?.batchYear})
+                    {req.jobRequirement?.packageLpa || req.jobRequirementSnapshot?.packageLpa} LPA
+                    {req.jobRequirement?.openings ? ` • ${req.jobRequirement.openings} Openings` : ''}
                   </p>
                 </div>
 
                 {/* Recruiter Proposed Dates */}
                 <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-100">
                   <span className="text-[11px] font-semibold text-slate-400 block uppercase tracking-wider mb-1">
-                    Your Proposed Dates
+                    Proposed Dates
                   </span>
                   <div className="flex flex-wrap gap-1.5 mt-1">
                     {req.proposedDates?.map((d, idx) => (
@@ -679,6 +1113,56 @@ const ManageDriveRequests = () => {
           ))}
         </div>
       )}
+
+      {/* CONFIRM SCHEDULE MODAL (Recruiter confirms TPO's accepted date) */}
+      <Modal
+        isOpen={isConfirmScheduleOpen}
+        onClose={() => setIsConfirmScheduleOpen(false)}
+        title="Confirm Drive Schedule"
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4 text-xs">
+          <p className="text-slate-600">
+            The placement cell of <strong>{selectedRequest?.college?.name}</strong> has accepted the drive. Confirm the schedule date below so the TPO can finalize venue and publish it to eligible students.
+          </p>
+
+          <div>
+            <label className="block text-slate-700 font-bold mb-1">
+              Select or Verify Drive Date *
+            </label>
+            <input
+              type="date"
+              value={
+                selectedConfirmDate
+                  ? toISTInputValue(selectedConfirmDate, { dateOnly: true })
+                  : ''
+              }
+              onChange={(e) => setSelectedConfirmDate(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              required
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setIsConfirmScheduleOpen(false)}
+              className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmSchedule}
+              disabled={confirmingSchedule}
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+            >
+              <Check className="w-4 h-4" />
+              <span>{confirmingSchedule ? 'Confirming...' : 'Lock & Confirm Date'}</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* SEND DRIVE REQUEST MODAL */}
       <Modal
@@ -867,11 +1351,11 @@ const ManageDriveRequests = () => {
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
                 <p className="font-black text-slate-900 text-sm">
-                  {selectedRequest.jobRequirement?.title}
+                  {selectedRequest.jobRequirement?.title || selectedRequest.jobRequirementSnapshot?.title}
                 </p>
                 <p className="text-slate-500 text-xs mt-0.5">
-                  Package: <strong className="text-indigo-600">{selectedRequest.jobRequirement?.packageLpa} LPA</strong> •
-                  Batch: {selectedRequest.jobRequirement?.batchYear} •
+                  Package: <strong className="text-indigo-600">{selectedRequest.jobRequirement?.packageLpa || selectedRequest.jobRequirementSnapshot?.packageLpa} LPA</strong> •
+                  Batch: {selectedRequest.jobRequirement?.batchYear || selectedRequest.jobRequirementSnapshot?.batchYear || 'All'} •
                   Mode: <strong className="capitalize">{selectedRequest.mode}</strong>
                 </p>
               </div>
@@ -891,7 +1375,6 @@ const ManageDriveRequests = () => {
                   {(selectedRequest.statusTimeline || selectedRequest.timeline || []).map(
                     (step, idx) => (
                       <div key={idx} className="relative">
-                        {/* Dot indicator */}
                         <div className="absolute -left-[31px] top-0.5 w-4 h-4 rounded-full bg-indigo-600 ring-4 ring-indigo-50 flex items-center justify-center text-white text-[9px]">
                           ✓
                         </div>
@@ -1051,7 +1534,7 @@ const ManageDriveRequests = () => {
               className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
             >
               <Check className="w-4 h-4" />
-              <span>{acceptingReschedule ? 'Confirming...' : 'Confirm & Schedule Drive'}</span>
+              <span>{acceptingReschedule ? 'Confirming...' : 'Confirm Date'}</span>
             </button>
           </div>
         </div>
@@ -1108,4 +1591,3 @@ const ManageDriveRequests = () => {
 };
 
 export default ManageDriveRequests;
-

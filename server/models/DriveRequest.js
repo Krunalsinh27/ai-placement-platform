@@ -38,6 +38,7 @@ const timelineSubSchema = new mongoose.Schema(
         'accepted',
         'rejected',
         'reschedule_proposed',
+        'recruiter_confirmed',
         'scheduled',
         'completed',
         'cancelled',
@@ -113,6 +114,7 @@ const driveRequestSchema = new mongoose.Schema(
           'accepted',
           'rejected',
           'reschedule_proposed',
+          'recruiter_confirmed',
           'scheduled',
           'completed',
           'cancelled',
@@ -125,6 +127,35 @@ const driveRequestSchema = new mongoose.Schema(
     confirmedDate: {
       type: Date,
       default: null,
+    },
+    recruiterConfirmedAt: {
+      type: Date,
+      default: null,
+    },
+    recruiterConfirmedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    tpoPublishedAt: {
+      type: Date,
+      default: null,
+    },
+    tpoPublishedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    jobRequirementSnapshot: {
+      title: { type: String, default: '' },
+      packageLpa: { type: Number, default: 0 },
+      description: { type: String, default: '' },
+      minCgpa: { type: Number, default: 0 },
+      maxBacklogs: { type: Number, default: 0 },
+      allowedBranches: { type: [String], default: [] },
+      batchYear: { type: Number, default: null },
+      location: { type: String, default: '' },
+      selectionRounds: { type: [String], default: [] },
     },
     tpoProposedDates: {
       type: [Date],

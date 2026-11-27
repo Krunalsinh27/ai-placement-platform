@@ -24,6 +24,7 @@ import {
   Send,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import CollegeBreakdownModal from '../../components/recruitment/CollegeBreakdownModal';
 
 const ALL_BRANCHES = ['CSE', 'IT', 'ECE', 'EE', 'ME', 'CE', 'AI & DS', 'Chemical'];
 
@@ -39,6 +40,10 @@ const ManageRequirements = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // College Breakdown Modal State
+  const [breakdownModalOpen, setBreakdownModalOpen] = useState(false);
+  const [selectedReqForBreakdown, setSelectedReqForBreakdown] = useState(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -497,6 +502,20 @@ const ManageRequirements = () => {
                     </Link>
                   )}
 
+                  {/* Applicants by College Breakdown */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedReqForBreakdown(req);
+                      setBreakdownModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200/80 transition-colors cursor-pointer"
+                    title="View applicants breakdown by college"
+                  >
+                    <Users className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Applicants by College</span>
+                  </button>
+
                   {/* Toggle close / reopen */}
                   {req.status === 'published' && (
                     <button
@@ -923,6 +942,16 @@ const ManageRequirements = () => {
           </div>
         </form>
       </Modal>
+
+      {/* College Breakdown Modal */}
+      <CollegeBreakdownModal
+        isOpen={breakdownModalOpen}
+        onClose={() => {
+          setBreakdownModalOpen(false);
+          setSelectedReqForBreakdown(null);
+        }}
+        requirement={selectedReqForBreakdown}
+      />
     </div>
   );
 };

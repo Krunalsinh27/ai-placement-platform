@@ -76,6 +76,14 @@ const jobRequirementSchema = new mongoose.Schema(
       },
       default: 'draft',
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

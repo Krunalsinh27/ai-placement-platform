@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import {
@@ -46,7 +46,7 @@ import {
   Megaphone,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
+import { toISTInputValue, formatISTDate, parseISTInputValue } from '../../utils/dateTime';
 import { validateTestWindow, isMissingTestWindow } from '../../utils/recruiterPipelineValidation';
 import RankedApplicantsView from '../../components/recruitment/RankedApplicantsView';
 
@@ -88,6 +88,7 @@ const DrivePipeline = () => {
     showScoreToStudents: false,
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const isSavingSettingsRef = useRef(false);
   const [notifyConfirmOpen, setNotifyConfirmOpen] = useState(false);
   const [pendingSettingsPayload, setPendingSettingsPayload] = useState(null);
   const [missingWindowConfirm, setMissingWindowConfirm] = useState({
@@ -126,6 +127,11 @@ const DrivePipeline = () => {
   const [testResults, setTestResults] = useState([]);
   const [testSummary, setTestSummary] = useState(null);
   const [loadingTestResults, setLoadingTestResults] = useState(false);
+
+  // Student Visibility & Test Readiness State
+  const [testReadiness, setTestReadiness] = useState(null);
+  const [loadingReadiness, setLoadingReadiness] = useState(false);
+  const [publishingAssessment, setPublishingAssessment] = useState(false);
 
   const [shortlistModalOpen, setShortlistModalOpen] = useState(false);
   const [cutoffInput, setCutoffInput] = useState('');
@@ -344,6 +350,13 @@ const DrivePipeline = () => {
 
   const isInterviewRound = Boolean(currentRound && ['technical', 'hr', 'group_discussion'].includes(currentRound.type));
   const isPlatformTest = Boolean(currentRound && currentRound.deliveryMode === 'platform_test');
+  const isRoundCompleted = Boolean(
+    currentRound &&
+    (currentRound.status === 'completed' ||
+      (currentRound.deliveryMode === 'platform_test' &&
+        currentRound.testWindowEnd &&
+        new Date() > new Date(currentRound.testWindowEnd)))
+  );
 
   const fetchPanelsAndSlots = async (roundId) => {
     if (!roundId) return;
@@ -424,10 +437,48 @@ const DrivePipeline = () => {
     }
   };
 
+  const fetchTestReadiness = async (roundId) => {
+    if (!roundId) return null;
+    setLoadingReadiness(true);
+    try {
+      const res = await api.get(`/rounds/${roundId}/test-readiness`);
+      if (res.data?.success) {
+        setTestReadiness(res.data);
+        return res.data;
+      }
+    } catch (err) {
+      console.error('Failed to load test readiness:', err);
+    } finally {
+      setLoadingReadiness(false);
+    }
+    return null;
+  };
+
+  const handlePublishAssessment = async () => {
+    if (!currentRound) return;
+    try {
+      setPublishingAssessment(true);
+      const res = await api.put(`/rounds/${currentRound._id}/publish-assessment`);
+      if (res.data?.success) {
+        toast.success(res.data.message || 'Assessment published successfully!');
+        await fetchTestReadiness(currentRound._id);
+        if (typeof fetchPipelineDetails === 'function') {
+          await fetchPipelineDetails();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to publish assessment:', err);
+      toast.error(err.response?.data?.message || 'Failed to publish assessment');
+    } finally {
+      setPublishingAssessment(false);
+    }
+  };
+
   useEffect(() => {
     if (currentRound && currentRound.deliveryMode === 'platform_test') {
       fetchQuestions(currentRound._id);
       fetchTestResults(currentRound._id);
+      fetchTestReadiness(currentRound._id);
     }
   }, [currentRound?._id, currentRound?.deliveryMode]);
 
@@ -478,6 +529,7 @@ const DrivePipeline = () => {
           setQuestionFormModalOpen(false);
           fetchQuestions(currentRound._id);
           fetchDriveProgress();
+          fetchTestReadiness(currentRound._id);
         }
       } else {
         const res = await api.post(`/rounds/${currentRound._id}/questions`, questionForm);
@@ -486,6 +538,7 @@ const DrivePipeline = () => {
           setQuestionFormModalOpen(false);
           fetchQuestions(currentRound._id);
           fetchDriveProgress();
+          fetchTestReadiness(currentRound._id);
         }
       }
     } catch (err) {
@@ -504,6 +557,7 @@ const DrivePipeline = () => {
         toast.success('Question deleted successfully');
         fetchQuestions(currentRound._id);
         fetchDriveProgress();
+        fetchTestReadiness(currentRound._id);
       }
     } catch (err) {
       console.error('Failed to delete question:', err);
@@ -543,6 +597,10 @@ const DrivePipeline = () => {
           toast.success(`Successfully imported ${res.data.importedCount} questions!`);
           fetchQuestions(currentRound._id);
           fetchDriveProgress();
+          const readiness = await fetchTestReadiness(currentRound._id);
+          if (readiness?.visibleStudentCount !== undefined) {
+            toast.info(`${readiness.visibleStudentCount} student${readiness.visibleStudentCount === 1 ? '' : 's'} can now see this test`);
+          }
         }
       }
     } catch (err) {
@@ -972,6 +1030,7 @@ const DrivePipeline = () => {
   const handleSaveRoundSettings = async (e) => {
     e.preventDefault();
     if (!currentRound) return;
+    if (isSavingSettingsRef.current) return;
 
     // Delivery mode validation
     if (settingsForm.deliveryMode === 'platform_test') {
@@ -979,10 +1038,17 @@ const DrivePipeline = () => {
         toast.error('Platform test is only available for aptitude and coding rounds. Interviews and group discussions cannot use platform test.');
         return;
       }
+      const isExistingStart = Boolean(
+        currentRound.testWindowStart &&
+        settingsForm.testWindowStart &&
+        Math.abs(new Date(currentRound.testWindowStart).getTime() - new Date(settingsForm.testWindowStart).getTime()) < 60000
+      );
       const windowVal = validateTestWindow({
         testWindowStart: settingsForm.testWindowStart,
         testWindowEnd: settingsForm.testWindowEnd,
         durationMinutes: settingsForm.durationMinutes,
+        deliveryMode: settingsForm.deliveryMode,
+        enforceFutureStart: !isExistingStart,
       });
       if (!windowVal.isValid) {
         toast.error(windowVal.error);
@@ -1039,6 +1105,8 @@ const DrivePipeline = () => {
   };
 
   const executeSaveRoundSettings = async (payloadToSave, notifyStudents) => {
+    if (isSavingSettingsRef.current) return;
+    isSavingSettingsRef.current = true;
     setIsSavingSettings(true);
     try {
       const payload = {
@@ -1053,12 +1121,19 @@ const DrivePipeline = () => {
         setNotifyConfirmOpen(false);
         setPendingSettingsPayload(null);
         fetchDriveProgress();
+        if (payload.deliveryMode === 'platform_test' || currentRound.deliveryMode === 'platform_test') {
+          const readiness = await fetchTestReadiness(currentRound._id);
+          if (readiness?.visibleStudentCount !== undefined) {
+            toast.info(`${readiness.visibleStudentCount} student${readiness.visibleStudentCount === 1 ? '' : 's'} can now see this test`);
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to update round settings:', err);
       toast.error(err.response?.data?.message || 'Failed to update round settings');
     } finally {
       setIsSavingSettings(false);
+      isSavingSettingsRef.current = false;
     }
   };
 
@@ -1565,6 +1640,20 @@ const DrivePipeline = () => {
                     >
                       Published
                     </span>
+                  ) : r.status === 'completed' || (r.deliveryMode === 'platform_test' && r.testWindowEnd && new Date() > new Date(r.testWindowEnd)) ? (
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/25 text-white' : 'bg-purple-100 text-purple-800'
+                        }`}
+                    >
+                      Completed
+                    </span>
+                  ) : r.status === 'live' || (r.deliveryMode === 'platform_test' && r.testWindowStart && r.testWindowEnd && new Date() >= new Date(r.testWindowStart) && new Date() <= new Date(r.testWindowEnd)) ? (
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-800 animate-pulse'
+                        }`}
+                    >
+                      Live
+                    </span>
                   ) : (
                     <span
                       className={`text-[10px] px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-600'
@@ -1669,6 +1758,32 @@ const DrivePipeline = () => {
                 </div>
               )}
 
+              {/* COMPLETED - RESULTS PENDING BANNER */}
+              {isRoundCompleted && !currentRound.resultsPublished && (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-amber-800">
+                        Completed — results pending
+                      </h4>
+                      <p className="text-xs text-amber-700">
+                        The test window has concluded and all assessments have been submitted. Review candidate scores and publish results to advance qualified candidates to the next round.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handlePublishClick}
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20 shrink-0 transition-all cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Publish Results & Advance</span>
+                  </button>
+                </div>
+              )}
+
               {/* Round Summary Card & Action Bar */}
               <div className="bg-white rounded-3xl border border-slate-200/80 p-5 shadow-xs space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1753,20 +1868,22 @@ const DrivePipeline = () => {
                       <span>Shortlist by Cutoff</span>
                     </button>
 
-                    <button
-                      onClick={() => {
-                        setSplitForm((prev) => ({
-                          ...prev,
-                          mode: currentRound.mode || 'offline',
-                          startTime: toISTInputValue(currentRound.date) || toISTInputValue(new Date()),
-                        }));
-                        setAutoSplitModalOpen(true);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
-                    >
-                      <Split className="w-3.5 h-3.5 text-sky-600" />
-                      <span>Auto-Split Batches</span>
-                    </button>
+                    {!isRoundCompleted && (
+                      <button
+                        onClick={() => {
+                          setSplitForm((prev) => ({
+                            ...prev,
+                            mode: currentRound.mode || 'offline',
+                            startTime: toISTInputValue(currentRound.date) || toISTInputValue(new Date()),
+                          }));
+                          setAutoSplitModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        <Split className="w-3.5 h-3.5 text-sky-600" />
+                        <span>Auto-Split Batches</span>
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {
@@ -2498,61 +2615,153 @@ const DrivePipeline = () => {
                     </div>
                   </div>
 
-                  {/* Test Readiness Widget */}
+                  {/* Student Visibility & Test Readiness Checklist Panel */}
                   {(() => {
-                    const hasQuestions = (questionStats.questionCount || 0) > 0;
-                    const hasWindow = Boolean(currentRound.testWindowStart && currentRound.testWindowEnd);
-                    const enrolledCount = testSummary?.totalEnrolled ?? currentRound.participants?.length ?? 0;
-                    const isReady = hasQuestions && hasWindow && enrolledCount > 0;
+                    const checks = testReadiness?.checks || [
+                      {
+                        key: 'deliveryMode',
+                        label: 'Delivery Mode',
+                        ok: currentRound.deliveryMode === 'platform_test',
+                        message: currentRound.deliveryMode === 'platform_test' ? 'Delivery mode is set to on-platform test' : 'Delivery mode must be platform_test',
+                      },
+                      {
+                        key: 'windowConfig',
+                        label: 'Test Window Schedule',
+                        ok: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd),
+                        message: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd) ? 'Window scheduled' : 'Needs a test window: start and end times must be scheduled in Round Settings',
+                      },
+                      {
+                        key: 'windowActive',
+                        label: 'Window Active Status',
+                        ok: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd && new Date() <= new Date(currentRound.testWindowEnd)),
+                        message: 'Window active verification',
+                      },
+                      {
+                        key: 'questions',
+                        label: 'Question Bank',
+                        ok: (questionStats.questionCount || 0) > 0,
+                        message: (questionStats.questionCount || 0) > 0 ? `${questionStats.questionCount} questions configured` : 'No questions configured',
+                      },
+                      {
+                        key: 'participants',
+                        label: 'Candidate Enrollment',
+                        ok: (currentRound.participants?.length || 0) > 0,
+                        message: currentRound.order > 1
+                          ? `Students join this round only after Round ${currentRound.order - 1} results are published`
+                          : `${currentRound.participants?.length || 0} candidates enrolled`,
+                      },
+                    ];
+
+                    const isReady = testReadiness ? testReadiness.isReady : checks.every((c) => c.ok);
+                    const visibleCount = testReadiness?.visibleStudentCount ?? (currentRound.participants?.length || 0);
 
                     return (
-                      <div className={`p-4 rounded-3xl border flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs ${
+                      <div className={`p-5 rounded-3xl border transition-all ${
                         isReady
-                          ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
-                          : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                          ? 'bg-emerald-50/60 border-emerald-200'
+                          : 'bg-amber-50/60 border-amber-200'
                       }`}>
-                        <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                            isReady ? 'bg-emerald-200 text-emerald-800' : 'bg-amber-200 text-amber-800'
-                          }`}>
-                            {isReady ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200/70">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 font-bold shadow-xs ${
+                              isReady ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
+                            }`}>
+                              {isReady ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-slate-900 text-sm">
+                                  Student Visibility &amp; Test Readiness
+                                </h4>
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                  isReady
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                                }`}>
+                                  {isReady ? 'Ready for Candidates' : 'Configuration Pending'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-600 mt-0.5">
+                                Real-time candidate visibility check: verifies delivery mode, scheduling, question bank, and round eligibility.
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-black text-sm">Test Readiness:</span>
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                                isReady ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white'
-                              }`}>
-                                {isReady ? 'Ready to Conduct' : 'Configuration Incomplete'}
+
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            {testReadiness?.isAssessmentPublished || currentRound.isAssessmentPublished ? (
+                              <span className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-2xs">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Published to Candidates</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handlePublishAssessment}
+                                disabled={publishingAssessment || !isReady}
+                                className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs inline-flex items-center gap-1.5 disabled:opacity-50 transition-colors shadow-xs cursor-pointer"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                <span>{publishingAssessment ? 'Publishing...' : 'Publish Assessment'}</span>
+                              </button>
+                            )}
+
+                            <div className={`px-3.5 py-1.5 rounded-xl border text-xs font-black inline-flex items-center gap-2 shadow-2xs ${
+                              visibleCount > 0
+                                ? 'bg-emerald-100/90 text-emerald-900 border-emerald-300'
+                                : 'bg-amber-100/90 text-amber-900 border-amber-300'
+                            }`}>
+                              <Eye className="w-4 h-4 text-slate-700" />
+                              <span>
+                                {visibleCount} student{visibleCount === 1 ? '' : 's'} enrolled
                               </span>
                             </div>
-                            <p className="text-[11px] opacity-80 mt-0.5">
-                              {isReady
-                                ? 'Assessment is fully configured. Enrolled candidates can view and attempt the test within the scheduled window.'
-                                : 'Complete the checklist to ensure candidates can see and attempt this assessment.'}
-                            </p>
+                            <button
+                              type="button"
+                              onClick={() => fetchTestReadiness(currentRound._id)}
+                              disabled={loadingReadiness}
+                              title="Refresh readiness diagnostics"
+                              className="p-2 rounded-xl bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
+                            >
+                              <RotateCw className={`w-3.5 h-3.5 ${loadingReadiness ? 'animate-spin' : ''}`} />
+                            </button>
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-semibold">
-                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
-                            hasQuestions ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            <span className="w-2 h-2 rounded-full bg-current" />
-                            {hasQuestions ? `${questionStats.questionCount} Questions Added` : '0 Questions (Add Questions)'}
-                          </span>
-                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
-                            hasWindow ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            <span className="w-2 h-2 rounded-full bg-current" />
-                            {hasWindow ? 'Window Scheduled' : 'Missing Window (Set Window)'}
-                          </span>
-                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
-                            enrolledCount > 0 ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            <span className="w-2 h-2 rounded-full bg-current" />
-                            {enrolledCount > 0 ? `${enrolledCount} Candidates Enrolled` : '0 Candidates Enrolled'}
-                          </span>
+                        {/* Checklist items */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-4">
+                          {checks.map((check) => (
+                            <div
+                              key={check.key}
+                              className={`p-3 rounded-2xl border text-xs flex items-start gap-2.5 shadow-2xs transition-all ${
+                                check.ok
+                                  ? 'bg-white/95 border-emerald-200 text-slate-800'
+                                  : 'bg-white/95 border-amber-200 text-slate-800'
+                              }`}
+                            >
+                              <div className="mt-0.5 shrink-0">
+                                {check.ok ? (
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-1.5">
+                                  <span className="font-bold text-[11px] text-slate-900 truncate">
+                                    {check.label}
+                                  </span>
+                                  <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                    check.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  }`}>
+                                    {check.ok ? 'Pass' : (check.key === 'windowConfig' ? 'Needs a test window' : 'Action Needed')}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                                  {check.message}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     );
@@ -2949,16 +3158,20 @@ const DrivePipeline = () => {
 
                               {/* Actions */}
                               <td className="py-3 px-4 text-right">
-                                <button
-                                  onClick={() => {
-                                    setSelectedParticipant(p);
-                                    setTargetBatchId(p.batch?._id || batches[0]?._id || '');
-                                    setMoveBatchModalOpen(true);
-                                  }}
-                                  className="text-[11px] font-semibold text-sky-600 hover:text-sky-800"
-                                >
-                                  Move Batch
-                                </button>
+                                {!isRoundCompleted ? (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedParticipant(p);
+                                      setTargetBatchId(p.batch?._id || batches[0]?._id || '');
+                                      setMoveBatchModalOpen(true);
+                                    }}
+                                    className="text-[11px] font-semibold text-sky-600 hover:text-sky-800"
+                                  >
+                                    Move Batch
+                                  </button>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400 font-medium">Locked</span>
+                                )}
                               </td>
                             </tr>
                           );
@@ -4182,38 +4395,136 @@ const DrivePipeline = () => {
               {/* MODE SPECIFIC FIELDS: PLATFORM TEST */}
               {settingsForm.deliveryMode === 'platform_test' && (
                 <div className="space-y-3.5 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Setup Timing Rule Hint */}
+                  <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                     <div>
-                      <label className="font-bold text-slate-700 block mb-1">Test Window Start</label>
-                      <input
-                        type="datetime-local"
-                        value={settingsForm.testWindowStart}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowStart: e.target.value })}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Test Window End</label>
-                      <input
-                        type="datetime-local"
-                        value={settingsForm.testWindowEnd}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowEnd: e.target.value })}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                      />
+                      <span className="font-bold block">Important Timing Rule:</span>
+                      <p className="text-[11px] text-amber-800 mt-0.5 leading-snug">
+                        Add your questions before the window start time. Questions are locked once the window opens.
+                      </p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="font-bold text-slate-700 block mb-1">Duration (minutes)</label>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Test Window Start <span className="text-rose-500">*</span>
+                        <span className="text-[10px] font-normal text-slate-400 ml-1.5">
+                          (IST • {typeof Intl !== 'undefined' && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata'})
+                        </span>
+                      </label>
+                      <input
+                        type="datetime-local"
+                        required
+                        value={settingsForm.testWindowStart}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const updated = { ...settingsForm, testWindowStart: val };
+                          if (val && updated.testWindowEnd) {
+                            const s = parseISTInputValue(val)?.getTime();
+                            const end = parseISTInputValue(updated.testWindowEnd)?.getTime();
+                            if (s && end && end > s) {
+                              const winMins = Math.round((end - s) / 60000);
+                              if (!updated.durationMinutes || Number(updated.durationMinutes) > winMins) {
+                                updated.durationMinutes = winMins;
+                              }
+                            }
+                          }
+                          setSettingsForm(updated);
+                        }}
+                        className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                          !settingsForm.testWindowStart ? 'border-amber-300' : 'border-slate-200'
+                        }`}
+                      />
+                      {!settingsForm.testWindowStart && (
+                        <span className="text-[10px] text-rose-500 font-medium mt-1 block">
+                          Test Window Start is required
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Test Window End <span className="text-rose-500">*</span>
+                        <span className="text-[10px] font-normal text-slate-400 ml-1.5">
+                          (IST • {typeof Intl !== 'undefined' && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata'})
+                        </span>
+                      </label>
+                      <input
+                        type="datetime-local"
+                        required
+                        value={settingsForm.testWindowEnd}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const updated = { ...settingsForm, testWindowEnd: val };
+                          if (updated.testWindowStart && val) {
+                            const s = parseISTInputValue(updated.testWindowStart)?.getTime();
+                            const end = parseISTInputValue(val)?.getTime();
+                            if (s && end && end > s) {
+                              const winMins = Math.round((end - s) / 60000);
+                              if (!updated.durationMinutes || Number(updated.durationMinutes) > winMins) {
+                                updated.durationMinutes = winMins;
+                              }
+                            }
+                          }
+                          setSettingsForm(updated);
+                        }}
+                        className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                          !settingsForm.testWindowEnd ? 'border-amber-300' : 'border-slate-200'
+                        }`}
+                      />
+                      {!settingsForm.testWindowEnd && (
+                        <span className="text-[10px] text-rose-500 font-medium mt-1 block">
+                          Test Window End is required
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Duration (minutes) <span className="text-rose-500">*</span>
+                      </label>
                       <input
                         type="number"
                         min="1"
+                        max={(() => {
+                          if (!settingsForm.testWindowStart || !settingsForm.testWindowEnd) return undefined;
+                          const s = parseISTInputValue(settingsForm.testWindowStart)?.getTime();
+                          const end = parseISTInputValue(settingsForm.testWindowEnd)?.getTime();
+                          return s && end && end > s ? Math.round((end - s) / 60000) : undefined;
+                        })()}
+                        required
                         placeholder="e.g. 60"
                         value={settingsForm.durationMinutes}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, durationMinutes: e.target.value })}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          let winMins = null;
+                          if (settingsForm.testWindowStart && settingsForm.testWindowEnd) {
+                            const s = parseISTInputValue(settingsForm.testWindowStart)?.getTime();
+                            const end = parseISTInputValue(settingsForm.testWindowEnd)?.getTime();
+                            if (s && end && end > s) {
+                              winMins = Math.round((end - s) / 60000);
+                            }
+                          }
+                          if (winMins && Number(val) > winMins) {
+                            setSettingsForm({ ...settingsForm, durationMinutes: winMins });
+                          } else {
+                            setSettingsForm({ ...settingsForm, durationMinutes: val });
+                          }
+                        }}
+                        className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                          !settingsForm.durationMinutes || Number(settingsForm.durationMinutes) <= 0
+                            ? 'border-amber-300'
+                            : 'border-slate-200'
+                        }`}
                       />
+                      {(!settingsForm.durationMinutes || Number(settingsForm.durationMinutes) <= 0) && (
+                        <span className="text-[10px] text-rose-500 font-medium mt-1 block">
+                          Duration is required (minimum 1 minute)
+                        </span>
+                      )}
                     </div>
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">Cutoff Score (%)</label>
@@ -4229,12 +4540,43 @@ const DrivePipeline = () => {
                     </div>
                   </div>
 
+                  {/* Window timing live text */}
+                  {(() => {
+                    if (!settingsForm.testWindowStart || !settingsForm.testWindowEnd) return null;
+                    const s = parseISTInputValue(settingsForm.testWindowStart)?.getTime();
+                    const end = parseISTInputValue(settingsForm.testWindowEnd)?.getTime();
+                    if (!s || !end || end <= s) return null;
+                    const winMins = Math.round((end - s) / 60000);
+                    const h = Math.floor(winMins / 60);
+                    const m = winMins % 60;
+                    const winStr = h > 0 ? (m > 0 ? `${h} h ${m} m` : `${h} h`) : `${m} m`;
+                    const dur = settingsForm.durationMinutes || winMins;
+                    const endDate = parseISTInputValue(settingsForm.testWindowEnd);
+                    const endTimeStr = endDate
+                      ? endDate.toLocaleTimeString('en-IN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                          timeZone: 'Asia/Kolkata',
+                        })
+                      : '';
+                    return (
+                      <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span>
+                          Window: {winStr}. Students get {dur} min. Late starters get less (ends at {endTimeStr})
+                        </span>
+                      </div>
+                    );
+                  })()}
+
                   {/* Test Window Duration & End-Time Validation Feedback */}
                   {(() => {
                     const validation = validateTestWindow({
                       testWindowStart: settingsForm.testWindowStart,
                       testWindowEnd: settingsForm.testWindowEnd,
                       durationMinutes: settingsForm.durationMinutes,
+                      deliveryMode: settingsForm.deliveryMode,
                     });
                     if (!validation.isValid) {
                       return (
