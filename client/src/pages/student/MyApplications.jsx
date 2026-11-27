@@ -573,17 +573,63 @@ const MyApplications = () => {
                               </div>
 
                               <div className="flex items-center gap-2">
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                                    isCleared
-                                      ? 'bg-emerald-100 text-emerald-800'
-                                      : isRejected
-                                      ? 'bg-rose-100 text-rose-800'
-                                      : 'bg-amber-100 text-amber-800'
-                                  }`}
-                                >
-                                  {isCleared ? 'Cleared' : isRejected ? 'Eliminated' : 'Evaluation Pending'}
-                                </span>
+                                {(() => {
+                                  let badgeLabel = 'Scheduled';
+                                  let badgeColor = 'bg-sky-100 text-sky-800';
+
+                                  if (isCleared) {
+                                    badgeLabel = 'Cleared';
+                                    badgeColor = 'bg-emerald-100 text-emerald-800';
+                                  } else if (isRejected) {
+                                    badgeLabel = 'Eliminated';
+                                    badgeColor = 'bg-rose-100 text-rose-800';
+                                  } else if (!r.isEnrolled) {
+                                    badgeLabel = 'Not Enrolled';
+                                    badgeColor = 'bg-slate-100 text-slate-600';
+                                  } else if (r.deliveryMode === 'platform_test') {
+                                    const attemptStatus = r.attemptStatus || 'not_started';
+                                    if (attemptStatus === 'submitted' || attemptStatus === 'auto_submitted') {
+                                      badgeLabel = 'Evaluation Pending';
+                                      badgeColor = 'bg-amber-100 text-amber-800';
+                                    } else if (attemptStatus === 'in_progress') {
+                                      badgeLabel = 'In Progress';
+                                      badgeColor = 'bg-sky-100 text-sky-800';
+                                    } else {
+                                      const now = new Date();
+                                      const start = r.testWindowStart ? new Date(r.testWindowStart) : null;
+                                      const end = r.testWindowEnd ? new Date(r.testWindowEnd) : null;
+                                      if (start && end) {
+                                        if (now > end) {
+                                          badgeLabel = 'Window Closed';
+                                          badgeColor = 'bg-rose-100 text-rose-800';
+                                        } else if (now >= start && now <= end) {
+                                          badgeLabel = 'Assessment Open';
+                                          badgeColor = 'bg-emerald-100 text-emerald-800';
+                                        } else {
+                                          badgeLabel = 'Assessment Upcoming';
+                                          badgeColor = 'bg-indigo-100 text-indigo-800';
+                                        }
+                                      } else {
+                                        badgeLabel = 'Scheduling Pending';
+                                        badgeColor = 'bg-slate-100 text-slate-600';
+                                      }
+                                    }
+                                  } else if (r.attendance === 'absent') {
+                                    badgeLabel = 'Absent';
+                                    badgeColor = 'bg-rose-100 text-rose-800';
+                                  } else if (r.attendance === 'present') {
+                                    badgeLabel = 'Evaluation Pending';
+                                    badgeColor = 'bg-amber-100 text-amber-800';
+                                  }
+
+                                  return (
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${badgeColor}`}
+                                    >
+                                      {badgeLabel}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </div>
 

@@ -369,11 +369,18 @@ const ManageTpoDriveRequests = () => {
             <span>Reschedule Awaiting Recruiter</span>
           </span>
         );
+      case 'recruiter_confirmed':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 animate-pulse">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Ready to Publish to Students</span>
+          </span>
+        );
       case 'accepted':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-200">
-            <CheckCircle2 className="w-3.5 h-3.5 text-sky-600" />
-            <span>Accepted • Ready to Finalize</span>
+            <Clock className="w-3.5 h-3.5 text-sky-600" />
+            <span>Accepted • Awaiting Recruiter Confirmation</span>
           </span>
         );
       case 'scheduled':
@@ -649,11 +656,23 @@ const ManageTpoDriveRequests = () => {
                       {!['rejected', 'cancelled'].includes(req.status) && (
                         <button
                           onClick={() => openScheduleFormForRequest(req)}
-                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-white text-xs font-bold shadow-xs transition-all cursor-pointer ${
+                            req.status === 'recruiter_confirmed'
+                              ? 'bg-emerald-600 hover:bg-emerald-700 animate-pulse'
+                              : 'bg-sky-600 hover:bg-sky-700'
+                          }`}
                         >
-                          <Calendar className="w-3.5 h-3.5" />
+                          {req.status === 'recruiter_confirmed' ? (
+                            <FileCheck2 className="w-3.5 h-3.5" />
+                          ) : (
+                            <Calendar className="w-3.5 h-3.5" />
+                          )}
                           <span>
-                            {req.status === 'scheduled' ? 'Edit Drive Schedule' : 'Schedule Drive'}
+                            {req.status === 'scheduled'
+                              ? 'Edit Drive Schedule'
+                              : req.status === 'recruiter_confirmed'
+                              ? 'Publish to Students'
+                              : 'Schedule Drive'}
                           </span>
                         </button>
                       )}

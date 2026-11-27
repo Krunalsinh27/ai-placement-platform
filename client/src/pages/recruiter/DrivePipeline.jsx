@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import {
@@ -46,7 +46,7 @@ import {
   Megaphone,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { toISTInputValue, formatISTDate } from '../../utils/dateTime';
+import { toISTInputValue, formatISTDate, parseISTInputValue } from '../../utils/dateTime';
 import { validateTestWindow, isMissingTestWindow } from '../../utils/recruiterPipelineValidation';
 import RankedApplicantsView from '../../components/recruitment/RankedApplicantsView';
 
@@ -88,6 +88,7 @@ const DrivePipeline = () => {
     showScoreToStudents: false,
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const isSavingSettingsRef = useRef(false);
   const [notifyConfirmOpen, setNotifyConfirmOpen] = useState(false);
   const [pendingSettingsPayload, setPendingSettingsPayload] = useState(null);
   const [missingWindowConfirm, setMissingWindowConfirm] = useState({
@@ -130,6 +131,7 @@ const DrivePipeline = () => {
   // Student Visibility & Test Readiness State
   const [testReadiness, setTestReadiness] = useState(null);
   const [loadingReadiness, setLoadingReadiness] = useState(false);
+  const [publishingAssessment, setPublishingAssessment] = useState(false);
 
   const [shortlistModalOpen, setShortlistModalOpen] = useState(false);
   const [cutoffInput, setCutoffInput] = useState('');
@@ -348,6 +350,13 @@ const DrivePipeline = () => {
 
   const isInterviewRound = Boolean(currentRound && ['technical', 'hr', 'group_discussion'].includes(currentRound.type));
   const isPlatformTest = Boolean(currentRound && currentRound.deliveryMode === 'platform_test');
+  const isRoundCompleted = Boolean(
+    currentRound &&
+    (currentRound.status === 'completed' ||
+      (currentRound.deliveryMode === 'platform_test' &&
+        currentRound.testWindowEnd &&
+        new Date() > new Date(currentRound.testWindowEnd)))
+  );
 
   const fetchPanelsAndSlots = async (roundId) => {
     if (!roundId) return;
@@ -443,6 +452,26 @@ const DrivePipeline = () => {
       setLoadingReadiness(false);
     }
     return null;
+  };
+
+  const handlePublishAssessment = async () => {
+    if (!currentRound) return;
+    try {
+      setPublishingAssessment(true);
+      const res = await api.put(`/rounds/${currentRound._id}/publish-assessment`);
+      if (res.data?.success) {
+        toast.success(res.data.message || 'Assessment published successfully!');
+        await fetchTestReadiness(currentRound._id);
+        if (typeof fetchPipelineDetails === 'function') {
+          await fetchPipelineDetails();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to publish assessment:', err);
+      toast.error(err.response?.data?.message || 'Failed to publish assessment');
+    } finally {
+      setPublishingAssessment(false);
+    }
   };
 
   useEffect(() => {
@@ -1001,6 +1030,7 @@ const DrivePipeline = () => {
   const handleSaveRoundSettings = async (e) => {
     e.preventDefault();
     if (!currentRound) return;
+    if (isSavingSettingsRef.current) return;
 
     // Delivery mode validation
     if (settingsForm.deliveryMode === 'platform_test') {
@@ -1008,11 +1038,17 @@ const DrivePipeline = () => {
         toast.error('Platform test is only available for aptitude and coding rounds. Interviews and group discussions cannot use platform test.');
         return;
       }
+      const isExistingStart = Boolean(
+        currentRound.testWindowStart &&
+        settingsForm.testWindowStart &&
+        Math.abs(new Date(currentRound.testWindowStart).getTime() - new Date(settingsForm.testWindowStart).getTime()) < 60000
+      );
       const windowVal = validateTestWindow({
         testWindowStart: settingsForm.testWindowStart,
         testWindowEnd: settingsForm.testWindowEnd,
         durationMinutes: settingsForm.durationMinutes,
         deliveryMode: settingsForm.deliveryMode,
+        enforceFutureStart: !isExistingStart,
       });
       if (!windowVal.isValid) {
         toast.error(windowVal.error);
@@ -1069,6 +1105,8 @@ const DrivePipeline = () => {
   };
 
   const executeSaveRoundSettings = async (payloadToSave, notifyStudents) => {
+    if (isSavingSettingsRef.current) return;
+    isSavingSettingsRef.current = true;
     setIsSavingSettings(true);
     try {
       const payload = {
@@ -1095,6 +1133,7 @@ const DrivePipeline = () => {
       toast.error(err.response?.data?.message || 'Failed to update round settings');
     } finally {
       setIsSavingSettings(false);
+      isSavingSettingsRef.current = false;
     }
   };
 
@@ -1601,6 +1640,20 @@ const DrivePipeline = () => {
                     >
                       Published
                     </span>
+                  ) : r.status === 'completed' || (r.deliveryMode === 'platform_test' && r.testWindowEnd && new Date() > new Date(r.testWindowEnd)) ? (
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/25 text-white' : 'bg-purple-100 text-purple-800'
+                        }`}
+                    >
+                      Completed
+                    </span>
+                  ) : r.status === 'live' || (r.deliveryMode === 'platform_test' && r.testWindowStart && r.testWindowEnd && new Date() >= new Date(r.testWindowStart) && new Date() <= new Date(r.testWindowEnd)) ? (
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-800 animate-pulse'
+                        }`}
+                    >
+                      Live
+                    </span>
                   ) : (
                     <span
                       className={`text-[10px] px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-600'
@@ -1705,6 +1758,32 @@ const DrivePipeline = () => {
                 </div>
               )}
 
+              {/* COMPLETED - RESULTS PENDING BANNER */}
+              {isRoundCompleted && !currentRound.resultsPublished && (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-amber-800">
+                        Completed — results pending
+                      </h4>
+                      <p className="text-xs text-amber-700">
+                        The test window has concluded and all assessments have been submitted. Review candidate scores and publish results to advance qualified candidates to the next round.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handlePublishClick}
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20 shrink-0 transition-all cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Publish Results & Advance</span>
+                  </button>
+                </div>
+              )}
+
               {/* Round Summary Card & Action Bar */}
               <div className="bg-white rounded-3xl border border-slate-200/80 p-5 shadow-xs space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1789,20 +1868,22 @@ const DrivePipeline = () => {
                       <span>Shortlist by Cutoff</span>
                     </button>
 
-                    <button
-                      onClick={() => {
-                        setSplitForm((prev) => ({
-                          ...prev,
-                          mode: currentRound.mode || 'offline',
-                          startTime: toISTInputValue(currentRound.date) || toISTInputValue(new Date()),
-                        }));
-                        setAutoSplitModalOpen(true);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
-                    >
-                      <Split className="w-3.5 h-3.5 text-sky-600" />
-                      <span>Auto-Split Batches</span>
-                    </button>
+                    {!isRoundCompleted && (
+                      <button
+                        onClick={() => {
+                          setSplitForm((prev) => ({
+                            ...prev,
+                            mode: currentRound.mode || 'offline',
+                            startTime: toISTInputValue(currentRound.date) || toISTInputValue(new Date()),
+                          }));
+                          setAutoSplitModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        <Split className="w-3.5 h-3.5 text-sky-600" />
+                        <span>Auto-Split Batches</span>
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {
@@ -2606,7 +2687,24 @@ const DrivePipeline = () => {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2.5">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            {testReadiness?.isAssessmentPublished || currentRound.isAssessmentPublished ? (
+                              <span className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-2xs">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Published to Candidates</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handlePublishAssessment}
+                                disabled={publishingAssessment || !isReady}
+                                className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs inline-flex items-center gap-1.5 disabled:opacity-50 transition-colors shadow-xs cursor-pointer"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                <span>{publishingAssessment ? 'Publishing...' : 'Publish Assessment'}</span>
+                              </button>
+                            )}
+
                             <div className={`px-3.5 py-1.5 rounded-xl border text-xs font-black inline-flex items-center gap-2 shadow-2xs ${
                               visibleCount > 0
                                 ? 'bg-emerald-100/90 text-emerald-900 border-emerald-300'
@@ -2614,7 +2712,7 @@ const DrivePipeline = () => {
                             }`}>
                               <Eye className="w-4 h-4 text-slate-700" />
                               <span>
-                                {visibleCount} student{visibleCount === 1 ? '' : 's'} can see this test right now
+                                {visibleCount} student{visibleCount === 1 ? '' : 's'} enrolled
                               </span>
                             </div>
                             <button
@@ -3060,16 +3158,20 @@ const DrivePipeline = () => {
 
                               {/* Actions */}
                               <td className="py-3 px-4 text-right">
-                                <button
-                                  onClick={() => {
-                                    setSelectedParticipant(p);
-                                    setTargetBatchId(p.batch?._id || batches[0]?._id || '');
-                                    setMoveBatchModalOpen(true);
-                                  }}
-                                  className="text-[11px] font-semibold text-sky-600 hover:text-sky-800"
-                                >
-                                  Move Batch
-                                </button>
+                                {!isRoundCompleted ? (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedParticipant(p);
+                                      setTargetBatchId(p.batch?._id || batches[0]?._id || '');
+                                      setMoveBatchModalOpen(true);
+                                    }}
+                                    className="text-[11px] font-semibold text-sky-600 hover:text-sky-800"
+                                  >
+                                    Move Batch
+                                  </button>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400 font-medium">Locked</span>
+                                )}
                               </td>
                             </tr>
                           );
@@ -4308,12 +4410,29 @@ const DrivePipeline = () => {
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">
                         Test Window Start <span className="text-rose-500">*</span>
+                        <span className="text-[10px] font-normal text-slate-400 ml-1.5">
+                          (IST • {typeof Intl !== 'undefined' && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata'})
+                        </span>
                       </label>
                       <input
                         type="datetime-local"
                         required
                         value={settingsForm.testWindowStart}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowStart: e.target.value })}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const updated = { ...settingsForm, testWindowStart: val };
+                          if (val && updated.testWindowEnd) {
+                            const s = parseISTInputValue(val)?.getTime();
+                            const end = parseISTInputValue(updated.testWindowEnd)?.getTime();
+                            if (s && end && end > s) {
+                              const winMins = Math.round((end - s) / 60000);
+                              if (!updated.durationMinutes || Number(updated.durationMinutes) > winMins) {
+                                updated.durationMinutes = winMins;
+                              }
+                            }
+                          }
+                          setSettingsForm(updated);
+                        }}
                         className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
                           !settingsForm.testWindowStart ? 'border-amber-300' : 'border-slate-200'
                         }`}
@@ -4327,12 +4446,29 @@ const DrivePipeline = () => {
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">
                         Test Window End <span className="text-rose-500">*</span>
+                        <span className="text-[10px] font-normal text-slate-400 ml-1.5">
+                          (IST • {typeof Intl !== 'undefined' && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata'})
+                        </span>
                       </label>
                       <input
                         type="datetime-local"
                         required
                         value={settingsForm.testWindowEnd}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowEnd: e.target.value })}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const updated = { ...settingsForm, testWindowEnd: val };
+                          if (updated.testWindowStart && val) {
+                            const s = parseISTInputValue(updated.testWindowStart)?.getTime();
+                            const end = parseISTInputValue(val)?.getTime();
+                            if (s && end && end > s) {
+                              const winMins = Math.round((end - s) / 60000);
+                              if (!updated.durationMinutes || Number(updated.durationMinutes) > winMins) {
+                                updated.durationMinutes = winMins;
+                              }
+                            }
+                          }
+                          setSettingsForm(updated);
+                        }}
                         className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
                           !settingsForm.testWindowEnd ? 'border-amber-300' : 'border-slate-200'
                         }`}
@@ -4353,10 +4489,31 @@ const DrivePipeline = () => {
                       <input
                         type="number"
                         min="1"
+                        max={(() => {
+                          if (!settingsForm.testWindowStart || !settingsForm.testWindowEnd) return undefined;
+                          const s = parseISTInputValue(settingsForm.testWindowStart)?.getTime();
+                          const end = parseISTInputValue(settingsForm.testWindowEnd)?.getTime();
+                          return s && end && end > s ? Math.round((end - s) / 60000) : undefined;
+                        })()}
                         required
                         placeholder="e.g. 60"
                         value={settingsForm.durationMinutes}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, durationMinutes: e.target.value })}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          let winMins = null;
+                          if (settingsForm.testWindowStart && settingsForm.testWindowEnd) {
+                            const s = parseISTInputValue(settingsForm.testWindowStart)?.getTime();
+                            const end = parseISTInputValue(settingsForm.testWindowEnd)?.getTime();
+                            if (s && end && end > s) {
+                              winMins = Math.round((end - s) / 60000);
+                            }
+                          }
+                          if (winMins && Number(val) > winMins) {
+                            setSettingsForm({ ...settingsForm, durationMinutes: winMins });
+                          } else {
+                            setSettingsForm({ ...settingsForm, durationMinutes: val });
+                          }
+                        }}
                         className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
                           !settingsForm.durationMinutes || Number(settingsForm.durationMinutes) <= 0
                             ? 'border-amber-300'
@@ -4382,6 +4539,36 @@ const DrivePipeline = () => {
                       />
                     </div>
                   </div>
+
+                  {/* Window timing live text */}
+                  {(() => {
+                    if (!settingsForm.testWindowStart || !settingsForm.testWindowEnd) return null;
+                    const s = parseISTInputValue(settingsForm.testWindowStart)?.getTime();
+                    const end = parseISTInputValue(settingsForm.testWindowEnd)?.getTime();
+                    if (!s || !end || end <= s) return null;
+                    const winMins = Math.round((end - s) / 60000);
+                    const h = Math.floor(winMins / 60);
+                    const m = winMins % 60;
+                    const winStr = h > 0 ? (m > 0 ? `${h} h ${m} m` : `${h} h`) : `${m} m`;
+                    const dur = settingsForm.durationMinutes || winMins;
+                    const endDate = parseISTInputValue(settingsForm.testWindowEnd);
+                    const endTimeStr = endDate
+                      ? endDate.toLocaleTimeString('en-IN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                          timeZone: 'Asia/Kolkata',
+                        })
+                      : '';
+                    return (
+                      <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span>
+                          Window: {winStr}. Students get {dur} min. Late starters get less (ends at {endTimeStr})
+                        </span>
+                      </div>
+                    );
+                  })()}
 
                   {/* Test Window Duration & End-Time Validation Feedback */}
                   {(() => {

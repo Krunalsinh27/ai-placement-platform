@@ -1,4 +1,7 @@
-const { JobRequirement, Company } = require('../models');
+const mongoose = require('mongoose');
+const { z } = require('zod');
+const { JobRequirement, Company, DriveRequest, College, Drive, Application, Student } = require('../models');
+const { escapeCsvCell } = require('../utils/spreadsheet');
 
 /**
  * Helper to extract company ID from authenticated user
@@ -134,7 +137,7 @@ const createJobRequirement = async (req, res, next) => {
 const getJobRequirements = async (req, res, next) => {
   try {
     const { status, search, batchYear, branch } = req.query;
-    const query = {};
+    const query = { isDeleted: { $ne: true } };
 
     // 1. Recruiter scoping: recruiters only ever see their own company's requirements
     if (req.user?.role === 'recruiter') {
@@ -429,11 +432,363 @@ const deleteJobRequirement = async (req, res, next) => {
       }
     }
 
-    await JobRequirement.findByIdAndDelete(req.params.id);
+    // 1. Snapshot requirement details onto all historical linked DriveRequests
+    const snapshot = {
+      title: requirement.title,
+      packageLpa: requirement.packageLpa,
+      description: requirement.description,
+      minCgpa: requirement.minCgpa || 0,
+      maxBacklogs: requirement.maxBacklogs || 0,
+      allowedBranches: requirement.allowedBranches || [],
+      batchYear: requirement.batchYear,
+      location: requirement.location || '',
+      selectionRounds: requirement.selectionRounds || [],
+    };
+
+    await DriveRequest.updateMany(
+      { jobRequirement: requirement._id },
+      { $set: { jobRequirementSnapshot: snapshot } }
+    );
+
+    // 2. Soft-delete the requirement to preserve historical integrity
+    requirement.isDeleted = true;
+    requirement.deletedAt = new Date();
+    requirement.status = 'closed';
+    await requirement.save();
 
     res.status(200).json({
       success: true,
       message: 'Job requirement deleted successfully',
+      softDeleted: true,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const collegeBreakdownParamsSchema = z.object({
+  id: z.string().trim().refine((val) => mongoose.Types.ObjectId.isValid(val), {
+    message: 'Invalid job requirement ID format',
+  }),
+});
+
+const collegeBreakdownQuerySchema = z.object({
+  format: z.enum(['json', 'csv']).optional().default('json'),
+  status: z.string().optional().default('all'),
+  search: z.string().optional().default(''),
+});
+
+/**
+ * @desc    Get College-wise Application Breakdown for a single Job Requirement
+ * @route   GET /api/job-requirements/:id/college-breakdown
+ * @access  Private (Recruiter of owning company, Superadmin)
+ */
+const getJobRequirementCollegeBreakdown = async (req, res, next) => {
+  try {
+    // 1. Zod parameter validation
+    const paramResult = collegeBreakdownParamsSchema.safeParse(req.params);
+    if (!paramResult.success) {
+      const msg =
+        paramResult.error?.issues?.[0]?.message ||
+        paramResult.error?.errors?.[0]?.message ||
+        'Invalid job requirement ID format';
+      return res.status(400).json({ success: false, message: msg });
+    }
+
+    // 2. Zod query validation
+    const queryResult = collegeBreakdownQuerySchema.safeParse(req.query);
+    if (!queryResult.success) {
+      const msg =
+        queryResult.error?.issues?.[0]?.message ||
+        queryResult.error?.errors?.[0]?.message ||
+        'Invalid query parameters';
+      return res.status(400).json({ success: false, message: msg });
+    }
+
+    const { format } = queryResult.data;
+
+    // 3. Find requirement
+    const requirement = await JobRequirement.findById(req.params.id);
+    if (!requirement) {
+      return res.status(404).json({
+        success: false,
+        message: 'Job requirement not found',
+      });
+    }
+
+    // 4. Company ownership / tenant isolation check
+    if (req.user?.role === 'recruiter') {
+      const companyId = getRecruiterCompanyId(req.user);
+      if (!companyId || requirement.company.toString() !== companyId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized: requirement belongs to another company',
+        });
+      }
+    }
+
+    // 5. ONE Single Aggregation Pipeline to get totals and college rows
+    const aggregationResult = await DriveRequest.aggregate([
+      {
+        $match: {
+          jobRequirement: requirement._id,
+        },
+      },
+      // Group by college to ensure 1 row per college even if multiple requests exist
+      {
+        $sort: { createdAt: -1 },
+      },
+      {
+        $group: {
+          _id: '$college',
+          driveRequestId: { $first: '$_id' },
+          driveRequestStatus: { $first: '$status' },
+          driveId: { $first: '$drive' },
+          createdAt: { $first: '$createdAt' },
+        },
+      },
+      // Lookup college details
+      {
+        $lookup: {
+          from: 'colleges',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'collegeDoc',
+        },
+      },
+      {
+        $unwind: '$collegeDoc',
+      },
+      // Lookup associated drive if created
+      {
+        $lookup: {
+          from: 'drives',
+          let: { reqDriveId: '$driveId', collegeId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ['$_id', '$$reqDriveId'] },
+                    {
+                      $and: [
+                        { $eq: ['$jobRequirement', requirement._id] },
+                        {
+                          $or: [
+                            { $eq: ['$college', '$$collegeId'] },
+                            { $in: ['$$collegeId', { $ifNull: ['$colleges', []] }] },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+            { $limit: 1 },
+          ],
+          as: 'driveDoc',
+        },
+      },
+      {
+        $unwind: { path: '$driveDoc', preserveNullAndEmptyArrays: true },
+      },
+      // Lookup applications for this drive belonging strictly to this college
+      {
+        $lookup: {
+          from: 'applications',
+          let: { foundDriveId: '$driveDoc._id', collegeId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $ne: ['$$foundDriveId', null] },
+                    { $eq: ['$drive', '$$foundDriveId'] },
+                  ],
+                },
+              },
+            },
+            {
+              $lookup: {
+                from: 'students',
+                localField: 'student',
+                foreignField: '_id',
+                as: 'studentDoc',
+              },
+            },
+            {
+              $unwind: '$studentDoc',
+            },
+            {
+              $match: {
+                $expr: { $eq: ['$studentDoc.college', '$$collegeId'] },
+              },
+            },
+            // Strictly project counts only - zero student PII (no names, emails, phones)
+            {
+              $project: {
+                _id: 1,
+                status: 1,
+              },
+            },
+          ],
+          as: 'applications',
+        },
+      },
+      // Compute applied count and breakdown per application stage
+      {
+        $addFields: {
+          applied: { $size: '$applications' },
+          statusCounts: {
+            applied: {
+              $size: {
+                $filter: {
+                  input: '$applications',
+                  as: 'app',
+                  cond: { $eq: ['$$app.status', 'applied'] },
+                },
+              },
+            },
+            shortlisted: {
+              $size: {
+                $filter: {
+                  input: '$applications',
+                  as: 'app',
+                  cond: { $eq: ['$$app.status', 'shortlisted'] },
+                },
+              },
+            },
+            interview: {
+              $size: {
+                $filter: {
+                  input: '$applications',
+                  as: 'app',
+                  cond: { $eq: ['$$app.status', 'interview'] },
+                },
+              },
+            },
+            selected: {
+              $size: {
+                $filter: {
+                  input: '$applications',
+                  as: 'app',
+                  cond: { $eq: ['$$app.status', 'selected'] },
+                },
+              },
+            },
+            rejected: {
+              $size: {
+                $filter: {
+                  input: '$applications',
+                  as: 'app',
+                  cond: { $eq: ['$$app.status', 'rejected'] },
+                },
+              },
+            },
+          },
+        },
+      },
+      // Final projection shape per college row
+      {
+        $project: {
+          _id: 0,
+          collegeId: '$_id',
+          name: '$collegeDoc.name',
+          code: '$collegeDoc.code',
+          city: '$collegeDoc.city',
+          driveRequestStatus: '$driveRequestStatus',
+          driveId: { $ifNull: ['$driveDoc._id', null] },
+          driveStatus: { $ifNull: ['$driveDoc.status', null] },
+          applied: '$applied',
+          statusCounts: '$statusCounts',
+        },
+      },
+      // Facet for totals and sorted, capped rows
+      {
+        $facet: {
+          rows: [
+            { $sort: { applied: -1, name: 1 } },
+            { $limit: 200 },
+          ],
+          totals: [
+            {
+              $group: {
+                _id: null,
+                colleges: { $sum: 1 },
+                requestsSent: { $sum: 1 },
+                drivesCreated: {
+                  $sum: {
+                    $cond: [{ $ne: ['$driveId', null] }, 1, 0],
+                  },
+                },
+                applicants: { $sum: '$applied' },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    const facet = aggregationResult[0] || { rows: [], totals: [] };
+    const totalsRaw = facet.totals[0] || {};
+    const totals = {
+      colleges: totalsRaw.colleges || 0,
+      requestsSent: totalsRaw.requestsSent || 0,
+      drivesCreated: totalsRaw.drivesCreated || 0,
+      applicants: totalsRaw.applicants || 0,
+    };
+    const rows = facet.rows || [];
+
+    // Optional CSV Export Format
+    if (format === 'csv') {
+      const csvHeaders = [
+        'College Name',
+        'College Code',
+        'City',
+        'Drive Request Status',
+        'Drive Status',
+        'Total Applied',
+        'Applied',
+        'Shortlisted',
+        'Interview',
+        'Selected',
+        'Rejected',
+      ]
+        .map(escapeCsvCell)
+        .join(',');
+
+      const csvRows = rows.map((r) =>
+        [
+          escapeCsvCell(r.name),
+          escapeCsvCell(r.code),
+          escapeCsvCell(r.city),
+          escapeCsvCell(r.driveRequestStatus),
+          escapeCsvCell(r.driveStatus || 'No Drive'),
+          escapeCsvCell(r.applied),
+          escapeCsvCell(r.statusCounts?.applied ?? 0),
+          escapeCsvCell(r.statusCounts?.shortlisted ?? 0),
+          escapeCsvCell(r.statusCounts?.interview ?? 0),
+          escapeCsvCell(r.statusCounts?.selected ?? 0),
+          escapeCsvCell(r.statusCounts?.rejected ?? 0),
+        ].join(',')
+      );
+
+      const safeTitle = (requirement.title || 'Requirement').replace(/[^a-zA-Z0-9_-]/g, '_');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="college_breakdown_${safeTitle}.csv"`);
+      return res.status(200).send([csvHeaders, ...csvRows].join('\r\n'));
+    }
+
+    return res.status(200).json({
+      success: true,
+      jobRequirement: {
+        id: requirement._id,
+        title: requirement.title,
+        status: requirement.status,
+      },
+      totals,
+      rows,
     });
   } catch (error) {
     next(error);
@@ -447,5 +802,6 @@ module.exports = {
   updateJobRequirement,
   publishJobRequirement,
   deleteJobRequirement,
+  getJobRequirementCollegeBreakdown,
 };
 

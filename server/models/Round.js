@@ -122,12 +122,30 @@ const roundSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['scheduled', 'ongoing', 'completed', 'cancelled'],
+      enum: ['scheduled', 'ongoing', 'live', 'completed', 'cancelled'],
       default: 'scheduled',
     },
     resultsPublished: {
       type: Boolean,
       default: false,
+    },
+    isAssessmentPublished: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    assessmentPublishedAt: {
+      type: Date,
+      default: null,
+    },
+    isFinalizing: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    finalizingStartedAt: {
+      type: Date,
+      default: null,
     },
   },
   {

@@ -7,8 +7,11 @@ const {
   cancelDriveRequest,
   respondToDriveRequest,
   acceptTpoProposedDate,
+  confirmDriveSchedule,
   finalizeAndPublishDrive,
   addMessage,
+  getDriveReconciliationReport,
+  runDriveReconciliation,
 } = require('../controllers/driveRequestController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -28,6 +31,19 @@ router.get(
   getDriveRequests
 );
 
+// Diagnostic and reconciliation routes (placed before /:id parameter route)
+router.get(
+  '/reconciliation/report',
+  authorize('tpo', 'admin', 'superadmin'),
+  getDriveReconciliationReport
+);
+
+router.post(
+  '/reconciliation/run',
+  authorize('tpo', 'admin', 'superadmin'),
+  runDriveReconciliation
+);
+
 // Single item routes
 router
   .route('/:id')
@@ -43,6 +59,11 @@ router
   .route('/:id/accept-date')
   .patch(authorize('recruiter', 'superadmin'), acceptTpoProposedDate)
   .put(authorize('recruiter', 'superadmin'), acceptTpoProposedDate);
+
+router
+  .route('/:id/confirm-schedule')
+  .patch(authorize('recruiter', 'superadmin'), confirmDriveSchedule)
+  .put(authorize('recruiter', 'superadmin'), confirmDriveSchedule);
 
 // TPO response and finalize actions
 router

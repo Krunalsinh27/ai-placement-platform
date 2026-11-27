@@ -24,6 +24,7 @@ const {
 } = require('../controllers/interviewController');
 const {
   getRoundTestReadiness,
+  publishAssessment,
   getRoundQuestions,
   createQuestion,
   importQuestionsCSV,
@@ -53,6 +54,7 @@ router.get('/:id/slots', authorize('student', 'recruiter', 'tpo', 'admin', 'supe
 
 // Aptitude Platform Test & Question Bank routes
 router.get('/:id/test-readiness', authorize('recruiter', 'tpo', 'admin', 'superadmin'), getRoundTestReadiness);
+router.put('/:id/publish-assessment', authorize('recruiter', 'superadmin'), publishAssessment);
 router.get('/:id/questions', authorize('recruiter', 'tpo', 'admin', 'superadmin'), getRoundQuestions);
 router.post('/:id/questions', authorize('recruiter', 'superadmin'), createQuestion);
 router.post('/:id/questions/import', authorize('recruiter', 'superadmin'), upload.single('file'), importQuestionsCSV);

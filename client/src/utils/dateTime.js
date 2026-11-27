@@ -103,3 +103,21 @@ export function formatISTDateTime(dateVal, customOptions = {}) {
   });
 }
 
+/**
+ * Parses an input value (e.g. 'YYYY-MM-DDTHH:mm') explicitly as Asia/Kolkata (IST, UTC+05:30).
+ *
+ * @param {string|Date} val
+ * @returns {Date|null}
+ */
+export function parseISTInputValue(val) {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+  if (typeof val !== 'string') return new Date(val);
+  const trimmed = val.trim();
+  if (!trimmed) return null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(trimmed)) {
+    return new Date(`${trimmed}${trimmed.length === 16 ? ':00' : ''}+05:30`);
+  }
+  return new Date(trimmed);
+}
+

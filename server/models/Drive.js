@@ -114,11 +114,38 @@ const driveSchema = new mongoose.Schema(
         ref: 'Student',
       },
     ],
+    isPublished: {
+      type: Boolean,
+      index: true,
+    },
+    publishedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+// Unique partial index: exactly one Drive can be associated with a DriveRequest
+driveSchema.index(
+  { driveRequest: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { driveRequest: { $type: 'objectId' } },
+    background: true,
+  }
+);
+
+// Pre-save hook: default isPublished to false ONLY for newly created documents,
+// preserving historical documents where isPublished is undefined in the database.
+driveSchema.pre('save', function (next) {
+  if (this.isNew && this.isPublished === undefined) {
+    this.isPublished = false;
+  }
+  next();
+});
 
 // Indexes for drive querying by college/company and student eligibility
 driveSchema.index({ college: 1, status: 1 });

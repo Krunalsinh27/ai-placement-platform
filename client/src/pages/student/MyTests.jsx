@@ -286,6 +286,13 @@ export default function MyTests() {
                     </p>
                   )}
 
+                  {(btnState.action === 'closed' || test.attemptStatus === 'window_closed' || test.status === 'window_closed') && (
+                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between">
+                      <span className="font-semibold">Status:</span>
+                      <span className="font-bold">Completed / Window closed</span>
+                    </div>
+                  )}
+
                   {test.showScore && test.score !== undefined && (
                     <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center justify-between">
                       <span className="font-semibold flex items-center gap-1.5">

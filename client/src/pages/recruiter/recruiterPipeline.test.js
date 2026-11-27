@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   validateTestWindow,
   isMissingTestWindow,
   roundSettingsFlowReducer,
+  createSafeSaveHandler,
 } from '../../utils/recruiterPipelineValidation';
 import {
   isRecruiterPipelineActive,
@@ -299,6 +300,79 @@ describe('Recruiter Pipeline - Dialog Flow, Navigation & Window Validation', () 
         testWindowEnd: null,
       };
       expect(isMissingTestWindow(offlineRound)).toBe(false);
+    });
+  });
+
+  // =========================================================================
+  // 5. DOUBLE CLICK / CONCURRENT SAVE PREVENTION TESTS
+  // =========================================================================
+  describe('5. Double Click / Concurrent Save Prevention Tests', () => {
+    it('5A. Double click on Save sends exactly one request and displays exactly one toast', async () => {
+      const isSavingRef = { current: false };
+      let apiCallCount = 0;
+      let successToastCount = 0;
+      let errorToastCount = 0;
+
+      const mockApiCall = vi.fn(async () => {
+        apiCallCount++;
+        // Simulate in-flight asynchronous network latency
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { data: { success: true, message: 'Round settings updated successfully' } };
+      });
+
+      const onSuccess = vi.fn(() => {
+        successToastCount++;
+      });
+      const onError = vi.fn(() => {
+        errorToastCount++;
+      });
+
+      const safeSaveHandler = createSafeSaveHandler({
+        apiCall: mockApiCall,
+        onSuccess,
+        onError,
+        isSavingRef,
+      });
+
+      // Fire 2 rapid concurrent clicks (simulating double click)
+      const [res1, res2] = await Promise.all([
+        safeSaveHandler({ name: 'Round 1' }),
+        safeSaveHandler({ name: 'Round 1' }),
+      ]);
+
+      expect(apiCallCount).toBe(1);
+      expect(mockApiCall).toHaveBeenCalledTimes(1);
+      expect(successToastCount).toBe(1);
+      expect(errorToastCount).toBe(0);
+      expect(res1).toBe(true);
+      expect(res2).toBe(false);
+      expect(isSavingRef.current).toBe(false);
+    });
+
+    it('5B. Subsequent save after first completes is allowed and succeeds', async () => {
+      const isSavingRef = { current: false };
+      let apiCallCount = 0;
+      const mockApiCall = vi.fn(async () => {
+        apiCallCount++;
+        return { data: { success: true } };
+      });
+      const onSuccess = vi.fn();
+      const onError = vi.fn();
+
+      const safeSaveHandler = createSafeSaveHandler({
+        apiCall: mockApiCall,
+        onSuccess,
+        onError,
+        isSavingRef,
+      });
+
+      const first = await safeSaveHandler({ cutoffScore: 60 });
+      expect(first).toBe(true);
+      expect(apiCallCount).toBe(1);
+
+      const second = await safeSaveHandler({ cutoffScore: 70 });
+      expect(second).toBe(true);
+      expect(apiCallCount).toBe(2);
     });
   });
 });

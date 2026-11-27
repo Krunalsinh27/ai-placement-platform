@@ -244,6 +244,27 @@ const applyToDrive = async (req, res, next) => {
       })
       .populate('student');
 
+    // If Round 1 is an assessment that is already published, auto-enroll this applicant
+    try {
+      const { Round, RoundParticipant } = require('../models');
+      const round1 = await Round.findOne({ drive: drive._id, order: 1 });
+      if (round1 && round1.isAssessmentPublished) {
+        const alreadyPart = await RoundParticipant.findOne({ round: round1._id, student: student._id });
+        if (!alreadyPart) {
+          await RoundParticipant.create({
+            round: round1._id,
+            drive: drive._id,
+            student: student._id,
+            application: application._id,
+            attendance: 'pending',
+            result: 'pending',
+          });
+        }
+      }
+    } catch (enrollErr) {
+      console.error('Auto-enroll in published assessment notice:', enrollErr.message);
+    }
+
     // Notify recruiter of new applicant
     await notifyNewApplicant({
       companyId: drive.company,
