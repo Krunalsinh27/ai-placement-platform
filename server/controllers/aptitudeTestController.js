@@ -1664,11 +1664,12 @@ const getStudentMyTests = async (req, res, next) => {
     }
 
     const now = new Date();
-    await autoCompletePlatformTestRounds({ now });
 
-    // Include all round participants enrolled for this student
+    // Include all round participants enrolled for this student (excluding rejected and absent participants)
     const participants = await RoundParticipant.find({
       student: student._id,
+      result: { $ne: 'rejected' },
+      attendance: { $ne: 'absent' },
     })
       .populate({
         path: 'round',

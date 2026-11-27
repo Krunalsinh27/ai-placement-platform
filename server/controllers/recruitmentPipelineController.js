@@ -333,13 +333,13 @@ const autoSplitRoundBatches = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Round not found' });
     }
 
-    if (round.status === 'completed') {
-      return res.status(400).json({ success: false, message: 'Cannot split batches: Round is completed.' });
-    }
-
     const authCheck = verifyOwningRecruiterAccess(round.drive, req.user);
     if (!authCheck.allowed) {
       return res.status(authCheck.status).json({ success: false, message: authCheck.message });
+    }
+
+    if (round.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Cannot split batches: Round is completed.' });
     }
 
     const {
@@ -521,13 +521,13 @@ const updateRoundSettings = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Round not found' });
     }
 
-    if (round.status === 'completed') {
-      return res.status(400).json({ success: false, message: 'Cannot modify settings: Round is completed.' });
-    }
-
     const authCheck = verifyOwningRecruiterAccess(round.drive, req.user);
     if (!authCheck.allowed) {
       return res.status(authCheck.status).json({ success: false, message: authCheck.message });
+    }
+
+    if (round.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Cannot modify settings: Round is completed.' });
     }
 
     const {

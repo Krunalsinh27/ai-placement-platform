@@ -242,6 +242,7 @@ async function runTests() {
       lastDateToApply: new Date(Date.now() + 7 * 86400000),
       driveDate: new Date(Date.now() + 14 * 86400000),
       status: 'open',
+      isPublished: true,
     });
 
     // Drive 2: Data Science role requiring Python, PyTorch, Pandas -> Low match
@@ -259,6 +260,7 @@ async function runTests() {
       lastDateToApply: new Date(Date.now() + 5 * 86400000),
       driveDate: new Date(Date.now() + 12 * 86400000),
       status: 'open',
+      isPublished: true,
     });
 
     // 1. Direct unit test of matchingEngine
