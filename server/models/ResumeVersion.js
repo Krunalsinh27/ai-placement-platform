@@ -43,9 +43,39 @@ const resumeVersionSchema = new mongoose.Schema(
       ref: 'Drive',
       default: null,
     },
+    resume: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Resume',
+      default: null,
+      index: true,
+    },
+    source: {
+      type: String,
+      enum: ['manual', 'ai-tailor', 'import'],
+      default: 'manual',
+    },
+    label: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    contentHash: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     templateId: {
       type: String,
-      enum: ['modern', 'classic', 'compact'],
+      enum: [
+        'modern',
+        'classic',
+        'compact',
+        'minimal-ats',
+        'software-engineer',
+        'professional-fresher',
+        'modern-professional',
+        'technical-projects',
+      ],
       default: 'modern',
     },
     resumeData: {
@@ -125,6 +155,15 @@ const resumeVersionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    jdSnapshot: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    submitted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -133,5 +172,6 @@ const resumeVersionSchema = new mongoose.Schema(
 );
 
 resumeVersionSchema.index({ student: 1, createdAt: -1 });
+resumeVersionSchema.index({ resume: 1, submitted: 1, createdAt: -1 });
 
 module.exports = mongoose.model('ResumeVersion', resumeVersionSchema);

@@ -418,8 +418,10 @@ async function runEmailTests() {
     // ------------------------------------------------------------------------
     console.log('\n--- 2. Testing Background Queue Worker & 3x Retry Loop ---');
 
-    // Temporarily reduce delay for tests
+    // Temporarily reduce delay for tests and isolate in-process processor when Redis is offline
     emailQueue.delayMs = 10;
+    const origIsRedis = emailQueue.isRedisMode.bind(emailQueue);
+    emailQueue.isRedisMode = () => false;
 
     // Simulate failing email transport
     let attemptCount = 0;
@@ -466,8 +468,9 @@ async function runEmailTests() {
     }
     console.log('✓ Failed email log successfully re-enqueued and delivered via resendFailedEmail()');
 
-    // Reset sender function
+    // Reset sender function and restore isRedisMode
     emailQueue.resetSenderFunction();
+    emailQueue.isRedisMode = origIsRedis;
 
     // ------------------------------------------------------------------------
     // SECTION 3: Student Reminder Opt-Out vs. Mandatory Emails

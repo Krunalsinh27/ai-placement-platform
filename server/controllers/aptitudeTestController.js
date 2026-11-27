@@ -371,10 +371,11 @@ const deleteQuestion = async (req, res, next) => {
 };
 
 /**
- * Import questions via CSV with validation report
+ * Import questions via CSV with validation report and reliable format detection
  * @route POST /api/rounds/:id/questions/import
  * @access Private (Recruiter only)
  * CSV Headers: text,optionA,optionB,optionC,optionD,correct,marks,negative,section
+ * answerFormat: 'auto' | 'letter' (A-D) | 'one_based' (1-4) | 'zero_based' (0-3)
  */
 const importQuestionsCSV = async (req, res, next) => {
   try {
@@ -457,6 +458,77 @@ const importQuestionsCSV = async (req, res, next) => {
       });
     }
 
+    // Determine answer format: explicit from request, or reliable auto-detection
+    let requestedFormat = (req.body?.answerFormat || req.query?.answerFormat || 'auto').toLowerCase().trim();
+    if (!['auto', 'letter', 'one_based', 'zero_based'].includes(requestedFormat)) {
+      requestedFormat = 'auto';
+    }
+
+    let effectiveFormat = requestedFormat;
+    if (requestedFormat === 'auto') {
+      // Inspect all rows to detect answer format
+      let hasLetters = false;
+      let hasNumbers = false;
+      let hasZero = false;
+      let hasFour = false;
+      let has123 = false;
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseCsvLine(lines[i]);
+        const val = (cols[correctIdxCol] || '').trim().toUpperCase();
+        if (['A', 'B', 'C', 'D'].includes(val)) {
+          hasLetters = true;
+        } else if (val === '0') {
+          hasNumbers = true;
+          hasZero = true;
+        } else if (val === '4') {
+          hasNumbers = true;
+          hasFour = true;
+        } else if (['1', '2', '3'].includes(val)) {
+          hasNumbers = true;
+          has123 = true;
+        }
+      }
+
+      // 1. Inconsistent formats: mixture of letters and numbers
+      if (hasLetters && hasNumbers) {
+        return res.status(400).json({
+          success: false,
+          message: 'Inconsistent answer format in CSV: contains both letters (A-D) and numbers. Please standardize the file or specify answerFormat explicitly.',
+        });
+      }
+
+      // 2. Inconsistent numeric formats: contains both 0 and 4
+      if (hasZero && hasFour) {
+        return res.status(400).json({
+          success: false,
+          message: 'Inconsistent numeric format in CSV: contains both "0" and "4". Please specify answerFormat explicitly as "one_based" (1-4) or "zero_based" (0-3).',
+        });
+      }
+
+      // 3. Unambiguous letter format
+      if (hasLetters && !hasNumbers) {
+        effectiveFormat = 'letter';
+      } else if (hasZero && !hasFour) {
+        // Unambiguous zero-based: contains '0' (which is invalid in one-based 1..4)
+        effectiveFormat = 'zero_based';
+      } else if (hasFour && !hasZero) {
+        // Unambiguous one-based: contains '4' (which is out of range for 4 options in 0-based 0..3)
+        effectiveFormat = 'one_based';
+      } else if (has123 && !hasZero && !hasFour) {
+        // AMBIGUOUS: Contains only {1, 2, 3}. Could be 1-based (A, B, C) or 0-based (B, C, D)
+        return res.status(400).json({
+          success: false,
+          message: 'Ambiguous numeric answer format: answers contain only options 1, 2, or 3 without "0" or "4". Please explicitly specify answerFormat as "one_based" (1-4) or "zero_based" (0-3) to prevent incorrect grading.',
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Unable to detect a valid answer format from CSV. Please explicitly specify answerFormat as "letter" (A-D), "one_based" (1-4), or "zero_based" (0-3).',
+        });
+      }
+    }
+
     const validQuestions = [];
     const failedRows = [];
     let currentOrder = await Question.countDocuments({ round: round._id });
@@ -470,7 +542,7 @@ const importQuestionsCSV = async (req, res, next) => {
       const optB = cols[optBIdx];
       const optC = cols[optCIdx];
       const optD = cols[optDIdx];
-      const correctRaw = cols[correctIdxCol];
+      const correctRaw = (cols[correctIdxCol] || '').trim().toUpperCase();
       const marksRaw = marksIdx !== -1 ? cols[marksIdx] : '1';
       const negRaw = negIdx !== -1 ? cols[negIdx] : '0';
       const section = secIdx !== -1 ? (cols[secIdx] || '').trim() : '';
@@ -490,18 +562,34 @@ const importQuestionsCSV = async (req, res, next) => {
       }
 
       let correctIndex = -1;
-      const cNormalized = (correctRaw || '').trim().toUpperCase();
-      if (['A', '1'].includes(cNormalized)) correctIndex = 0;
-      else if (['B', '2'].includes(cNormalized)) correctIndex = 1;
-      else if (['C', '3'].includes(cNormalized)) correctIndex = 2;
-      else if (['D', '4'].includes(cNormalized)) correctIndex = 3;
-      else if (['0'].includes(cNormalized)) correctIndex = 0;
+      if (effectiveFormat === 'letter') {
+        if (correctRaw === 'A') correctIndex = 0;
+        else if (correctRaw === 'B') correctIndex = 1;
+        else if (correctRaw === 'C') correctIndex = 2;
+        else if (correctRaw === 'D') correctIndex = 3;
+      } else if (effectiveFormat === 'one_based') {
+        if (correctRaw === '1') correctIndex = 0;
+        else if (correctRaw === '2') correctIndex = 1;
+        else if (correctRaw === '3') correctIndex = 2;
+        else if (correctRaw === '4') correctIndex = 3;
+      } else if (effectiveFormat === 'zero_based') {
+        if (correctRaw === '0') correctIndex = 0;
+        else if (correctRaw === '1') correctIndex = 1;
+        else if (correctRaw === '2') correctIndex = 2;
+        else if (correctRaw === '3') correctIndex = 3;
+      }
 
       if (correctIndex === -1) {
+        const expectedHint =
+          effectiveFormat === 'letter'
+            ? 'A, B, C, or D'
+            : effectiveFormat === 'one_based'
+            ? '1, 2, 3, or 4'
+            : '0, 1, 2, or 3';
         failedRows.push({
           row: rowNum,
           text: qText.slice(0, 30),
-          reason: `Invalid correct answer "${correctRaw}". Must be A, B, C, or D (or 1, 2, 3, 4).`,
+          reason: `Invalid correct answer "${cols[correctIdxCol]}". Expected ${expectedHint} for ${effectiveFormat} format.`,
         });
         continue;
       }
@@ -531,6 +619,7 @@ const importQuestionsCSV = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: `Import processed: ${validQuestions.length} questions imported, ${failedRows.length} failed.`,
+      formatDetected: effectiveFormat,
       importedCount: validQuestions.length,
       failedCount: failedRows.length,
       failedRows,
@@ -572,7 +661,10 @@ const startTest = async (req, res, next) => {
     const student = await Student.findOne({ user: req.user._id });
     if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
 
-    const round = await Round.findById(roundId).populate('drive');
+    const round = await Round.findById(roundId).populate({
+      path: 'drive',
+      populate: ['company', 'college', 'colleges'],
+    });
     if (!round) return res.status(404).json({ success: false, message: 'Round not found' });
 
     if (round.deliveryMode !== 'platform_test') {
@@ -584,10 +676,26 @@ const startTest = async (req, res, next) => {
 
     // Verify enrollment
     const participant = await RoundParticipant.findOne({ round: round._id, student: student._id });
-    if (!participant) {
+    if (!participant || participant.result === 'rejected' || participant.attendance === 'absent') {
       return res.status(403).json({
         success: false,
-        message: 'You are not enrolled as a participant in this round',
+        message: 'You are not enrolled as an eligible participant in this round',
+      });
+    }
+
+    // Verify college eligibility
+    const driveColleges = [
+      round.drive?.college?._id?.toString() || round.drive?.college?.toString(),
+      ...(Array.isArray(round.drive?.colleges)
+        ? round.drive.colleges.map((c) => (c._id || c).toString())
+        : []),
+    ].filter(Boolean);
+
+    const studentCollegeId = (student.college?._id || student.college)?.toString();
+    if (driveColleges.length > 0 && (!studentCollegeId || !driveColleges.includes(studentCollegeId))) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your college is not eligible for this assessment.',
       });
     }
 
@@ -712,9 +820,37 @@ const getStudentAttempt = async (req, res, next) => {
 
     const round = await Round.findById(roundId).populate({
       path: 'drive',
-      populate: ['company', 'college'],
+      populate: ['company', 'college', 'colleges'],
     });
     if (!round) return res.status(404).json({ success: false, message: 'Round not found' });
+
+    // Verify enrollment as an active, non-rejected participant
+    const participant = await RoundParticipant.findOne({
+      round: round._id,
+      student: student._id,
+    });
+    if (!participant || participant.result === 'rejected' || participant.attendance === 'absent') {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not enrolled as an eligible participant in this round assessment.',
+      });
+    }
+
+    // Verify college eligibility
+    const driveColleges = [
+      round.drive?.college?._id?.toString() || round.drive?.college?.toString(),
+      ...(Array.isArray(round.drive?.colleges)
+        ? round.drive.colleges.map((c) => (c._id || c).toString())
+        : []),
+    ].filter(Boolean);
+
+    const studentCollegeId = (student.college?._id || student.college)?.toString();
+    if (driveColleges.length > 0 && (!studentCollegeId || !driveColleges.includes(studentCollegeId))) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your college is not eligible for this assessment.',
+      });
+    }
 
     const attempt = await TestAttempt.findOne({ round: round._id, student: student._id });
     if (!attempt) {
@@ -1137,7 +1273,17 @@ const allowStudentRetest = async (req, res, next) => {
 const myTestsQuerySchema = z
   .object({
     status: z
-      .enum(['not_started', 'in_progress', 'submitted', 'auto_submitted', 'window_closed', 'all'])
+      .enum([
+        'not_started',
+        'not_scheduled',
+        'scheduled_not_open',
+        'open_to_start',
+        'in_progress',
+        'submitted',
+        'auto_submitted',
+        'window_closed',
+        'all',
+      ])
       .optional(),
   })
   .passthrough();
@@ -1173,17 +1319,34 @@ const getStudentMyTests = async (req, res, next) => {
         path: 'round',
         populate: {
           path: 'drive',
-          populate: { path: 'company', select: 'name logoUrl industry' },
+          populate: [
+            { path: 'company', select: 'name logoUrl industry' },
+            { path: 'college', select: 'name' },
+            { path: 'colleges', select: 'name' },
+          ],
         },
       })
       .sort({ createdAt: -1 });
 
     const now = new Date();
 
-    // Only platform_test rounds
-    const validParticipants = participants.filter(
-      (p) => p.round && p.round.deliveryMode === 'platform_test'
-    );
+    // Filter to platform_test rounds and strictly enforce college eligibility
+    const studentCollegeId = (student.college?._id || student.college)?.toString();
+    const validParticipants = participants.filter((p) => {
+      if (!p.round || p.round.deliveryMode !== 'platform_test') return false;
+      const drive = p.round.drive;
+      if (!drive) return false;
+
+      const driveColleges = [
+        drive.college?._id?.toString() || drive.college?.toString(),
+        ...(Array.isArray(drive.colleges) ? drive.colleges.map((c) => (c._id || c).toString()) : []),
+      ].filter(Boolean);
+
+      if (driveColleges.length > 0 && (!studentCollegeId || !driveColleges.includes(studentCollegeId))) {
+        return false;
+      }
+      return true;
+    });
 
     const tests = await Promise.all(
       validParticipants.map(async (p) => {
@@ -1203,10 +1366,14 @@ const getStudentMyTests = async (req, res, next) => {
           }
           status = attempt.status;
         } else {
-          if (round.testWindowEnd && now > new Date(round.testWindowEnd)) {
+          if (!round.testWindowStart || !round.testWindowEnd) {
+            status = 'not_scheduled';
+          } else if (now < new Date(round.testWindowStart)) {
+            status = 'scheduled_not_open';
+          } else if (now > new Date(round.testWindowEnd)) {
             status = 'window_closed';
           } else {
-            status = 'not_started';
+            status = 'open_to_start';
           }
         }
 
@@ -1233,6 +1400,7 @@ const getStudentMyTests = async (req, res, next) => {
           instructions: round.instructions || '',
           cutoffScore: round.cutoffScore ?? null,
           totalMarks: round.totalMarks || 0,
+          questionCount: round.questionCount || 0,
           attemptStatus: status,
           status,
           showScore,

@@ -95,21 +95,54 @@ api.interceptors.request.use(
 );
 
 // Response interceptor: auto-refresh on 401 using httpOnly cookie and replay ONCE for all HTTP methods
-let isRefreshing = false;
-let failedQueue = [];
+let refreshPromise = null;
 
-const processQueue = (error, token = null) => {
-  failedQueue.forEach(({ resolve, reject, config }) => {
-    if (error) {
-      reject(error);
-    } else {
-      // Safe to replay ONCE after token refresh for all HTTP methods
-      config.headers = config.headers || {};
-      config.headers.Authorization = `Bearer ${token}`;
-      resolve(api(config));
+const requestTokenRefresh = async () => {
+  const refreshStartTime = Date.now();
+  const MAX_REFRESH_WINDOW_MS = 75000; // Keep retrying for ~75 seconds during server cold starts
+  let attempt = 0;
+
+  while (Date.now() - refreshStartTime < MAX_REFRESH_WINDOW_MS) {
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/auth/refresh`,
+        {},
+        {
+          withCredentials: true,
+          timeout: 15000,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        }
+      );
+
+      const newToken = res.data?.token;
+      if (newToken) {
+        setAccessToken(newToken);
+        return newToken;
+      } else {
+        const err = new Error('Token refresh response did not contain an access token');
+        err.response = { status: 401, data: res.data };
+        throw err;
+      }
+    } catch (refreshError) {
+      // Unauthenticated or forbidden (401/403): do NOT retry; user must log in
+      if (refreshError.response?.status === 401 || refreshError.response?.status === 403) {
+        throw refreshError;
+      }
+      // Server cold start (network error, timeout, 502, 503, 504): wait with backoff (2s, 3s, 4s, up to 5s)
+      const remainingTime = MAX_REFRESH_WINDOW_MS - (Date.now() - refreshStartTime);
+      if (remainingTime > 2000) {
+        const backoffMs = Math.min(5000, Math.min(remainingTime, 2000 + attempt * 1000));
+        await new Promise((r) => setTimeout(r, backoffMs));
+        attempt++;
+      } else {
+        throw refreshError;
+      }
     }
-  });
-  failedQueue = [];
+  }
+  throw new Error('Refresh token timeout exceeded');
 };
 
 api.interceptors.response.use(
@@ -138,98 +171,48 @@ api.interceptors.response.use(
 
       originalRequest._retry = true;
 
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject, config: originalRequest });
+      // Ensure a single in-flight refresh promise for all concurrent 401s
+      if (!refreshPromise) {
+        refreshPromise = requestTokenRefresh().finally(() => {
+          refreshPromise = null;
         });
       }
 
-      isRefreshing = true;
-
-      const refreshStartTime = Date.now();
-      const MAX_REFRESH_WINDOW_MS = 75000; // Keep retrying for ~75 seconds during server cold starts
-      let lastRefreshErr = null;
-      let attempt = 0;
-
-      while (Date.now() - refreshStartTime < MAX_REFRESH_WINDOW_MS) {
-        try {
-          const res = await axios.post(
-            `${API_BASE_URL}/auth/refresh`,
-            {},
-            {
-              withCredentials: true,
-              timeout: 15000,
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest',
-              },
+      return refreshPromise
+        .then((newToken) => {
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          return api(originalRequest);
+        })
+        .catch((refreshErr) => {
+          // Only force logout on confirmed 401/403 unauthenticated response, not transient network errors
+          if (refreshErr?.response?.status === 401 || refreshErr?.response?.status === 403) {
+            setAccessToken(null);
+            if (typeof authFailureHandler === 'function') {
+              try {
+                authFailureHandler();
+              } catch (_) {}
             }
-          );
-
-          const newToken = res.data?.token;
-          if (newToken) {
-            setAccessToken(newToken);
-            isRefreshing = false;
-            processQueue(null, newToken);
-
-            originalRequest.headers = originalRequest.headers || {};
-            originalRequest.headers.Authorization = `Bearer ${newToken}`;
-            return api(originalRequest);
-          } else {
-            // 2xx response without token: treat as failure, stop retrying, and treat as normal logged-out state
-            lastRefreshErr = new Error('Token refresh response did not contain an access token');
-            lastRefreshErr.response = { status: 401, data: res.data };
-            break;
-          }
-        } catch (refreshError) {
-          lastRefreshErr = refreshError;
-          // Unauthenticated or forbidden (401/403): do NOT retry; user must log in
-          if (refreshError.response?.status === 401 || refreshError.response?.status === 403) {
-            break;
-          }
-          // Server cold start (network error, timeout, 502, 503, 504): wait with backoff (2s, 3s, 4s, up to 5s)
-          const remainingTime = MAX_REFRESH_WINDOW_MS - (Date.now() - refreshStartTime);
-          if (remainingTime > 2000) {
-            const backoffMs = Math.min(5000, Math.min(remainingTime, 2000 + attempt * 1000));
-            await new Promise((r) => setTimeout(r, backoffMs));
-            attempt++;
-          } else {
-            break;
-          }
-        }
-      }
-
-      isRefreshing = false;
-      processQueue(lastRefreshErr, null);
-
-      // Only force logout on confirmed 401/403 unauthenticated response, not transient network errors
-      if (lastRefreshErr?.response?.status === 401 || lastRefreshErr?.response?.status === 403) {
-        setAccessToken(null);
-        if (typeof authFailureHandler === 'function') {
-          try {
-            authFailureHandler();
-          } catch (_) {}
-        }
-        if (typeof window !== 'undefined' && window.location) {
-          const currentPath = window.location.pathname || '';
-          if (currentPath !== '/login' && currentPath !== '/register') {
-            if (typeof localStorage !== 'undefined') {
-              localStorage.removeItem('user');
-              localStorage.removeItem('student');
-            }
-            if (typeof sessionStorage !== 'undefined') {
-              sessionStorage.clear();
-            }
-            if (typeof window.location.replace === 'function') {
-              window.location.replace('/login');
-            } else {
-              window.location.href = '/login';
+            if (typeof window !== 'undefined' && window.location) {
+              const currentPath = window.location.pathname || '';
+              if (currentPath !== '/login' && currentPath !== '/register') {
+                if (typeof localStorage !== 'undefined') {
+                  localStorage.removeItem('user');
+                  localStorage.removeItem('student');
+                }
+                if (typeof sessionStorage !== 'undefined') {
+                  sessionStorage.clear();
+                }
+                if (typeof window.location.replace === 'function') {
+                  window.location.replace('/login');
+                } else {
+                  window.location.href = '/login';
+                }
+              }
             }
           }
-        }
-      }
-
-      return Promise.reject(lastRefreshErr || error);
+          return Promise.reject(refreshErr || error);
+        });
     }
 
     // 2. Handle Transient Network Errors, Timeouts, or 502/503/504

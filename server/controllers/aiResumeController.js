@@ -14,6 +14,7 @@ const {
   sanitizeSkillList,
   getSkillEvidence,
   analyzeResumeAgainstTarget,
+  scoreResumeForTarget,
 } = require('../services/ai');
 
 /**
@@ -352,15 +353,85 @@ const getRankedApplicants = async (req, res, next) => {
     }
 
     // Rank candidates deterministically
+    const hasDriveRequirements = normalizeSkillList(drive.requiredSkills || []).length > 0;
+    const targetJd = {
+      roleTitle: drive.role || drive.title || 'Target Role',
+      company: drive.company?.name || '',
+      requiredSkills: drive.requiredSkills || [],
+      preferredSkills: drive.preferredSkills || [],
+      minYearsExperience: 0,
+    };
+
     const scoredApplicants = targetApplications.map((app) => {
       const student = app.student;
-      const match = computeMatchScore(student, drive);
+      let match = null;
+
+      if (!hasDriveRequirements) {
+        // If the drive has no skill requirements, preserve score: null matching computeMatchScore behavior
+        match = computeMatchScore(student, drive);
+      } else if (app.resumeSnapshot && app.resumeSnapshot.data) {
+        // Score from app.resumeSnapshot.data using scoreResumeForTarget (no second scorer)
+        const scoreRes = scoreResumeForTarget({
+          student,
+          resumeData: app.resumeSnapshot.data,
+          jdAnalysis: targetJd,
+          sourceType: 'tailored',
+        });
+
+        const flatSnapshotSkills = Array.isArray(app.resumeSnapshot.data.skills)
+          ? app.resumeSnapshot.data.skills.flatMap((c) => (typeof c === 'string' ? [c] : c.items || []))
+          : [];
+
+        const synthStudent = {
+          skills: flatSnapshotSkills,
+          resumeProfile: {
+            skills: flatSnapshotSkills.map((s) => ({ name: s })),
+            projects: app.resumeSnapshot.data.projects || [],
+            experience: app.resumeSnapshot.data.experience || [],
+            education: app.resumeSnapshot.data.education || [],
+            summary: app.resumeSnapshot.data.summary || '',
+          },
+          cgpa: student?.cgpa,
+          backlogs: student?.backlogs,
+          branch: student?.branch,
+        };
+
+        const matchedSkillDetails = (scoreRes.matchedSkills || []).map((sk) => {
+          const ev = getSkillEvidence(sk, synthStudent);
+          return {
+            name: sk,
+            projectCount: ev.projectCount || 0,
+            selfDeclared: ev.selfDeclared ?? false,
+          };
+        });
+
+        match = {
+          score: scoreRes.overallScore ?? scoreRes.atsScore ?? 0,
+          breakdown: {
+            requiredSkillCoverage:
+              scoreRes.breakdown?.keywordMatch !== null && scoreRes.breakdown?.keywordMatch !== undefined
+                ? scoreRes.breakdown.keywordMatch
+                : null,
+            preferredSkillCoverage: null,
+            eligibilityFit: null,
+            projectExperienceRelevance: null,
+            ...(scoreRes.breakdown || {}),
+          },
+          matchedSkills: scoreRes.matchedSkills || [],
+          matchedSkillDetails,
+          missingSkills: Array.from(new Set([...(scoreRes.missingRequired || []), ...(scoreRes.missingPreferred || [])])),
+          reasons: scoreRes.reasons || [],
+        };
+      } else {
+        match = computeMatchScore(student, drive);
+      }
 
       return {
         applicationId: app._id,
         status: app.status,
         appliedOn: app.appliedOn,
         aiExplanation: app.aiExplanation || null,
+        hasResumeSnapshot: Boolean(app.resumeSnapshot && app.resumeSnapshot.data),
         student: {
           _id: student?._id,
           name: student?.user?.name || 'Candidate',
@@ -371,7 +442,7 @@ const getRankedApplicants = async (req, res, next) => {
           cgpa: student?.cgpa,
           backlogs: student?.backlogs,
           skills: student?.skills || [],
-          resumeProfile: student?.resumeProfile ? {
+          resumeProfile: userRole !== 'recruiter' && student?.resumeProfile ? {
             status: student.resumeProfile.status,
             source: student.resumeProfile.source,
             skills: student.resumeProfile.skills,

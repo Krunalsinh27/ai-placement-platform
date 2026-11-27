@@ -7,6 +7,7 @@
 
 const mongoose = require('mongoose');
 const SkillEmbedding = require('../../models/SkillEmbedding');
+const { getGeminiConfig } = require('./aiConfig');
 
 // In-memory LRU cache to avoid repeated DB lookups during batch scoring
 const memCache = new Map();
@@ -106,11 +107,13 @@ function cosineSimilarity(vecA, vecB) {
  * Fetch embedding from Gemini API
  */
 async function fetchGeminiEmbedding(text) {
-  const apiKey = process.env.AI_API_KEY;
-  if (!apiKey) throw new Error('Missing AI_API_KEY');
+  const geminiConfig = getGeminiConfig();
+  if (!geminiConfig.configured) {
+    throw new Error('Missing or unconfigured Gemini API key for embeddings');
+  }
 
-  const model = process.env.AI_EMBEDDING_MODEL || 'text-embedding-004';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`;
+  const model = geminiConfig.modelEmbedding || 'text-embedding-004';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${geminiConfig.apiKey}`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -161,11 +164,9 @@ async function getSkillEmbedding(skill) {
 
   // 3. Generate Embedding (Live Gemini or Deterministic fallback)
   let vector = null;
-  const isProd = process.env.NODE_ENV === 'production';
-  const hasKey = Boolean(process.env.AI_API_KEY && process.env.AI_API_KEY.trim());
-  const provider = (process.env.AI_PROVIDER || '').toLowerCase();
+  const geminiConfig = getGeminiConfig();
 
-  if (hasKey && provider === 'gemini') {
+  if (geminiConfig.configured) {
     try {
       vector = await fetchGeminiEmbedding(norm);
     } catch (apiErr) {

@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const { User, Student } = require('../models');
 
 /**
@@ -101,6 +102,23 @@ const protect = async (req, res, next) => {
 
       next();
     } catch (error) {
+      // Differentiate Database outages / timeouts from invalid / expired JWTs
+      const isDbError =
+        error.name === 'MongoServerSelectionError' ||
+        error.name === 'MongoNetworkError' ||
+        error.name === 'MongoTimeoutError' ||
+        error.name === 'MongooseError' ||
+        (mongoose.connection && mongoose.connection.readyState !== 1);
+
+      if (isDbError) {
+        console.error('[AuthMiddleware] Database unavailable during auth check:', error.message);
+        return res.status(503).json({
+          success: false,
+          code: 'DB_UNAVAILABLE',
+          message: 'Database service temporarily unavailable. Please try again later.',
+        });
+      }
+
       console.error('JWT verification error:', error.message);
       return res.status(401).json({
         success: false,

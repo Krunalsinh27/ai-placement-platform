@@ -10,10 +10,8 @@
  * NEVER logs text, tokens, or the token map.
  */
 
-const { EMAIL_REGEX, PHONE_REGEX } = require('../ai/redactor');
+const { EMAIL_REGEX, PHONE_REGEX, ADDRESS_REGEX, isYearRangeOrDate } = require('../ai/redactor');
 const { URL_REGEX } = require('./resumeLinkExtractor');
-
-const ADDRESS_REGEX = /\b\d+[\w\s,.-]+(?:Street|St|Avenue|Ave|Road|Rd|Nagar|Colony|Lane|Drive|Dr|Sector|Block|Apartment|Apt|Plot)\b/gi;
 
 /**
  * Tokenizes text and structured data, returning tokenized text and reversible tokenMap.
@@ -69,6 +67,7 @@ function tokenizeText(text = '', hints = {}) {
   const allPhones = new Set([...(hints.phones || [])]);
   const textPhones = text.match(PHONE_REGEX) || [];
   textPhones.forEach((p) => {
+    if (isYearRangeOrDate(p)) return;
     const digits = p.replace(/\D/g, '');
     if (digits.length >= 7 && digits.length <= 15) {
       allPhones.add(p);

@@ -118,6 +118,7 @@ const DrivePipeline = () => {
   const [questionCsvModalOpen, setQuestionCsvModalOpen] = useState(false);
   const [questionCsvText, setQuestionCsvText] = useState('');
   const [questionCsvFile, setQuestionCsvFile] = useState(null);
+  const [questionAnswerFormat, setQuestionAnswerFormat] = useState('auto');
   const [isImportingQuestions, setIsImportingQuestions] = useState(false);
   const [questionCsvReport, setQuestionCsvReport] = useState(null);
 
@@ -220,6 +221,51 @@ const DrivePipeline = () => {
   });
   const [isSubmittingEval, setIsSubmittingEval] = useState(false);
   const [callingNextPanelId, setCallingNextPanelId] = useState(null);
+
+  // College-wise Applicant Analytics State (Phase D)
+  const [collegeAnalyticsData, setCollegeAnalyticsData] = useState(null);
+  const [loadingCollegeAnalytics, setLoadingCollegeAnalytics] = useState(false);
+  const [analyticsCollegeFilter, setAnalyticsCollegeFilter] = useState('all');
+  const [analyticsStatusFilter, setAnalyticsStatusFilter] = useState('all');
+  const [analyticsSearchInput, setAnalyticsSearchInput] = useState('');
+  const [analyticsDebouncedSearch, setAnalyticsDebouncedSearch] = useState('');
+  const [analyticsPage, setAnalyticsPage] = useState(1);
+
+  const fetchCollegeAnalytics = async (page = 1, collegeId = analyticsCollegeFilter, status = analyticsStatusFilter, search = analyticsDebouncedSearch) => {
+    if (!id) return;
+    setLoadingCollegeAnalytics(true);
+    try {
+      const params = { page, limit: 15 };
+      if (collegeId && collegeId !== 'all') params.collegeId = collegeId;
+      if (status && status !== 'all') params.status = status;
+      if (search && search.trim()) params.search = search.trim();
+
+      const res = await api.get(`/drives/${id}/applicant-analytics`, { params });
+      if (res.data.success) {
+        setCollegeAnalyticsData(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to load applicant analytics:', err);
+      toast.error(err.response?.data?.message || 'Failed to load college applicant analytics');
+    } finally {
+      setLoadingCollegeAnalytics(false);
+    }
+  };
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAnalyticsDebouncedSearch(analyticsSearchInput);
+      setAnalyticsPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [analyticsSearchInput]);
+
+  useEffect(() => {
+    if (activeTab === 'college_analytics') {
+      fetchCollegeAnalytics(analyticsPage, analyticsCollegeFilter, analyticsStatusFilter, analyticsDebouncedSearch);
+    }
+  }, [id, activeTab, analyticsCollegeFilter, analyticsStatusFilter, analyticsDebouncedSearch, analyticsPage]);
 
   const formatISTDateTime = (dateStr) => {
     if (!dateStr) return 'N/A';
@@ -476,11 +522,15 @@ const DrivePipeline = () => {
       if (questionCsvFile) {
         const formData = new FormData();
         formData.append('file', questionCsvFile);
+        formData.append('answerFormat', questionAnswerFormat);
         res = await api.post(`/rounds/${currentRound._id}/questions/import`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
+          headers: { 'Content-Type': undefined },
         });
       } else if (questionCsvText.trim()) {
-        res = await api.post(`/rounds/${currentRound._id}/questions/import`, { csvData: questionCsvText });
+        res = await api.post(`/rounds/${currentRound._id}/questions/import`, {
+          csvData: questionCsvText,
+          answerFormat: questionAnswerFormat,
+        });
       } else {
         toast.error('Please upload a CSV file or paste CSV text');
         setIsImportingQuestions(false);
@@ -1544,10 +1594,33 @@ const DrivePipeline = () => {
                 {driveData.metrics?.totalOffers || 0}
               </span>
             </button>
+
+            {/* College Analytics Tab (Phase D) */}
+            <button
+              onClick={() => {
+                setActiveTab('college_analytics');
+                setAnalyticsPage(1);
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${activeTab === 'college_analytics'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                }`}
+            >
+              <Building2 className="w-4 h-4" />
+              <span>College-wise Applicants</span>
+              {collegeAnalyticsData?.summary?.uniqueApplicants !== undefined && (
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full ${activeTab === 'college_analytics' ? 'bg-white/25 text-white' : 'bg-indigo-50 text-indigo-700'
+                    }`}
+                >
+                  {collegeAnalyticsData.summary.uniqueApplicants}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* TAB CONTENT: ROUND DETAILS */}
-          {activeTab !== 'offers' && currentRound && (
+          {activeTab !== 'offers' && activeTab !== 'college_analytics' && currentRound && (
             <div className="space-y-4">
               {/* PROMINENT MISSING TEST WINDOW WARNING BANNER */}
               {isMissingTestWindow(currentRound) && (
@@ -2425,6 +2498,66 @@ const DrivePipeline = () => {
                     </div>
                   </div>
 
+                  {/* Test Readiness Widget */}
+                  {(() => {
+                    const hasQuestions = (questionStats.questionCount || 0) > 0;
+                    const hasWindow = Boolean(currentRound.testWindowStart && currentRound.testWindowEnd);
+                    const enrolledCount = testSummary?.totalEnrolled ?? currentRound.participants?.length ?? 0;
+                    const isReady = hasQuestions && hasWindow && enrolledCount > 0;
+
+                    return (
+                      <div className={`p-4 rounded-3xl border flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs ${
+                        isReady
+                          ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                          : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                      }`}>
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                            isReady ? 'bg-emerald-200 text-emerald-800' : 'bg-amber-200 text-amber-800'
+                          }`}>
+                            {isReady ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-black text-sm">Test Readiness:</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                isReady ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white'
+                              }`}>
+                                {isReady ? 'Ready to Conduct' : 'Configuration Incomplete'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] opacity-80 mt-0.5">
+                              {isReady
+                                ? 'Assessment is fully configured. Enrolled candidates can view and attempt the test within the scheduled window.'
+                                : 'Complete the checklist to ensure candidates can see and attempt this assessment.'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-semibold">
+                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
+                            hasQuestions ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            <span className="w-2 h-2 rounded-full bg-current" />
+                            {hasQuestions ? `${questionStats.questionCount} Questions Added` : '0 Questions (Add Questions)'}
+                          </span>
+                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
+                            hasWindow ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            <span className="w-2 h-2 rounded-full bg-current" />
+                            {hasWindow ? 'Window Scheduled' : 'Missing Window (Set Window)'}
+                          </span>
+                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
+                            enrolledCount > 0 ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            <span className="w-2 h-2 rounded-full bg-current" />
+                            {enrolledCount > 0 ? `${enrolledCount} Candidates Enrolled` : '0 Candidates Enrolled'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Summary Metric Cards */}
                   <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 text-center">
                     <div className="p-3 rounded-2xl bg-white border border-slate-200 shadow-xs">
@@ -2961,6 +3094,544 @@ const DrivePipeline = () => {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB CONTENT: COLLEGE-WISE APPLICANT ANALYTICS (Phase D) */}
+          {activeTab === 'college_analytics' && (
+            <div className="space-y-6">
+              {/* Analytics Header Card */}
+              <div className="bg-white rounded-3xl border border-slate-200/80 p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-bold text-xs uppercase">
+                      Multi-College Recruitment Funnel
+                    </span>
+                    {collegeAnalyticsData?.summary?.participatingCollegesCount !== undefined && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold text-xs">
+                        {collegeAnalyticsData.summary.participatingCollegesCount} Active Campus{collegeAnalyticsData.summary.participatingCollegesCount === 1 ? '' : 'es'}
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-xl font-black text-slate-900">College-wise Applicant Intelligence</h2>
+                  <p className="text-xs text-slate-500 max-w-2xl">
+                    Comparative hiring analytics across participating partner colleges and universities. Monitor applicant distribution, shortlisting ratios, and campus-specific recruitment conversion.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => fetchCollegeAnalytics(analyticsPage, analyticsCollegeFilter, analyticsStatusFilter, analyticsDebouncedSearch)}
+                  disabled={loadingCollegeAnalytics}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all self-start sm:self-auto disabled:opacity-50"
+                >
+                  <RotateCw className={`w-3.5 h-3.5 ${loadingCollegeAnalytics ? 'animate-spin' : ''}`} />
+                  <span>Refresh Analytics</span>
+                </button>
+              </div>
+
+              {/* KPI Summary Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Applications</span>
+                    <FileText className="w-4 h-4 text-sky-600" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-900">
+                    {collegeAnalyticsData?.summary?.totalApplications ?? '—'}
+                  </div>
+                  <p className="text-[11px] text-slate-500">Gross submissions across all campuses</p>
+                </div>
+
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Unique Applicants</span>
+                    <Users className="w-4 h-4 text-indigo-600" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-900">
+                    {collegeAnalyticsData?.summary?.uniqueApplicants ?? '—'}
+                  </div>
+                  <p className="text-[11px] text-slate-500">Individual student candidates</p>
+                </div>
+
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Campuses</span>
+                    <Building2 className="w-4 h-4 text-amber-600" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-900">
+                    {collegeAnalyticsData?.summary?.participatingCollegesCount ?? 0}
+                    <span className="text-sm font-semibold text-slate-400">
+                      {' '}/ {collegeAnalyticsData?.summary?.invitedCollegesCount ?? 0}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Active participating vs invited</p>
+                </div>
+
+                <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-1">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Selections</span>
+                    <Award className="w-4 h-4 text-emerald-600" />
+                  </div>
+                  <div className="text-2xl font-black text-emerald-600">
+                    {collegeAnalyticsData?.summary?.statuses?.selected ?? 0}
+                  </div>
+                  <p className="text-[11px] text-slate-500">Offers / selections confirmed</p>
+                </div>
+              </div>
+
+              {/* Status Breakdown Bar */}
+              {collegeAnalyticsData?.summary?.statuses && (
+                <div className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-xs">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold text-slate-700">Funnel Status Distribution</span>
+                    <span className="text-[11px] text-slate-400">Across all institutions</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                    <div className="p-2.5 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-sky-800">Applied</span>
+                      <span className="font-mono font-black text-sm text-sky-700">
+                        {collegeAnalyticsData.summary.statuses.applied || 0}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-indigo-800">Shortlisted</span>
+                      <span className="font-mono font-black text-sm text-indigo-700">
+                        {collegeAnalyticsData.summary.statuses.shortlisted || 0}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-amber-800">Interview</span>
+                      <span className="font-mono font-black text-sm text-amber-700">
+                        {collegeAnalyticsData.summary.statuses.interview || 0}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-emerald-800">Selected</span>
+                      <span className="font-mono font-black text-sm text-emerald-700">
+                        {collegeAnalyticsData.summary.statuses.selected || 0}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-rose-800">Rejected</span>
+                      <span className="font-mono font-black text-sm text-rose-700">
+                        {collegeAnalyticsData.summary.statuses.rejected || 0}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* College Breakdown Cards */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-indigo-600" />
+                    <span>Campus Breakdown & Conversion</span>
+                  </h3>
+                  <span className="text-xs text-slate-500">
+                    {collegeAnalyticsData?.colleges?.length || 0} College{collegeAnalyticsData?.colleges?.length === 1 ? '' : 's'} registered
+                  </span>
+                </div>
+
+                {loadingCollegeAnalytics && !collegeAnalyticsData ? (
+                  <div className="p-12 text-center bg-white rounded-3xl border border-slate-200/80">
+                    <RotateCw className="w-6 h-6 animate-spin text-indigo-600 mx-auto mb-2" />
+                    <p className="text-xs text-slate-500 font-medium">Computing college-wise analytics...</p>
+                  </div>
+                ) : !collegeAnalyticsData?.colleges || collegeAnalyticsData.colleges.length === 0 ? (
+                  <div className="p-8 text-center bg-white rounded-3xl border border-slate-200/80 text-slate-500 text-xs">
+                    No participating colleges found for this drive.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {collegeAnalyticsData.colleges.map((col) => {
+                      const isFilterActive = analyticsCollegeFilter === col.collegeId;
+                      return (
+                        <div
+                          key={col.collegeId}
+                          className={`bg-white rounded-3xl border p-5 shadow-xs transition-all space-y-3 flex flex-col justify-between ${
+                            isFilterActive
+                              ? 'border-indigo-500 ring-2 ring-indigo-500/20'
+                              : 'border-slate-200/80 hover:border-slate-300'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <h4 className="font-bold text-slate-900 text-sm leading-snug">{col.collegeName}</h4>
+                                <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
+                                  {col.collegeCode && (
+                                    <span className="px-1.5 py-0.5 rounded bg-slate-100 font-mono font-semibold text-slate-600">
+                                      {col.collegeCode}
+                                    </span>
+                                  )}
+                                  {(col.city || col.state) && (
+                                    <span className="flex items-center gap-1">
+                                      <MapPin className="w-3 h-3 text-slate-400" />
+                                      {[col.city, col.state].filter(Boolean).join(', ')}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-50 text-indigo-700 shrink-0">
+                                {col.uniqueApplicants} Student{col.uniqueApplicants === 1 ? '' : 's'}
+                              </span>
+                            </div>
+
+                            {/* Progress & Selection Rate */}
+                            <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-500 font-medium">Selection Rate</span>
+                                <span className="font-bold text-slate-900">{col.selectionRate}%</span>
+                              </div>
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                                  style={{ width: `${Math.min(100, Math.max(0, col.selectionRate))}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Stats metrics */}
+                            <div className="grid grid-cols-2 gap-2 mt-3 pt-2 text-xs">
+                              <div className="p-2 rounded-xl bg-slate-50">
+                                <span className="text-[10px] text-slate-500 block">Avg CGPA</span>
+                                <span className="font-bold text-slate-800">
+                                  {col.averageCgpa !== null ? col.averageCgpa : 'N/A'}
+                                </span>
+                              </div>
+                              <div className="p-2 rounded-xl bg-slate-50">
+                                <span className="text-[10px] text-slate-500 block">Applications</span>
+                                <span className="font-bold text-slate-800">{col.totalApplications}</span>
+                              </div>
+                            </div>
+
+                            {/* Mini Status Pills */}
+                            <div className="flex flex-wrap gap-1.5 mt-3 pt-2">
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-sky-50 text-sky-700 font-medium">
+                                App: {col.statuses.applied}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-medium">
+                                Short: {col.statuses.shortlisted}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 font-medium">
+                                Int: {col.statuses.interview}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold">
+                                Sel: {col.statuses.selected}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 font-medium">
+                                Rej: {col.statuses.rejected}
+                              </span>
+                            </div>
+
+                            {/* Top Branches */}
+                            {col.branches && Object.keys(col.branches).length > 0 && (
+                              <div className="mt-2.5 text-[11px] text-slate-500 flex flex-wrap items-center gap-1">
+                                <span className="font-semibold text-slate-600">Branches:</span>
+                                {Object.entries(col.branches).slice(0, 3).map(([branchName, count]) => (
+                                  <span key={branchName} className="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] text-slate-700">
+                                    {branchName} ({count})
+                                  </span>
+                                ))}
+                                {Object.keys(col.branches).length > 3 && (
+                                  <span className="text-[10px] text-slate-400">+{Object.keys(col.branches).length - 3} more</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isFilterActive) {
+                                  setAnalyticsCollegeFilter('all');
+                                } else {
+                                  setAnalyticsCollegeFilter(col.collegeId);
+                                }
+                                setAnalyticsPage(1);
+                              }}
+                              className={`w-full py-1.5 px-3 rounded-xl text-xs font-bold transition-all text-center ${
+                                isFilterActive
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {isFilterActive ? 'Clear College Filter' : 'Filter Candidates'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Applicant Explorer Section */}
+              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden space-y-0">
+                {/* Explorer Header & Filters */}
+                <div className="p-6 border-b border-slate-100 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-black text-slate-900">Campus Applicant Roster</h3>
+                      <p className="text-xs text-slate-500">
+                        Search and filter applicants across colleges, status categories, or branch qualifications.
+                      </p>
+                    </div>
+                    {collegeAnalyticsData?.pagination && (
+                      <span className="text-xs font-bold text-slate-500">
+                        Total {collegeAnalyticsData.pagination.total} Applicant{collegeAnalyticsData.pagination.total === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    {/* Search */}
+                    <div className="sm:col-span-5 relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="Search student name, enrollment, branch, email..."
+                        value={analyticsSearchInput}
+                        onChange={(e) => setAnalyticsSearchInput(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none placeholder:text-slate-400"
+                      />
+                      {analyticsSearchInput && (
+                        <button
+                          type="button"
+                          onClick={() => setAnalyticsSearchInput('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* College Filter */}
+                    <div className="sm:col-span-4">
+                      <select
+                        value={analyticsCollegeFilter}
+                        onChange={(e) => {
+                          setAnalyticsCollegeFilter(e.target.value);
+                          setAnalyticsPage(1);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-700 font-medium"
+                      >
+                        <option value="all">All Participating Colleges</option>
+                        {collegeAnalyticsData?.colleges?.map((c) => (
+                          <option key={c.collegeId} value={c.collegeId}>
+                            {c.collegeName} ({c.uniqueApplicants})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Status Filter */}
+                    <div className="sm:col-span-3">
+                      <select
+                        value={analyticsStatusFilter}
+                        onChange={(e) => {
+                          setAnalyticsStatusFilter(e.target.value);
+                          setAnalyticsPage(1);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-700 font-medium"
+                      >
+                        <option value="all">All Statuses</option>
+                        <option value="applied">Applied</option>
+                        <option value="shortlisted">Shortlisted</option>
+                        <option value="interview">Interview</option>
+                        <option value="selected">Selected</option>
+                        <option value="rejected">Rejected</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Active filters pill bar if any filter is active */}
+                  {(analyticsCollegeFilter !== 'all' || analyticsStatusFilter !== 'all' || analyticsDebouncedSearch) && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                      <span className="text-slate-400 font-semibold text-[11px]">Active Filters:</span>
+                      {analyticsCollegeFilter !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-semibold text-[11px]">
+                          <span>
+                            College:{' '}
+                            {collegeAnalyticsData?.colleges?.find((c) => c.collegeId === analyticsCollegeFilter)?.collegeName || analyticsCollegeFilter}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAnalyticsCollegeFilter('all');
+                              setAnalyticsPage(1);
+                            }}
+                            className="hover:text-indigo-900"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                      {analyticsStatusFilter !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-semibold text-[11px]">
+                          <span>Status: {analyticsStatusFilter}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAnalyticsStatusFilter('all');
+                              setAnalyticsPage(1);
+                            }}
+                            className="hover:text-indigo-900"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                      {analyticsDebouncedSearch && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-semibold text-[11px]">
+                          <span>Query: "{analyticsDebouncedSearch}"</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAnalyticsSearchInput('');
+                              setAnalyticsDebouncedSearch('');
+                              setAnalyticsPage(1);
+                            }}
+                            className="hover:text-indigo-900"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnalyticsCollegeFilter('all');
+                          setAnalyticsStatusFilter('all');
+                          setAnalyticsSearchInput('');
+                          setAnalyticsDebouncedSearch('');
+                          setAnalyticsPage(1);
+                        }}
+                        className="text-[11px] text-slate-500 hover:text-rose-600 underline ml-2"
+                      >
+                        Reset All
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                        <th className="py-3 px-4">Candidate</th>
+                        <th className="py-3 px-4">Enrollment No</th>
+                        <th className="py-3 px-4">Institution / Campus</th>
+                        <th className="py-3 px-4">Branch & CGPA</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4">Applied Date</th>
+                        <th className="py-3 px-4 text-center">Resume</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {loadingCollegeAnalytics ? (
+                        <tr>
+                          <td colSpan={7} className="py-12 text-center text-slate-400">
+                            <RotateCw className="w-5 h-5 animate-spin mx-auto mb-2 text-indigo-600" />
+                            Loading applicant records...
+                          </td>
+                        </tr>
+                      ) : !collegeAnalyticsData?.applicants || collegeAnalyticsData.applicants.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-10 text-center text-slate-500">
+                            No applicants found matching your filter criteria.
+                          </td>
+                        </tr>
+                      ) : (
+                        collegeAnalyticsData.applicants.map((cand) => {
+                          let statusPillClass = 'bg-slate-100 text-slate-700';
+                          if (cand.status === 'selected') statusPillClass = 'bg-emerald-100 text-emerald-800';
+                          else if (cand.status === 'rejected') statusPillClass = 'bg-rose-100 text-rose-800';
+                          else if (cand.status === 'shortlisted') statusPillClass = 'bg-indigo-100 text-indigo-800';
+                          else if (cand.status === 'interview') statusPillClass = 'bg-amber-100 text-amber-800';
+                          else if (cand.status === 'applied') statusPillClass = 'bg-sky-100 text-sky-800';
+
+                          return (
+                            <tr key={cand._id} className="hover:bg-slate-50/70 transition-colors">
+                              <td className="py-3 px-4">
+                                <div className="font-bold text-slate-900">{cand.name}</div>
+                                <div className="text-[11px] text-slate-500">{cand.email}</div>
+                                {cand.phone && <div className="text-[10px] text-slate-400">{cand.phone}</div>}
+                              </td>
+                              <td className="py-3 px-4 font-mono font-semibold text-slate-700">
+                                {cand.enrollmentNo || '—'}
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="font-semibold text-slate-800">{cand.collegeName}</div>
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="font-medium text-slate-800">{cand.branch || '—'}</div>
+                                {cand.cgpa !== null && (
+                                  <div className="text-[11px] text-slate-500">CGPA: <span className="font-bold text-slate-700">{cand.cgpa}</span></div>
+                                )}
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusPillClass}`}>
+                                  {cand.status}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-slate-500 whitespace-nowrap text-[11px]">
+                                {formatISTDateTime(cand.appliedAt)}
+                              </td>
+                              <td className="py-3 px-4 text-center">
+                                {cand.resumeUrl ? (
+                                  <a
+                                    href={cand.resumeUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold transition-all"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    <span>View</span>
+                                  </a>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400">None</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination footer */}
+                {collegeAnalyticsData?.pagination && collegeAnalyticsData.pagination.pages > 1 && (
+                  <div className="p-4 border-t border-slate-100 flex items-center justify-between gap-4 text-xs">
+                    <span className="text-slate-500">
+                      Showing page {collegeAnalyticsData.pagination.page} of {collegeAnalyticsData.pagination.pages} ({collegeAnalyticsData.pagination.total} total)
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAnalyticsPage((p) => Math.max(1, p - 1))}
+                        disabled={collegeAnalyticsData.pagination.page <= 1}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAnalyticsPage((p) => Math.min(collegeAnalyticsData.pagination.pages, p + 1))}
+                        disabled={collegeAnalyticsData.pagination.page >= collegeAnalyticsData.pagination.pages}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -4946,6 +5617,23 @@ const DrivePipeline = () => {
                 </div>
                 <p className="text-slate-500 text-[11px] font-mono leading-relaxed">
                   text, optionA, optionB, optionC, optionD, correct (A/B/C/D), marks, negative, section
+                </p>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Answer Format</label>
+                <select
+                  value={questionAnswerFormat}
+                  onChange={(e) => setQuestionAnswerFormat(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-semibold bg-white focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  <option value="auto">Auto-detect format (Recommended)</option>
+                  <option value="letter">Letter Options: A, B, C, D</option>
+                  <option value="one_based">1-Based Numeric: 1, 2, 3, 4</option>
+                  <option value="zero_based">0-Based Numeric: 0, 1, 2, 3</option>
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Specify whether correct answers in your CSV use letters (A-D) or numbers (1-4 or 0-3).
                 </p>
               </div>
 

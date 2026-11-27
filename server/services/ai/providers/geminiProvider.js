@@ -2,18 +2,48 @@
  * Gemini AI Provider (Google Generative AI REST API with tool / function calling)
  */
 
+const { getGeminiConfig, sanitizeProviderError, resolveModelForProvider } = require('../aiConfig');
+
 class GeminiProvider {
   constructor() {
     this.name = 'gemini';
   }
 
-  async generateCompletion({ systemPrompt, userPrompt, model, temperature = 0.1, timeoutMs = 20000 }) {
-    const apiKey = process.env.AI_API_KEY;
+  /**
+   * Generates a single structured completion
+   *
+   * @param {Object} options
+   * @param {string} options.systemPrompt
+   * @param {string} options.userPrompt
+   * @param {string} [options.model]
+   * @param {number} [options.temperature=0.1]
+   * @param {number} [options.timeoutMs=20000]
+   * @param {string} [options.apiKey]
+   * @param {boolean} [options.returnMeta=false]
+   * @returns {Promise<string|{text: string, usage: object, model: string}>}
+   */
+  async generateCompletion({
+    systemPrompt,
+    userPrompt,
+    model = null,
+    temperature = 0.1,
+    timeoutMs = 20000,
+    apiKey: optApiKey = null,
+    returnMeta = false,
+  }) {
+    const config = getGeminiConfig();
+    const apiKey = (optApiKey || config.apiKey || '').trim();
+
     if (!apiKey) {
-      throw new Error('Gemini API key is missing');
+      const err = new Error('Gemini API key is missing or unconfigured.');
+      err.code = 'AUTHENTICATION_ERROR';
+      err.status = 401;
+      err.statusCode = 401;
+      err.isAuthError = true;
+      throw err;
     }
 
-    const selectedModel = model || process.env.AI_MODEL || 'gemini-1.5-flash';
+    const selectedModel = resolveModelForProvider('gemini', model, { useFast: false });
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
 
     const controller = new AbortController();
@@ -45,20 +75,52 @@ class GeminiProvider {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
-        const err = new Error(`Gemini API responded with status ${response.status}: ${errorText}`);
+        const cleanMsg = sanitizeProviderError(errorText, 'gemini');
+        const err = new Error(`Gemini API responded with status ${response.status}: ${cleanMsg}`);
         err.status = response.status;
         err.statusCode = response.status;
+
+        if (response.status === 401 || response.status === 403) {
+          err.code = 'AUTHENTICATION_ERROR';
+          err.isAuthError = true;
+        } else if (response.status === 400 || response.status === 404) {
+          err.code = 'INVALID_REQUEST';
+          err.isClientError = true;
+        } else if (response.status === 429) {
+          err.code = 'RATE_LIMIT';
+          err.isRateLimit = true;
+        }
+
         throw err;
       }
 
       const data = await response.json();
       const textContent =
         data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+      if (returnMeta) {
+        const usage = data.usageMetadata
+          ? {
+              promptTokens: data.usageMetadata.promptTokenCount || 0,
+              completionTokens: data.usageMetadata.candidatesTokenCount || 0,
+              totalTokens: data.usageMetadata.totalTokenCount || 0,
+            }
+          : null;
+
+        return {
+          text: textContent,
+          usage,
+          model: selectedModel,
+        };
+      }
+
       return textContent;
     } catch (err) {
       if (err.name === 'AbortError') {
         const timeoutErr = new Error(`Gemini API request timed out after ${timeoutMs}ms`);
         timeoutErr.status = 504;
+        timeoutErr.statusCode = 504;
+        timeoutErr.code = 'ETIMEDOUT';
         throw timeoutErr;
       }
       throw err;
@@ -76,6 +138,7 @@ class GeminiProvider {
    * @param {string} [options.model]
    * @param {number} [options.temperature=0.2]
    * @param {number} [options.timeoutMs=25000]
+   * @param {string} [options.apiKey]
    */
   async generateChatCompletionWithTools({
     messages = [],
@@ -83,13 +146,21 @@ class GeminiProvider {
     model = null,
     temperature = 0.2,
     timeoutMs = 25000,
+    apiKey: optApiKey = null,
   }) {
-    const apiKey = process.env.AI_API_KEY;
+    const config = getGeminiConfig();
+    const apiKey = (optApiKey || config.apiKey || '').trim();
+
     if (!apiKey) {
-      throw new Error('Gemini API key is missing');
+      const err = new Error('Gemini API key is missing or unconfigured.');
+      err.code = 'AUTHENTICATION_ERROR';
+      err.status = 401;
+      err.statusCode = 401;
+      err.isAuthError = true;
+      throw err;
     }
 
-    const selectedModel = model || process.env.AI_MODEL || 'gemini-1.5-flash';
+    const selectedModel = resolveModelForProvider('gemini', model, { useFast: true });
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
 
     const controller = new AbortController();
@@ -180,9 +251,22 @@ class GeminiProvider {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
-        const err = new Error(`Gemini API responded with status ${response.status}: ${errorText}`);
+        const cleanMsg = sanitizeProviderError(errorText, 'gemini');
+        const err = new Error(`Gemini API responded with status ${response.status}: ${cleanMsg}`);
         err.status = response.status;
         err.statusCode = response.status;
+
+        if (response.status === 401 || response.status === 403) {
+          err.code = 'AUTHENTICATION_ERROR';
+          err.isAuthError = true;
+        } else if (response.status === 400 || response.status === 404) {
+          err.code = 'INVALID_REQUEST';
+          err.isClientError = true;
+        } else if (response.status === 429) {
+          err.code = 'RATE_LIMIT';
+          err.isRateLimit = true;
+        }
+
         throw err;
       }
 
@@ -208,15 +292,27 @@ class GeminiProvider {
         }
       }
 
+      const usage = data.usageMetadata
+        ? {
+            promptTokens: data.usageMetadata.promptTokenCount || 0,
+            completionTokens: data.usageMetadata.candidatesTokenCount || 0,
+            totalTokens: data.usageMetadata.totalTokenCount || 0,
+          }
+        : null;
+
       return {
         message: { content, tool_calls: toolCalls },
         content,
         toolCalls,
+        usage,
+        model: selectedModel,
       };
     } catch (err) {
       if (err.name === 'AbortError') {
         const timeoutErr = new Error(`Gemini API request timed out after ${timeoutMs}ms`);
         timeoutErr.status = 504;
+        timeoutErr.statusCode = 504;
+        timeoutErr.code = 'ETIMEDOUT';
         throw timeoutErr;
       }
       throw err;

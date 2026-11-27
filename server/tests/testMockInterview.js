@@ -13,6 +13,7 @@
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
 process.env.AI_PROVIDER = 'mock';
+process.env.AI_PROVIDER_CHAIN = 'mock';
 process.env.AI_USER_DAILY_MOCK_CAP = '3';
 
 const express = require('express');

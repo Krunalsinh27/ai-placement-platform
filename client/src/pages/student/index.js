@@ -8,4 +8,7 @@ export { default as StudentProfile } from './StudentProfile';
 export { default as StudentInterviewRoom } from './StudentInterviewRoom';
 export { default as StudentAptitudeTest } from './StudentAptitudeTest';
 export { default as MockInterview } from './MockInterview';
-export { default as ResumeBuilder } from './ResumeBuilder';
+export { default as ResumeBuilder } from './resume-studio/StudioDashboard';
+export { default as ResumeStudio } from './resume-studio/StudioDashboard';
+export { default as StudioEditor } from './resume-studio/StudioEditor';
+export { default as StudioWizard } from './resume-studio/StudioWizard';

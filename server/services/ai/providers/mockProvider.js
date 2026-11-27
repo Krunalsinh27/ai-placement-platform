@@ -27,7 +27,7 @@ class MockProvider {
     this.mockSkillGapResponse = null;
     this.mockWeeklySummaryResponse = null;
     this.mockTitleResponse = null;
-    this.mockTitleResponse = null;
+    this.mockSuggestResponse = null;
     this.forceDelayMs = 0;
     this.forceFailCount = 0;
   }
@@ -54,6 +54,7 @@ class MockProvider {
     this.mockSkillGapResponse = null;
     this.mockWeeklySummaryResponse = null;
     this.mockTitleResponse = null;
+    this.mockSuggestResponse = null;
     this.lastTemperature = null;
   }
 
@@ -283,6 +284,12 @@ class MockProvider {
       });
     }
 
+    if (this.mockSuggestResponse !== null) {
+      return typeof this.mockSuggestResponse === 'string'
+        ? this.mockSuggestResponse
+        : JSON.stringify(this.mockSuggestResponse);
+    }
+
     if (mode === 'tailor' || mode === 'tailor_repair') {
       if (mode === 'tailor_repair' && this.mockTailorRepairResponse !== null) {
         return typeof this.mockTailorRepairResponse === 'string'
@@ -293,6 +300,44 @@ class MockProvider {
         return typeof this.mockTailorResponse === 'string'
           ? this.mockTailorResponse
           : JSON.stringify(this.mockTailorResponse);
+      }
+
+      // Check if this is a Resume Studio single suggestion prompt
+      if (systemPrompt && systemPrompt.includes('expert resume writer')) {
+        if (userPrompt.includes('Original Bullet:')) {
+          const match = userPrompt.match(/Original Bullet:\s*"([^"]+)"/);
+          const orig = match ? match[1].trim() : 'Built web features';
+          const core = orig.replace(/^(worked|collaborated|built|developed|handled|helped|created|assisted)\s+(on|with|in)?\s*/i, '');
+          return JSON.stringify({
+            proposed: `Developed ${core} [add your real number]%`,
+            explanation: 'Replaces passive wording with a decisive action verb and highlights quantifiable performance impact.',
+          });
+        }
+        if (userPrompt.includes('Original Summary:')) {
+          const match = userPrompt.match(/Original Summary:\s*"([^"]+)"/);
+          const orig = match ? match[1].trim() : 'Full-stack software developer';
+          return JSON.stringify({
+            proposed: `Passionate engineer experienced in ${orig}`,
+            explanation: 'Refined summary with strong positioning for target role.',
+          });
+        }
+        if (userPrompt.includes('Candidate Existing Skills:')) {
+          const afterSkills = userPrompt.split('Candidate Existing Skills:')[1]?.trim() || '[]';
+          let skills = [];
+          try {
+            skills = JSON.parse(afterSkills);
+          } catch {
+            const startIdx = afterSkills.indexOf('[');
+            const endIdx = afterSkills.lastIndexOf(']');
+            if (startIdx !== -1 && endIdx !== -1) {
+              skills = JSON.parse(afterSkills.slice(startIdx, endIdx + 1));
+            }
+          }
+          return JSON.stringify({
+            proposed: Array.isArray(skills) ? [...skills].reverse() : [],
+            explanation: 'Reordered skills to emphasize relevant competencies first.',
+          });
+        }
       }
       // Extract original bullets from userPrompt
       const bulletMatches = userPrompt.match(/Original Bullet:\s*"([^"]+)"/g) || [];
@@ -326,11 +371,20 @@ class MockProvider {
       }
       const roleMatch = userPrompt.match(/Target Role:\s*([^\n]+)/i);
       const companyMatch = userPrompt.match(/Target Company:\s*([^\n]+)/i);
+      const collegeMatch = userPrompt.match(/College:\s*([^\n]+)/i);
+      const branchMatch = userPrompt.match(/Branch\/Major:\s*([^\n]+)/i);
+      const skillsMatch = userPrompt.match(/Confirmed Technical Skills:\s*([^\n]+)/i);
       const role = roleMatch ? roleMatch[1].trim() : 'Software Engineer';
       const company = companyMatch ? companyMatch[1].trim() : 'the company';
+      const college = collegeMatch ? collegeMatch[1].trim() : 'University';
+      const branch = branchMatch ? branchMatch[1].trim() : 'Engineering';
+      const skills =
+        skillsMatch && skillsMatch[1] && skillsMatch[1].trim()
+          ? skillsMatch[1].trim()
+          : 'software engineering and full-stack development';
 
       return JSON.stringify({
-        coverLetter: `Dear Hiring Team,\n\nI am writing to express my enthusiastic interest in the ${role} position at ${company}. Having built scalable full-stack applications and focused heavily on performance optimization, I am excited about the opportunity to contribute to your engineering team.\n\nThroughout my academic coursework and hands-on projects, I have developed strong proficiencies in data structures, API design, and database indexing. In my recent full-stack platform project, I engineered core services and integrated asynchronous pipelines to maintain sub-second response times under peak usage. My practical experience directly aligns with the technical challenges and quality standards at ${company}.\n\nThank you for considering my application. I look forward to discussing how my technical background and problem-solving mindset can bring immediate value to ${company}.\n\nSincerely,\nCandidate`,
+        coverLetter: `Dear Hiring Team,\n\nI am writing to express my enthusiastic interest in the ${role} position at ${company}. As a final-year student studying ${branch} at ${college}, I have built effective software solutions and focused on scalable application design.\n\nThroughout my academic coursework and hands-on projects, I have developed strong proficiencies in ${skills}. My practical experience directly aligns with the technical challenges and quality standards at ${company}.\n\nThank you for considering my application. I look forward to discussing how my technical background and problem-solving mindset can bring immediate value to ${company}.\n\nSincerely,\nCandidate`,
       });
     }
 

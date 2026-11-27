@@ -7,7 +7,10 @@ let lastRateLimitErrorLogTs = 0;
 const activeClients = new Set();
 
 /**
- * Check whether REDIS_URL environment variable is set
+ * Check whether REDIS_URL environment variable is set.
+ * Local development note:
+ * To run a local Redis container matching production requirements:
+ *   docker run -d --name placement-redis -p 6379:6379 redis:7-alpine
  */
 const isRedisConfigured = () => {
   return Boolean(process.env.REDIS_URL && process.env.REDIS_URL.trim());
@@ -77,7 +80,7 @@ const getRateLimitRedisOptions = (rawUrl) => {
     enableOfflineQueue: false,
     maxRetriesPerRequest: 1,
     commandTimeout: 800,
-    connectTimeout: 800,
+    connectTimeout: 1500, // allow 1.5s for initial TCP connection establishment
     enableReadyCheck: false,
     retryStrategy(times) {
       if (process.env.NODE_ENV === 'test') {
@@ -123,6 +126,10 @@ const createRedisClient = (extraOptions = {}) => {
     checkMaxMemoryPolicy(client);
   });
 
+  if (typeof client.setMaxListeners === 'function') {
+    client.setMaxListeners(30);
+  }
+
   activeClients.add(client);
   client.on('end', () => {
     activeClients.delete(client);
@@ -147,13 +154,20 @@ const createRateLimitRedisClient = (extraOptions = {}) => {
   });
 
   client.on('error', (err) => {
-    // SECURITY: NEVER log REDIS_URL
+    // SECURITY: NEVER log REDIS_URL or credentials
     const now = Date.now();
     if (process.env.NODE_ENV !== 'test' && now - lastRateLimitErrorLogTs >= 60000) {
       lastRateLimitErrorLogTs = now;
-      console.warn('[Redis] Rate-limit client connection error:', err.message);
+      const sanitized = (err?.message || '')
+        .replace(/redis:\/\/[^\s@]+@/gi, 'redis://***@')
+        .replace(/rediss:\/\/[^\s@]+@/gi, 'rediss://***@');
+      console.warn('[Redis] Rate-limit client connection error:', sanitized);
     }
   });
+
+  if (typeof client.setMaxListeners === 'function') {
+    client.setMaxListeners(30);
+  }
 
   activeClients.add(client);
   client.on('end', () => {
@@ -250,6 +264,96 @@ const getBullPrefix = () => {
   return 'bull';
 };
 
+/**
+ * Safely wait for an ioredis client to reach 'ready' state if it is currently establishing connection.
+ * Handles: ready, connecting, connect, reconnecting, close, end, error.
+ * Bounded by maxWaitMs (default 800ms).
+ * Reuses a single in-flight readiness promise across multiple concurrent callers to avoid listener bloat.
+ * Safe for custom/mock test clients without event emitter methods.
+ */
+const waitForClientReady = (client, maxWaitMs = 800) => {
+  if (!client) return Promise.resolve(false);
+  if (client.status === 'ready') return Promise.resolve(true);
+  if (client.status === 'end') return Promise.resolve(false);
+  if (typeof client.once !== 'function') {
+    return Promise.resolve(client.status === 'ready');
+  }
+
+  if (client._readyPromise) {
+    return client._readyPromise;
+  }
+
+  client._readyPromise = new Promise((resolve) => {
+    let timer = null;
+    let settled = false;
+
+    const cleanup = () => {
+      delete client._readyPromise;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (typeof client.removeListener === 'function') {
+        client.removeListener('ready', onReady);
+        client.removeListener('end', onEnd);
+        client.removeListener('error', onError);
+        client.removeListener('close', onClose);
+      }
+    };
+
+    const onReady = () => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        resolve(true);
+      }
+    };
+
+    const onEnd = () => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        resolve(false);
+      }
+    };
+
+    const onClose = () => {
+      if (process.env.NODE_ENV === 'test' || client.status === 'end') {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve(false);
+        }
+      }
+    };
+
+    const onError = () => {
+      if (client.status === 'end' || (process.env.NODE_ENV === 'test' && client.status === 'close')) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve(false);
+        }
+      }
+    };
+
+    timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        resolve(client.status === 'ready');
+      }
+    }, maxWaitMs);
+
+    client.once('ready', onReady);
+    client.once('end', onEnd);
+    client.on('error', onError);
+    client.once('close', onClose);
+  });
+
+  return client._readyPromise;
+};
+
 module.exports = {
   isRedisConfigured,
   createRedisClient,
@@ -262,4 +366,5 @@ module.exports = {
   checkMaxMemoryPolicy,
   validateRedisConfig,
   closeRedisConnections,
+  waitForClientReady,
 };

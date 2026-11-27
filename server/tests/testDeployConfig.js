@@ -2,6 +2,8 @@ process.env.NODE_ENV = 'test';
 process.env.EMAIL_MODE = 'console';
 
 const assert = require('assert');
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const mongoose = require('mongoose');
 const { getTestDbUri } = require('./testHelper');
@@ -151,6 +153,56 @@ async function runDeployConfigTests() {
       delete process.env.BREVO_SENDER_EMAIL;
       delete process.env.BREVO_SENDER_NAME;
     }
+
+    // 6. Test Vercel Cache-Control configuration (HTML app shell vs hashed /assets)
+    console.log('6. Testing Vercel Cache-Control configuration...');
+    const vercelConfigPath = path.join(__dirname, '../../client/vercel.json');
+    assert.ok(fs.existsSync(vercelConfigPath), 'client/vercel.json must exist');
+    const vercelConfig = JSON.parse(fs.readFileSync(vercelConfigPath, 'utf8'));
+
+    assert.ok(Array.isArray(vercelConfig.headers), 'vercel.json must have headers array');
+
+    // Rule 1: HTML app shell (restricted from /assets) sends no-store
+    const appShellRule = vercelConfig.headers.find(
+      (h) => h.source === '/((?!assets/).*)' || h.source.includes('?!assets')
+    );
+    assert.ok(appShellRule, 'vercel.json must have a rule restricting no-store from /assets');
+    const appShellCacheControl = appShellRule.headers.find(
+      (header) => header.key.toLowerCase() === 'cache-control'
+    );
+    assert.ok(appShellCacheControl, 'App shell rule must set Cache-Control header');
+    assert.ok(
+      appShellCacheControl.value.includes('no-store'),
+      'App shell Cache-Control must include no-store'
+    );
+
+    // Rule 2: Hashed /assets/* sends immutable long-lived cache
+    const assetsRule = vercelConfig.headers.find(
+      (h) => h.source === '/assets/(.*)' || h.source === '/assets/*'
+    );
+    assert.ok(assetsRule, 'vercel.json must have a rule for /assets/(.*)');
+    const assetsCacheControl = assetsRule.headers.find(
+      (header) => header.key.toLowerCase() === 'cache-control'
+    );
+    assert.ok(assetsCacheControl, 'Assets rule must set Cache-Control header');
+    assert.strictEqual(
+      assetsCacheControl.value,
+      'public, max-age=31536000, immutable',
+      'Assets Cache-Control must be "public, max-age=31536000, immutable"'
+    );
+    console.log('✓ vercel.json restricts no-store to HTML app shell and sets immutable caching for /assets/*\n');
+
+    // 7. Explicit dependency declaration tests (pdfjs-dist & jszip)
+    console.log('7. Testing explicit dependency resolution (pdfjs-dist & jszip)...');
+    const serverPkg = require('../package.json');
+    assert.ok(serverPkg.dependencies['pdfjs-dist'], 'server/package.json must declare pdfjs-dist');
+    assert.ok(serverPkg.dependencies['jszip'], 'server/package.json must declare jszip');
+
+    const resolvedPdfjs = require.resolve('pdfjs-dist');
+    assert.ok(resolvedPdfjs, 'require.resolve("pdfjs-dist") must succeed');
+    const resolvedJszip = require.resolve('jszip');
+    assert.ok(resolvedJszip, 'require.resolve("jszip") must succeed');
+    console.log(`✓ Both dependencies resolve explicitly: pdfjs-dist (${serverPkg.dependencies['pdfjs-dist']}), jszip (${serverPkg.dependencies['jszip']})\n`);
 
     console.log('======================================================');
     console.log('    ALL DEPLOYMENT CONFIG TESTS PASSED (100%)         ');

@@ -12,6 +12,18 @@ const conversationMetaSchema = new mongoose.Schema(
       required: true,
       unique: true,
       index: true,
+      validate: {
+        validator: function (v) {
+          return (
+            typeof v === 'string' &&
+            v.trim().length > 0 &&
+            v.trim().toLowerCase() !== 'null' &&
+            v.trim().toLowerCase() !== 'undefined' &&
+            v.trim() !== '[object Object]'
+          );
+        },
+        message: 'conversationId must be a valid non-empty string and cannot be "null" or "undefined"',
+      },
     },
     user: {
       type: mongoose.Schema.Types.ObjectId,

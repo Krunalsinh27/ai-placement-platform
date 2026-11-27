@@ -26,6 +26,11 @@ const PDFDocument = require('pdfkit');
 const JSZip = require('jszip');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
+// Explicitly enforce mock provider in test environment so tests do not consume live Groq/Gemini quota or trip live circuit breakers
+process.env.NODE_ENV = 'test';
+process.env.EMAIL_MODE = 'console';
+process.env.AI_PROVIDER = 'mock';
+process.env.AI_PROVIDER_CHAIN = 'mock';
 
 const {
   User,
@@ -39,6 +44,7 @@ const {
 } = require('../models');
 
 const mockProvider = require('../services/ai/providers/mockProvider');
+const { extractWithRules } = require('../services/ai/resumeParser');
 const {
   checkUnresolvedPlaceholders,
   compileBaseResume,
@@ -50,6 +56,7 @@ const {
   validateBulletRewriteDetailed,
   verifySourceFacts,
   extractComprehensiveWithRules,
+  parseEducationSection,
   BANNED_INFLATION_WORDS,
   ALLOW_LISTED_OPENING_VERBS,
   CONDITIONALLY_BANNED_WORDS,
@@ -2076,6 +2083,365 @@ Skills: nodejs, mongodb, redis
       pass(`Sample pass rate benchmark satisfied: ${passedCount}/10 (${passRate}%)`);
     } catch (err) {
       fail('Sample pass rate benchmark', err);
+    }
+
+    // =========================================================================
+    // TEST 23: COMPILEBASERESUME AUDIT: NEAR-EMPTY VS FULL PROFILE HONESTY
+    // =========================================================================
+    console.log('\n--- TEST 23: Audit compileBaseResume (Near-Empty vs Full Profile Honesty) ---');
+    try {
+      // 23.1 Near-empty student profile: must NOT invent ANY text, and must return missingFields[]
+      const emptyUser = await User.create({
+        name: 'Empty Candidate',
+        email: 'builder.test.empty@portal.com',
+        password: 'password123',
+        role: 'student',
+        college: collegeA._id,
+        isApproved: true,
+        isEmailVerified: true,
+      });
+      cleanupUsers.push(emptyUser._id);
+
+      const emptyStudent = await Student.create({
+        user: emptyUser._id,
+        college: collegeA._id,
+        enrollmentNo: 'RB-ENR-EMPTY-001',
+        phone: '9876543210',
+        cgpa: 7.0,
+        batchYear: 2026,
+        branch: 'CSE',
+      });
+      cleanupStudents.push(emptyStudent._id);
+
+      const emptyBaseResume = await compileBaseResume(emptyUser._id);
+
+      // Must produce zero invented content
+      assert.strictEqual(emptyBaseResume.contact.fullName, 'Empty Candidate');
+      assert.strictEqual(emptyBaseResume.summary, '', 'Must not invent generic summary');
+      assert.deepStrictEqual(emptyBaseResume.skills, [], 'Must not invent default skills');
+      assert.deepStrictEqual(emptyBaseResume.experience, [], 'Must not invent Software Engineering Intern');
+      assert.deepStrictEqual(emptyBaseResume.projects, [], 'Must not invent Technical Platform Project');
+      assert.deepStrictEqual(emptyBaseResume.education, [], 'Must not invent Bachelor of Technology / 2025');
+
+      // missingFields[] verification
+      assert.ok(Array.isArray(emptyBaseResume.missingFields), 'missingFields must be an array');
+      assert.ok(emptyBaseResume.missingFields.includes('summary'), 'missingFields must report summary');
+      assert.ok(emptyBaseResume.missingFields.includes('skills'), 'missingFields must report skills');
+      assert.ok(emptyBaseResume.missingFields.includes('experience'), 'missingFields must report experience');
+      assert.ok(emptyBaseResume.missingFields.includes('projects'), 'missingFields must report projects');
+      assert.ok(emptyBaseResume.missingFields.includes('education'), 'missingFields must report education');
+
+      // Also verify when user name is missing/empty, compileBaseResume produces empty fullName and reports it in missingFields
+      emptyUser.name = '';
+      await emptyUser.save({ validateBeforeSave: false });
+      const namelessResume = await compileBaseResume(emptyUser._id);
+      assert.strictEqual(namelessResume.contact.fullName, '', 'Must leave fullName empty when missing');
+      assert.ok(namelessResume.missingFields.includes('fullName'), 'missingFields must report fullName when name is empty');
+
+      // 23.2 Full student profile: must remain completely unchanged and populated
+      const fullBaseResume = await compileBaseResume(userA._id);
+      assert.strictEqual(fullBaseResume.contact.fullName, 'Devika Sharma');
+      assert.strictEqual(fullBaseResume.contact.email, 'builder.test.devika@portal.com');
+      assert.strictEqual(fullBaseResume.contact.phone, '9876501234');
+      assert.strictEqual(fullBaseResume.experience[0].company, 'Acme Cloud Labs');
+      assert.strictEqual(fullBaseResume.projects[0].title, 'Distributed Task Queue System');
+      assert.strictEqual(fullBaseResume.education[0].degree, 'Bachelor of Technology');
+      assert.ok(fullBaseResume.skills.length >= 2, 'Full student must retain all categorized skills');
+
+      // 23.3 Downstream PDF export with empty fields does not throw or re-insert generic text
+      const emptyPdfBuffers = [];
+      const mockStream = {
+        write: (chunk) => emptyPdfBuffers.push(chunk),
+        on: () => {},
+        once: () => {},
+        emit: () => {},
+        end: () => {},
+      };
+      generateResumePdf(emptyBaseResume, 'modern', mockStream);
+
+      pass('compileBaseResume audit: near-empty produces zero invented content, full profile unchanged, missingFields[] returned');
+    } catch (err) {
+      fail('compileBaseResume audit', err);
+    }
+
+    // =========================================================================
+    // TEST 24: RULE PARSER COMPARISON: extractComprehensiveWithRules vs extractWithRules
+    // =========================================================================
+    console.log('\n--- TEST 24: Rule Parsers Comparison ---');
+    try {
+      // 24.1 Near-empty input produces zero invented content in extractComprehensiveWithRules
+      const emptyParsed = extractComprehensiveWithRules('', {});
+      assert.strictEqual(emptyParsed.contact.fullName, '', 'Must not invent Candidate Name');
+      assert.strictEqual(emptyParsed.summary, '', 'Must not invent summary');
+      assert.deepStrictEqual(emptyParsed.experience, [], 'Must not invent experience');
+      assert.deepStrictEqual(emptyParsed.projects, [], 'Must not invent projects');
+      assert.deepStrictEqual(emptyParsed.education, [], 'Must not invent education');
+
+      // 24.2 Comparison: extractComprehensiveWithRules captures rich sections and full schema
+      const richResumeText = `Aarav Mehta
+Bangalore, India
+
+Summary
+Passionate engineer with high throughput distributed systems focus.
+
+Technical Skills
+Node.js, Docker, Kubernetes, PostgreSQL
+
+Work Experience
+Senior Backend Engineer | CloudScale Inc
+• Built real-time analytics streaming engine
+
+Key Projects
+Event Broker System
+• Implemented low-latency pub-sub broker
+
+Education
+B.Tech in Computer Science | National Institute of Technology | 2024
+
+Achievements
+• Ranked 1st in State Coding Olympiad
+
+Positions of Responsibility
+• Lead Organizer, TechFest 2023
+
+Awards
+• Best Engineering Innovation Award 2024
+
+Languages
+English, Hindi
+
+Interests
+Distributed Computing, Chess
+
+VOLUNTEER INITIATIVES
+• Mentored 50+ junior developers in open source`;
+
+      const comprehensiveResult = extractComprehensiveWithRules(richResumeText);
+      const atsRulesResult = extractWithRules(richResumeText);
+
+      // Verify extractComprehensiveWithRules preserves contact details and rich sections
+      assert.strictEqual(comprehensiveResult.contact.fullName, 'Aarav Mehta');
+      assert.ok(comprehensiveResult.achievements.length > 0, 'Must capture achievements');
+      assert.ok(comprehensiveResult.positionsOfResponsibility.length > 0, 'Must capture positions of responsibility');
+      assert.ok(comprehensiveResult.awards.length > 0, 'Must capture awards');
+      assert.ok(comprehensiveResult.languages.length > 0, 'Must capture languages');
+      assert.ok(comprehensiveResult.interests.length > 0, 'Must capture interests');
+      assert.ok(comprehensiveResult.additionalSections.length > 0, 'Must capture unclassified uppercase custom sections in additionalSections');
+
+      // Verify atsRulesResult targets Student.resumeProfile schema (flat skills, sliced caps, description string)
+      assert.ok(Array.isArray(atsRulesResult.skills) && typeof atsRulesResult.skills[0] === 'string', 'ATS rules returns flat string skills');
+      assert.ok(atsRulesResult.experience.length > 0 && typeof atsRulesResult.experience[0].description === 'string', 'ATS rules generates description string');
+      assert.strictEqual(atsRulesResult.achievements, undefined, 'ATS rules does not capture achievements (distinct ATS target schema)');
+
+      pass('Rule parsers comparison verified: distinct target models and zero invented content on empty input');
+    } catch (err) {
+      fail('Rule parsers comparison', err);
+    }
+
+    // =========================================================================
+    // TEST 25: ZOD VALIDATION ACROSS RESUME BUILDER ENDPOINTS
+    // =========================================================================
+    console.log('\n--- TEST 25: Zod Validation Across Resume Builder Endpoints ---');
+    try {
+      // 25.1 POST /api/resume-builder/source with invalid type enum
+      const badTypeRes = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ type: 'invalid_source_type' }),
+      });
+      assert.strictEqual(badTypeRes.status, 400);
+      const badTypeData = await badTypeRes.json();
+      assert.strictEqual(badTypeData.success, false);
+      assert.ok(badTypeData.message.includes("profile") || badTypeData.message.includes("type"));
+
+      // 25.2 POST /api/resume-builder/source with oversized text (>50000 chars)
+      const oversizedTextRes = await fetch(`${BASE_URL}/resume-builder/source`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ type: 'text', text: 'a'.repeat(50005) }),
+      });
+      assert.strictEqual(oversizedTextRes.status, 400);
+
+      // 25.3 POST /api/resume-builder/analyze-target with malformed driveId
+      const badDriveIdRes = await fetch(`${BASE_URL}/resume-builder/analyze-target`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ driveId: 'not-a-valid-24-hex-id' }),
+      });
+      assert.strictEqual(badDriveIdRes.status, 400);
+
+      // 25.4 POST /api/students/me/resume-builder/tailor with invalid sourceType enum
+      const badSourceTypeRes = await fetch(`${BASE_URL}/students/me/resume-builder/tailor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ resumeData: { skills: [] }, sourceType: 'unsupported' }),
+      });
+      assert.strictEqual(badSourceTypeRes.status, 400);
+
+      // 25.5 POST /api/students/me/resume-builder/export-pdf with invalid templateId
+      const badTemplateRes = await fetch(`${BASE_URL}/students/me/resume-builder/export-pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ resumeData: { contact: { fullName: 'Test' } }, templateId: 'unknown_tpl' }),
+      });
+      assert.strictEqual(badTemplateRes.status, 400);
+
+      // 25.6 GET /api/students/me/resume-builder/versions/:id with malformed ObjectId
+      const badIdRes = await fetch(`${BASE_URL}/students/me/resume-builder/versions/not-an-id`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${tokenA}` },
+      });
+      assert.strictEqual(badIdRes.status, 400);
+
+      // 25.7 DELETE /api/students/me/resume-builder/versions/:id with malformed ObjectId
+      const badDelIdRes = await fetch(`${BASE_URL}/students/me/resume-builder/versions/not-an-id`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${tokenA}` },
+      });
+      assert.strictEqual(badDelIdRes.status, 400);
+
+      // 25.8 GET /api/students/me/resume-builder/versions with pagination parameters
+      const pagedVersionsRes = await fetch(`${BASE_URL}/students/me/resume-builder/versions?page=1&limit=2`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${tokenA}` },
+      });
+      assert.strictEqual(pagedVersionsRes.status, 200);
+      const pagedData = await pagedVersionsRes.json();
+      assert.strictEqual(pagedData.success, true);
+      assert.strictEqual(pagedData.page, 1);
+      assert.strictEqual(pagedData.limit, 2);
+
+      pass('Strict Zod validation enforced across all Resume Builder endpoints');
+    } catch (err) {
+      fail('Zod validation endpoints', err);
+    }
+
+    // =========================================================================
+    // 26. PHASE 12b: EDUCATION PATTERN RECOGNITION & SUMMARY PROVENANCE
+    // =========================================================================
+    console.log('\n--- 26. PHASE 12b: EDUCATION PATTERN RECOGNITION & SUMMARY PROVENANCE ---');
+    try {
+      // 26.1 Sample Layout from user specification:
+      // Lines: "Sample Institute of Technology", "May 2027", "Example University June 2023", "B.E. in Computer Engineering CGPA", "7.23/10"
+      const sampleLayout = [
+        'Sample Institute of Technology',
+        'May 2027',
+        'Example University June 2023',
+        'B.E. in Computer Engineering CGPA',
+        '7.23/10',
+      ];
+      const res26_1 = parseEducationSection(sampleLayout);
+      assert.strictEqual(res26_1.entries.length, 1, 'Sample layout must group into exactly 1 education entry');
+      const edu1 = res26_1.entries[0];
+      assert.strictEqual(edu1.degree, 'B.E.', 'Degree must be recognized as B.E.');
+      assert.strictEqual(edu1.field, 'Computer Engineering', 'Field must be recognized as Computer Engineering');
+      assert.ok(
+        edu1.institution.includes('Sample Institute of Technology'),
+        'Institution must contain Sample Institute of Technology'
+      );
+      assert.ok(edu1.year.includes('May 2027'), 'Year must contain May 2027');
+      assert.ok(edu1.score.includes('7.23/10'), 'Score must contain 7.23/10');
+      assert.ok(edu1.score.includes('CGPA'), 'Score label CGPA must be joined with score value');
+
+      // 26.2 Single-line delimited layout
+      const singleLineLayout = [
+        'B.Tech in Information Technology | National Institute of Technology | 2020 - 2024 | 8.8 / 10 CGPA',
+      ];
+      const res26_2 = parseEducationSection(singleLineLayout);
+      assert.strictEqual(res26_2.entries.length, 1, 'Single-line layout must produce 1 entry');
+      assert.strictEqual(res26_2.entries[0].degree, 'B.Tech');
+      assert.strictEqual(res26_2.entries[0].field, 'Information Technology');
+      assert.strictEqual(res26_2.entries[0].institution, 'National Institute of Technology');
+      assert.strictEqual(res26_2.entries[0].year, '2020 - 2024');
+      assert.ok(res26_2.entries[0].score.includes('8.8 / 10'));
+
+      // 26.3 Sequential multi-degree layout (Master then Bachelor)
+      const multiDegreeLayout = [
+        'Master of Science in Data Science',
+        'Stanford University',
+        '2022 - 2024',
+        'Bachelor of Engineering in Mechanical',
+        'State Technical College',
+        '2018 - 2022',
+        '82%',
+      ];
+      const res26_3 = parseEducationSection(multiDegreeLayout);
+      assert.strictEqual(res26_3.entries.length, 2, 'Two sequential degrees must yield exactly 2 entries');
+      assert.strictEqual(res26_3.entries[0].degree, 'Master of Science');
+      assert.strictEqual(res26_3.entries[0].field, 'Data Science');
+      assert.strictEqual(res26_3.entries[0].institution, 'Stanford University');
+      assert.strictEqual(res26_3.entries[0].year, '2022 - 2024');
+
+      assert.strictEqual(res26_3.entries[1].degree, 'Bachelor of Engineering');
+      assert.strictEqual(res26_3.entries[1].field, 'Mechanical');
+      assert.strictEqual(res26_3.entries[1].institution, 'State Technical College');
+      assert.strictEqual(res26_3.entries[1].year, '2018 - 2022');
+      assert.strictEqual(res26_3.entries[1].score, '82%');
+
+      // 26.4 Score label on one line, score value on next line
+      const splitScoreLayout = [
+        'B.Sc in Mathematics',
+        'City Science College',
+        '2021',
+        'CGPA',
+        '9.1/10',
+      ];
+      const res26_4 = parseEducationSection(splitScoreLayout);
+      assert.strictEqual(res26_4.entries.length, 1);
+      assert.strictEqual(res26_4.entries[0].score, '9.1/10 CGPA');
+
+      // 26.5 Unconfident education layout produces warning and zero invented values
+      const unconfidentLayout = ['Student Activities Committee', 'Fall Semester'];
+      const warnings26_5 = [];
+      const res26_5 = parseEducationSection(unconfidentLayout, warnings26_5);
+      assert.ok(
+        warnings26_5.includes('Please check this education entry'),
+        'Unconfident entry must produce warning'
+      );
+
+      // 26.6 Summary provenance tests:
+      // a) No summary section -> summary is empty string
+      const textWithoutSummary = `
+John Doe
+john@example.com | 9876543210
+EDUCATION
+B.Tech in CS | State Univ | 2024
+SKILLS
+JavaScript, React, Node.js
+EXPERIENCE
+Software Intern | Tech Co | 2023 - 2024
+- Built REST APIs
+`;
+      const parsedNoSummary = extractComprehensiveWithRules(textWithoutSummary);
+      assert.strictEqual(parsedNoSummary.summary, '', 'Summary must be empty when no summary section exists in source text');
+
+      // b) Bulleted summary -> leading bullet stripped
+      const textWithBulletSummary = `
+Jane Doe
+jane@example.com | 9876543210
+SUMMARY
+• Results-driven full stack developer with 2+ years experience building cloud applications.
+SKILLS
+Python, React
+`;
+      const parsedBulletSummary = extractComprehensiveWithRules(textWithBulletSummary);
+      assert.strictEqual(
+        parsedBulletSummary.summary,
+        'Results-driven full stack developer with 2+ years experience building cloud applications.',
+        'Summary must have leading bullet characters stripped'
+      );
+
+      // c) AI Rule parser fallback (extractWithRules) must NOT generate synthetic summary
+      const aiRuleParsed = extractWithRules(textWithoutSummary);
+      assert.strictEqual(
+        aiRuleParsed.summary,
+        '',
+        'extractWithRules must NOT produce synthetic summary when resume text has no summary'
+      );
+
+      pass('Phase 12b: Education pattern recognition, multi-layout grouping, score joining, and summary provenance verified');
+    } catch (err) {
+      fail('Phase 12b tests', err);
     }
   } finally {
     console.log('\n--- CLEANING UP TEST FIXTURES ---');

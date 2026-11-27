@@ -4,10 +4,12 @@
  * Implements:
  * 1. Resilient Provider Fallback Chain (e.g. groq -> gemini -> rules)
  * 2. Per-provider Circuit Breaker with automatic cooldown and half-open probing
- * 3. Configurable timeout per call (Promise.race)
+ * 3. Configurable timeout per call bounded by AI_REQUEST_TIMEOUT_MS
  * 4. Exponential backoff retry with full jitter
  * 5. PII-Free Telemetry logging to AiCallLog and Sentry error hooks
  * 6. Granular per-feature flag enforcement
+ * 7. Strict provider-credential segregation and model compatibility checks
+ * 8. Authentication and Bad Request errors fail fast without unwanted fallback
  */
 
 const mockProvider = require('./providers/mockProvider');
@@ -17,6 +19,19 @@ const AiUsage = require('../../models/AiUsage');
 const AiCallLog = require('../../models/AiCallLog');
 const { logAiError } = require('../../utils/aiErrorLogger');
 const { isAiFeatureEnabled } = require('../../utils/featureFlags');
+const {
+  getPrimaryProvider,
+  getGroqConfig,
+  getGeminiConfig,
+  getProviderConfig,
+  resolveModelForProvider,
+  isFallbackEnabled,
+  getResolvedProviderChain,
+  isAiConfigured,
+  getRequestTimeoutMs,
+  sanitizeProviderError,
+  DEFAULT_TIMEOUT_MS,
+} = require('./aiConfig');
 
 // ==========================================
 // Circuit Breaker State & Constants
@@ -24,7 +39,7 @@ const { isAiFeatureEnabled } = require('../../utils/featureFlags');
 const CIRCUIT_CONFIG = {
   failureThreshold: 3, // Consecutive failures before tripping
   cooldownMs: 60_000,  // Cooldown time before probing (60 seconds)
-  defaultTimeoutMs: 12_000, // 12 seconds per external LLM call
+  defaultTimeoutMs: getRequestTimeoutMs(),
 };
 
 const circuitBreakers = {
@@ -103,8 +118,7 @@ function isCircuitOpen(providerName) {
 // Provider Registry & Resolution
 // ==========================================
 function getActiveProviderName() {
-  const provider = (process.env.AI_PROVIDER || 'none').toLowerCase().trim();
-  return provider;
+  return getPrimaryProvider();
 }
 
 function resolveProviderInstance(name) {
@@ -134,38 +148,9 @@ function getProvider() {
 
 /**
  * Resolves the ordered fallback chain of providers.
- * e.g., 'groq' -> ['groq', 'gemini', 'rules']
  */
 function getProviderChain() {
-  if (process.env.AI_PROVIDER_CHAIN && process.env.AI_PROVIDER_CHAIN.trim()) {
-    const parsed = process.env.AI_PROVIDER_CHAIN.split(',')
-      .map((p) => p.toLowerCase().trim())
-      .filter(Boolean);
-    if (parsed.length > 0) return parsed;
-  }
-
-  const primary = getActiveProviderName();
-  if (primary === 'mock') {
-    return ['mock', 'rules'];
-  }
-  if (primary === 'groq') {
-    return ['groq', 'gemini', 'rules'];
-  }
-  if (primary === 'gemini') {
-    return ['gemini', 'groq', 'rules'];
-  }
-
-  return [primary, 'rules'].filter(Boolean);
-}
-
-function isAiConfigured() {
-  const providerName = getActiveProviderName();
-  if (providerName === 'none' || !providerName) return false;
-  if (providerName === 'mock') {
-    return process.env.NODE_ENV !== 'production';
-  }
-  const hasKey = Boolean(process.env.AI_API_KEY && process.env.AI_API_KEY.trim());
-  return hasKey;
+  return getResolvedProviderChain();
 }
 
 /**
@@ -176,6 +161,8 @@ function withTimeout(promise, ms, description = 'Operation') {
     const timer = setTimeout(() => {
       const err = new Error(`${description} timed out after ${ms}ms`);
       err.code = 'ETIMEDOUT';
+      err.status = 504;
+      err.statusCode = 504;
       reject(err);
     }, ms);
 
@@ -216,13 +203,16 @@ async function callAiWithQuotaAndRetry({
   userId = null,
   validateFn = null,
   model = null,
-  timeoutMs = CIRCUIT_CONFIG.defaultTimeoutMs,
+  timeoutMs = null,
   skipQuota = false,
   temperature = 0.1,
   abortSignal = null,
   isAborted = null,
+  allowProviderResolution = false,
 }) {
+  const effectiveTimeoutMs = timeoutMs || getRequestTimeoutMs();
   const isCancelled = () => Boolean(abortSignal?.aborted || (typeof isAborted === 'function' && isAborted()));
+
   // 1. Feature flag check
   if (!isAiFeatureEnabled(mode)) {
     return {
@@ -305,6 +295,11 @@ async function callAiWithQuotaAndRetry({
       continue;
     }
 
+    const providerConfig = getProviderConfig(providerName);
+    if (!providerConfig.configured) {
+      continue;
+    }
+
     // Circuit breaker check
     if (isCircuitOpen(providerName)) {
       console.warn(`[AI Service] Provider '${providerName}' circuit is OPEN. Bypassing to next provider.`);
@@ -319,28 +314,58 @@ async function callAiWithQuotaAndRetry({
       continue;
     }
 
-    const selectedModel =
-      model ||
-      (mode === 'assistant'
-        ? process.env.AI_MODEL_FAST || process.env.AI_MODEL
-        : process.env.AI_MODEL) ||
-      'default';
+    // Resolve compatible model for this specific provider (guards against cross-provider model pollution)
+    let selectedModel;
+    try {
+      selectedModel = resolveModelForProvider(providerName, model, {
+        useFast: mode === 'assistant',
+        isFallback,
+        allowProviderResolution: Boolean(allowProviderResolution),
+      });
+    } catch (modelErr) {
+      // Incompatible explicit model request must fail fast without silent substitution
+      return {
+        success: false,
+        status: 'failed',
+        code: modelErr.code || 'INVALID_REQUEST',
+        error: modelErr.message,
+      };
+    }
 
     // Provider retry loop (up to 2 attempts with exponential backoff & jitter)
+    let shouldTryNextProviderInChain = false;
+
     for (let attempt = 1; attempt <= 2; attempt++) {
       const startTime = Date.now();
       try {
-        const rawText = await withTimeout(
+        const completionResult = await withTimeout(
           providerInstance.generateCompletion({
             systemPrompt,
             userPrompt,
             mode,
             model: selectedModel,
             temperature,
+            apiKey: providerConfig.apiKey,
+            timeoutMs: effectiveTimeoutMs,
+            returnMeta: true,
           }),
-          timeoutMs,
+          effectiveTimeoutMs,
           `Provider '${providerName}' completion`
         );
+
+        let rawText = '';
+        let tokenUsage = null;
+        let actualModel = selectedModel;
+
+        if (typeof completionResult === 'object' && completionResult !== null && typeof completionResult.text === 'string') {
+          rawText = completionResult.text;
+          tokenUsage = completionResult.usage || null;
+          if (completionResult.model) actualModel = completionResult.model;
+        } else if (typeof completionResult === 'string') {
+          rawText = completionResult;
+        } else {
+          rawText = String(completionResult || '');
+        }
 
         const latencyMs = Date.now() - startTime;
         const validatedData = parseAndValidate(rawText);
@@ -348,7 +373,7 @@ async function callAiWithQuotaAndRetry({
         // Record circuit breaker success
         recordCircuitSuccess(providerName);
 
-        // Record usage in daily quota tracker (skipped if skipQuota, assistant_title, or cancelled)
+        // Record usage in daily quota tracker (recorded ONCE upon success, no double-counting on fallback)
         if (!skipQuota && mode !== 'assistant_title' && userId && !isCancelled()) {
           try {
             await AiUsage.recordCall(userId, mode);
@@ -357,15 +382,17 @@ async function callAiWithQuotaAndRetry({
           }
         }
 
-        // Telemetry logging
+        // Telemetry logging with accurate provider, model, and token metrics
         await AiCallLog.logCall({
           feature: mode,
           provider: providerName,
-          model: selectedModel,
+          model: actualModel,
           status: isFallback ? 'fallback' : 'success',
           latencyMs,
           promptText: `${systemPrompt} ${userPrompt}`,
           completionText: rawText,
+          promptTokens: tokenUsage?.promptTokens || null,
+          completionTokens: tokenUsage?.completionTokens || null,
           userId,
         });
 
@@ -373,15 +400,36 @@ async function callAiWithQuotaAndRetry({
           success: true,
           data: validatedData,
           rawText,
-          model: selectedModel,
+          model: actualModel,
           provider: providerName,
           fallbackUsed: isFallback,
+          usage: tokenUsage,
         };
       } catch (err) {
         const latencyMs = Date.now() - startTime;
         lastError = err;
+        const cleanErrMsg = sanitizeProviderError(err, providerName);
+
+        // Classify Error Type
+        const isAuthError =
+          err.code === 'AUTHENTICATION_ERROR' ||
+          err.isAuthError ||
+          err.status === 401 ||
+          err.status === 403 ||
+          err.statusCode === 401 ||
+          err.statusCode === 403;
+
+        const isClientError =
+          err.code === 'INVALID_REQUEST' ||
+          err.isClientError ||
+          err.status === 400 ||
+          err.status === 404 ||
+          err.statusCode === 400 ||
+          err.statusCode === 404;
 
         const isRateLimited =
+          err.code === 'RATE_LIMIT' ||
+          err.isRateLimit ||
           err.status === 429 ||
           err.statusCode === 429 ||
           (err.message && err.message.includes('429')) ||
@@ -395,7 +443,7 @@ async function callAiWithQuotaAndRetry({
           status: isRateLimited ? 'rate_limited' : 'failed',
           latencyMs,
           promptText: `${systemPrompt} ${userPrompt}`,
-          errorMessage: err.message,
+          errorMessage: cleanErrMsg,
           userId,
         });
 
@@ -406,23 +454,50 @@ async function callAiWithQuotaAndRetry({
           latencyMs,
         });
 
+        // 1. Authentication Failures: FAIL FAST. Do NOT trigger fallback (Constraint 4)
+        if (isAuthError) {
+          recordCircuitFailure(providerName);
+          return {
+            success: false,
+            status: 'failed',
+            code: 'AUTHENTICATION_ERROR',
+            error: `AI provider '${providerName}' authentication failed. Check credentials: ${cleanErrMsg}`,
+          };
+        }
+
+        // 2. Client / Bad Request / Model Not Found: FAIL FAST. Do NOT trigger fallback (Constraint 4)
+        if (isClientError) {
+          return {
+            success: false,
+            status: 'failed',
+            code: 'INVALID_REQUEST',
+            error: `AI provider '${providerName}' rejected request (4xx): ${cleanErrMsg}`,
+          };
+        }
+
+        // 3. Rate Limits: Eligible for fallback to secondary provider
         if (isRateLimited) {
           hasRateLimitedError = true;
           recordCircuitFailure(providerName);
-          // Break attempt loop to move immediately to fallback provider in chain
-          break;
+          shouldTryNextProviderInChain = true;
+          break; // Break attempt loop, advance to next provider in chain
         }
 
-        // On first JSON parse error, retry with jitter
-        if (attempt === 1 && !err.message.includes('timed out')) {
+        // 4. On first JSON parse error, retry with jitter
+        if (attempt === 1 && !err.message.includes('timed out') && !err.message.includes('ETIMEDOUT')) {
           await waitWithJitter(attempt);
           continue;
         }
 
-        // On timeout or persistent error, record circuit failure and try next provider
+        // 5. On timeout (504/ETIMEDOUT) or 5xx server error, record failure and try next provider
         recordCircuitFailure(providerName);
+        shouldTryNextProviderInChain = true;
         break;
       }
+    }
+
+    if (shouldTryNextProviderInChain) {
+      continue;
     }
   }
 
@@ -431,7 +506,7 @@ async function callAiWithQuotaAndRetry({
     return {
       success: false,
       status: 'rate_limited',
-      error: lastError?.message || 'Daily AI quota exceeded or provider rate limit reached.',
+      error: sanitizeProviderError(lastError?.message || 'Daily AI quota exceeded or provider rate limit reached.'),
     };
   }
 
@@ -440,7 +515,7 @@ async function callAiWithQuotaAndRetry({
     success: false,
     status: 'fallback',
     fallback: true,
-    error: lastError?.message || 'All AI providers in fallback chain failed. Offline rules required.',
+    error: sanitizeProviderError(lastError?.message || 'All AI providers in fallback chain failed. Offline rules required.'),
   };
 }
 
@@ -455,8 +530,11 @@ async function callAiChatWithTools({
   model = null,
   temperature = 0.2,
   recordUsage = true,
-  timeoutMs = CIRCUIT_CONFIG.defaultTimeoutMs,
+  timeoutMs = null,
+  allowProviderResolution = false,
 }) {
+  const effectiveTimeoutMs = timeoutMs || getRequestTimeoutMs();
+
   // 1. Feature flag check
   if (!isAiFeatureEnabled('assistant')) {
     return {
@@ -507,14 +585,30 @@ async function callAiChatWithTools({
     const providerInstance = resolveProviderInstance(providerName);
     if (!providerInstance) continue;
 
+    const providerConfig = getProviderConfig(providerName);
+    if (!providerConfig.configured) continue;
+
     if (isCircuitOpen(providerName)) {
       continue;
     }
 
-    const selectedModel =
-      model || process.env.AI_MODEL_FAST || process.env.AI_MODEL || 'default';
-
+    let selectedModel;
+    try {
+      selectedModel = resolveModelForProvider(providerName, model, {
+        useFast: true,
+        isFallback: chainIdx > 0,
+        allowProviderResolution: Boolean(allowProviderResolution),
+      });
+    } catch (modelErr) {
+      return {
+        success: false,
+        status: 'failed',
+        code: modelErr.code || 'INVALID_REQUEST',
+        error: modelErr.message,
+      };
+    }
     const startTime = Date.now();
+
     try {
       let result;
       if (typeof providerInstance.generateChatCompletionWithTools === 'function') {
@@ -524,8 +618,10 @@ async function callAiChatWithTools({
             tools,
             model: selectedModel,
             temperature,
+            apiKey: providerConfig.apiKey,
+            timeoutMs: effectiveTimeoutMs,
           }),
-          timeoutMs,
+          effectiveTimeoutMs,
           `Provider '${providerName}' chat`
         );
       } else {
@@ -535,8 +631,10 @@ async function callAiChatWithTools({
             systemPrompt: messages[0]?.content || '',
             userPrompt: lastUser?.content || '',
             model: selectedModel,
+            apiKey: providerConfig.apiKey,
+            timeoutMs: effectiveTimeoutMs,
           }),
-          timeoutMs,
+          effectiveTimeoutMs,
           `Provider '${providerName}' chat completion`
         );
         result = { content: rawText, toolCalls: [] };
@@ -553,14 +651,18 @@ async function callAiChatWithTools({
         }
       }
 
+      const actualModel = result.model || selectedModel;
+
       await AiCallLog.logCall({
         feature: 'chat',
         provider: providerName,
-        model: selectedModel,
+        model: actualModel,
         status: chainIdx > 0 ? 'fallback' : 'success',
         latencyMs,
         promptText: messages.map((m) => m.content).join(' '),
         completionText: result.content || '',
+        promptTokens: result.usage?.promptTokens || null,
+        completionTokens: result.usage?.completionTokens || null,
         userId,
       });
 
@@ -570,10 +672,30 @@ async function callAiChatWithTools({
         toolCalls: result.toolCalls || [],
         message: result.message,
         provider: providerName,
+        model: actualModel,
+        usage: result.usage || null,
       };
     } catch (err) {
       const latencyMs = Date.now() - startTime;
       lastError = err;
+      const cleanErrMsg = sanitizeProviderError(err, providerName);
+
+      const isAuthError =
+        err.code === 'AUTHENTICATION_ERROR' ||
+        err.isAuthError ||
+        err.status === 401 ||
+        err.status === 403 ||
+        err.statusCode === 401 ||
+        err.statusCode === 403;
+
+      const isClientError =
+        err.code === 'INVALID_REQUEST' ||
+        err.isClientError ||
+        err.status === 400 ||
+        err.status === 404 ||
+        err.statusCode === 400 ||
+        err.statusCode === 404;
+
       recordCircuitFailure(providerName);
 
       await AiCallLog.logCall({
@@ -583,7 +705,7 @@ async function callAiChatWithTools({
         status: 'failed',
         latencyMs,
         promptText: messages.map((m) => m.content).join(' '),
-        errorMessage: err.message,
+        errorMessage: cleanErrMsg,
         userId,
       });
 
@@ -593,13 +715,32 @@ async function callAiChatWithTools({
         model: selectedModel,
         latencyMs,
       });
+
+      // Authentication or Bad Request error: fail fast without automatic fallback (Constraint 4)
+      if (isAuthError) {
+        return {
+          success: false,
+          status: 'failed',
+          code: 'AUTHENTICATION_ERROR',
+          error: `AI provider '${providerName}' authentication failed: ${cleanErrMsg}`,
+        };
+      }
+
+      if (isClientError) {
+        return {
+          success: false,
+          status: 'failed',
+          code: 'INVALID_REQUEST',
+          error: `AI provider '${providerName}' bad request: ${cleanErrMsg}`,
+        };
+      }
     }
   }
 
   return {
     success: false,
     status: 'failed',
-    error: lastError?.message || 'AI chat completion failed across all providers.',
+    error: sanitizeProviderError(lastError?.message || 'AI chat completion failed across all providers.'),
   };
 }
 

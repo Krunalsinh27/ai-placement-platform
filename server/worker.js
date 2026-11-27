@@ -1,12 +1,16 @@
+const path = require('path');
 const dotenv = require('dotenv');
+
+// Load environment variables before any dependent modules are imported.
+// Deployment-provided environment variables take precedence.
+dotenv.config({ path: path.join(__dirname, '.env') });
+
 const mongoose = require('mongoose');
 const connectDB = require('./config/db');
 const { validateRedisConfig, isRedisConfigured, closeRedisConnections } = require('./config/redis');
 const { startQueueWorkers, closeQueueWorkers } = require('./utils/queueWorkers');
 const emailQueue = require('./utils/emailQueue');
 const { initCronJobs } = require('./utils/cronJobs');
-
-dotenv.config();
 
 // Fail fast in production if REDIS_URL is missing
 if (process.env.NODE_ENV === 'production') {
@@ -60,7 +64,13 @@ const handleShutdown = async (signal) => {
     await closeQueueWorkers();
     console.log('[Worker] Queue workers stopped successfully.');
 
-    // 2. Close Redis connections
+    // 2. Close AI Queue if initialized
+    try {
+      const { closeAiQueue } = require('./services/ai/aiQueue');
+      await closeAiQueue();
+    } catch (_) {}
+
+    // 3. Close Redis connections
     await closeRedisConnections();
     console.log('[Worker] Redis connections closed.');
 

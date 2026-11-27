@@ -771,10 +771,10 @@ async function runAptitudeTests() {
     });
     const futureData = await futureRes.json();
     const futureItem = futureData.tests.find((t) => t.roundId.toString() === futureRound._id.toString());
-    if (!futureItem || futureItem.status !== 'not_started') {
-      throw new Error(`Future round must have status 'not_started', got: ${futureItem?.status}`);
+    if (!futureItem || (futureItem.status !== 'not_started' && futureItem.status !== 'scheduled_not_open')) {
+      throw new Error(`Future round must have status 'not_started' or 'scheduled_not_open', got: ${futureItem?.status}`);
     }
-    console.log('✓ 13E.1: Future window reported as not_started');
+    console.log('✓ 13E.1: Future window reported as scheduled_not_open / not_started');
 
     // E2: Past window (closed)
     const pastRound = await Round.create({

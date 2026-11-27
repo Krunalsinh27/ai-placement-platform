@@ -34,9 +34,18 @@ const testSuites = [
   { name: 'test:smartanalytics', file: 'tests/testSmartAnalytics.js' },
   { name: 'test:redteam', file: 'tests/testAiRedTeam.js' },
   { name: 'test:security', file: 'tests/testSecurityHardening.js' },
+  { name: 'test:tenantisolation', file: 'tests/testTenantIsolation.js' },
+  { name: 'test:pii', file: 'tests/testPiiRedaction.js' },
+  { name: 'test:provider', file: 'tests/testAiProviderConfig.js' },
+  { name: 'test:queue', file: 'tests/testQueueReliability.js' },
   { name: 'test:seedguard', file: 'tests/testSeedGuard.js' },
   { name: 'test:redis', file: 'tests/testRedisDurable.js' },
   { name: 'test:ratelimit', file: 'tests/testRedisRateLimitResilience.js' },
+  { name: 'test:phase-b-reliability', file: 'tests/testPhaseBReliability.js' },
+  { name: 'test:phase-c-platform-test', file: 'tests/testPhaseCPlatformTestFlow.js' },
+  { name: 'test:phase-d-analytics', file: 'tests/testPhaseDAnalytics.js' },
+  { name: 'test:phase-e-export', file: 'tests/testPhaseEExport.js' },
+  { name: 'test:concurrency', file: 'tests/testRefreshTokenConcurrency.js' },
 ];
 
 async function ensureSeedInTestDb() {
@@ -94,6 +103,7 @@ async function runSingleTest(suite) {
         ...process.env,
         NODE_ENV: 'test',
         EMAIL_MODE: 'console',
+        MONGO_URI: getTestDbUri(),
         MONGO_URI_TEST: getTestDbUri(),
       },
       stdio: 'inherit',

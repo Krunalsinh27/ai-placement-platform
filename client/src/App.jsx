@@ -16,74 +16,67 @@ import Register from './pages/auth/Register';
 import VerifyEmail from './pages/auth/VerifyEmail';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
-import PublicPlacementRecord from './pages/PublicPlacementRecord';
-import PublicCollegeDetail from './pages/PublicCollegeDetail';
+const PublicPlacementRecord = React.lazy(() => import('./pages/PublicPlacementRecord'));
+const PublicCollegeDetail = React.lazy(() => import('./pages/PublicCollegeDetail'));
 
 // Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard';
-import DriveProgress from './pages/admin/DriveProgress';
-import {
-  ManageStudents,
-  ManageCompanies,
-  ManageDrives,
-  ManageDriveRequests,
-  ManageApplications,
-  ManagePlacements,
-  Analytics,
-  ManageEmailLogs,
-  PlacementReport,
-  TpoAssistant,
-} from './pages/admin/index';
+const DriveProgress = React.lazy(() => import('./pages/admin/DriveProgress'));
+const ManageStudents = React.lazy(() => import('./pages/admin/ManageStudents'));
+const ManageCompanies = React.lazy(() => import('./pages/admin/ManageCompanies'));
+const ManageDrives = React.lazy(() => import('./pages/admin/ManageDrives'));
+const ManageDriveRequests = React.lazy(() => import('./pages/admin/ManageTpoDriveRequests'));
+const ManageApplications = React.lazy(() => import('./pages/admin/ManageApplications'));
+const ManagePlacements = React.lazy(() => import('./pages/admin/ManagePlacements'));
+const Analytics = React.lazy(() => import('./pages/admin/Analytics'));
+const ManageEmailLogs = React.lazy(() => import('./pages/admin/ManageEmailLogs'));
+const PlacementReport = React.lazy(() => import('./pages/admin/PlacementReport'));
+const TpoAssistant = React.lazy(() => import('./pages/admin/TpoAssistant'));
+const TpoResumeReviews = React.lazy(() => import('./pages/admin/TpoResumeReviews'));
 
 // Student Pages
 import StudentDashboard from './pages/student/StudentDashboard';
-import {
-  EligibleDrives,
-  MyApplications,
-  MyTests,
-  ResumeAi,
-  MockInterview,
-  ResumeBuilder,
-  MyPlacements,
-  StudentProfile,
-  StudentInterviewRoom,
-  StudentAptitudeTest,
-} from './pages/student/index';
+const EligibleDrives = React.lazy(() => import('./pages/student/EligibleDrives'));
+const MyApplications = React.lazy(() => import('./pages/student/MyApplications'));
+const MyTests = React.lazy(() => import('./pages/student/MyTests'));
+const ResumeAi = React.lazy(() => import('./pages/student/ResumeAi'));
+const MockInterview = React.lazy(() => import('./pages/student/MockInterview'));
+const ResumeStudio = React.lazy(() => import('./pages/student/resume-studio/StudioDashboard'));
+const StudioEditor = React.lazy(() => import('./pages/student/resume-studio/StudioEditor'));
+const StudioWizard = React.lazy(() => import('./pages/student/resume-studio/StudioWizard'));
+const MyPlacements = React.lazy(() => import('./pages/student/MyPlacements'));
+const StudentProfile = React.lazy(() => import('./pages/student/StudentProfile'));
+const StudentInterviewRoom = React.lazy(() => import('./pages/student/StudentInterviewRoom'));
+const StudentAptitudeTest = React.lazy(() => import('./pages/student/StudentAptitudeTest'));
 
 // Recruiter Pages
 import RecruiterDashboard from './pages/recruiter/RecruiterDashboard';
-import DrivePipeline from './pages/recruiter/DrivePipeline';
-import RecruiterPipelineList from './pages/recruiter/RecruiterPipelineList';
-import CompanyProfile from './pages/recruiter/CompanyProfile';
-import ManageRequirements from './pages/recruiter/ManageRequirements';
-import ManageRecruiterDriveRequests from './pages/recruiter/ManageDriveRequests';
+const DrivePipeline = React.lazy(() => import('./pages/recruiter/DrivePipeline'));
+const RecruiterPipelineList = React.lazy(() => import('./pages/recruiter/RecruiterPipelineList'));
+const CompanyProfile = React.lazy(() => import('./pages/recruiter/CompanyProfile'));
+const ManageRequirements = React.lazy(() => import('./pages/recruiter/ManageRequirements'));
+const ManageRecruiterDriveRequests = React.lazy(() => import('./pages/recruiter/ManageDriveRequests'));
 
 // Analyst Pages
-import {
-  AnalystDashboard,
-  AnalystColleges,
-  AnalystCompare,
-  AnalystRecruiters,
-  AnalystTrends,
-} from './pages/analyst/index';
+const AnalystDashboard = React.lazy(() => import('./pages/analyst/AnalystDashboard'));
+const AnalystColleges = React.lazy(() => import('./pages/analyst/AnalystColleges'));
+const AnalystCompare = React.lazy(() => import('./pages/analyst/AnalystCompare'));
+const AnalystRecruiters = React.lazy(() => import('./pages/analyst/AnalystRecruiters'));
+const AnalystTrends = React.lazy(() => import('./pages/analyst/AnalystTrends'));
 
 // Aspirant Pages
-import {
-  AspirantExplore,
-  AspirantShortlist,
-  AspirantCompare,
-  AspirantPreferences,
-} from './pages/aspirant/index';
+const AspirantExplore = React.lazy(() => import('./pages/aspirant/AspirantExplore'));
+const AspirantShortlist = React.lazy(() => import('./pages/aspirant/AspirantShortlist'));
+const AspirantCompare = React.lazy(() => import('./pages/aspirant/AspirantCompare'));
+const AspirantPreferences = React.lazy(() => import('./pages/aspirant/AspirantPreferences'));
 
 // Superadmin Pages
-import {
-  SuperadminDashboard,
-  SuperadminAnalysts,
-  SuperadminColleges,
-  SuperadminCompanies,
-  SuperadminPendingAccounts,
-  AiDashboard,
-} from './pages/superadmin/index';
+const SuperadminDashboard = React.lazy(() => import('./pages/superadmin/SuperadminDashboard'));
+const SuperadminAnalysts = React.lazy(() => import('./pages/superadmin/SuperadminAnalysts'));
+const SuperadminColleges = React.lazy(() => import('./pages/superadmin/SuperadminColleges'));
+const SuperadminCompanies = React.lazy(() => import('./pages/superadmin/SuperadminCompanies'));
+const SuperadminPendingAccounts = React.lazy(() => import('./pages/superadmin/SuperadminPendingAccounts'));
+const AiDashboard = React.lazy(() => import('./pages/superadmin/AiDashboard'));
 
 import NotFound from './pages/NotFound';
 
@@ -139,13 +132,20 @@ const RootRedirect = () => {
   return <Navigate to="/student/dashboard" replace />;
 };
 
+const RouteSuspenseFallback = () => (
+  <div className="min-h-[50vh] flex items-center justify-center p-6" role="status" aria-label="Loading page">
+    <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+  </div>
+);
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
         <ErrorBoundary>
-          <Routes>
+          <React.Suspense fallback={<RouteSuspenseFallback />}>
+            <Routes>
           {/* Public Routes */}
           <Route path="/" element={<RootRedirect />} />
           <Route path="/login" element={<Login />} />
@@ -198,6 +198,7 @@ function App() {
             <Route path="drive-requests" element={<ManageDriveRequests />} />
             <Route path="incoming-requests" element={<Navigate to="/admin/drive-requests" replace />} />
             <Route path="applications" element={<ManageApplications />} />
+            <Route path="resumes" element={<TpoResumeReviews />} />
             <Route path="placements" element={<ManagePlacements />} />
             <Route path="reports" element={<PlacementReport />} />
             <Route path="analytics" element={<Analytics />} />
@@ -256,7 +257,14 @@ function App() {
             <Route path="applications" element={<MyApplications />} />
             <Route path="tests" element={<MyTests />} />
             <Route path="mock-interview" element={<MockInterview />} />
-            <Route path="resume-builder" element={<ResumeBuilder />} />
+            <Route path="resume-builder/:id" element={<StudioEditor />} />
+            <Route path="resume-builder/:id/wizard" element={<StudioWizard />} />
+            <Route path="resume-builder" element={<Navigate to="/student/resume-studio" replace />} />
+            <Route path="resume-builder/*" element={<Navigate to="/student/resume-studio" replace />} />
+            <Route path="resume-studio" element={<ResumeStudio />} />
+            <Route path="resume-studio/wizard" element={<StudioWizard />} />
+            <Route path="resume-studio/:id" element={<StudioEditor />} />
+            <Route path="resume-studio/:id/wizard" element={<StudioWizard />} />
             <Route path="assistant" element={<TpoAssistant />} />
             <Route path="resume-ai" element={<ResumeAi />} />
             <Route path="placements" element={<MyPlacements />} />
@@ -293,7 +301,8 @@ function App() {
           {/* 404 Route */}
           <Route path="*" element={<NotFound />} />
         </Routes>
-      </ErrorBoundary>
+      </React.Suspense>
+    </ErrorBoundary>
     </AuthProvider>
   </BrowserRouter>
   );

@@ -137,6 +137,9 @@ async function runEmailGuardTests() {
     console.log('✓ Permanent error classification (5xx, User unknown, Address not found) verified.');
 
     // Test queue processing with a permanent error: verify attempts = 1 and status = failed immediately
+    const origIsRedis = emailQueue.isRedisMode.bind(emailQueue);
+    emailQueue.isRedisMode = () => false; // Isolate in-process processor for unit testing
+
     let sendCalls = 0;
     emailQueue.setSenderFunction(async () => {
       sendCalls++;
@@ -163,6 +166,7 @@ async function runEmailGuardTests() {
     console.log('✓ EmailQueue immediately marked 550 failure as failed with attempts=1 (0 retries).');
 
     emailQueue.resetSenderFunction();
+    emailQueue.isRedisMode = origIsRedis;
 
     // -----------------------------------------------------------------
     // TEST 5: Real SMTP Per-Minute Rate Cap

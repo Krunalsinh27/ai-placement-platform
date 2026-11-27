@@ -1,4 +1,14 @@
-node_modules
+node_modules/
 .env
+.env.*
+.env*.local
+*.env
+!.env.example
 uploads/*
 !uploads/.gitkeep
+dump.rdb
+*.rdb
+*.log
+*.tmp
+*.bak
+coverage/

@@ -6,6 +6,7 @@
 
 const { ChatLog, ConversationMeta } = require('../../models');
 const { generateFallbackTitle } = require('./titleService');
+const { redactPII } = require('../ai/redactor');
 
 const MAX_WINDOW_MESSAGES = parseInt(process.env.ASSISTANT_MEMORY_MAX_MESSAGES || '10', 10);
 
@@ -87,7 +88,7 @@ async function getConversationContext(conversationId, userId, maxMessages = MAX_
     const summaryLines = olderLogs
       .filter((l) => l.sender === 'user' || l.sender === 'assistant')
       .map((l) => {
-        const text = (l.content || l.question || '').slice(0, 100).replace(/\n/g, ' ');
+        const text = redactPII((l.content || l.question || '').slice(0, 100).replace(/\n/g, ' '));
         return `${l.sender === 'user' ? 'User' : 'Assistant'}: ${text}`;
       });
 
@@ -106,9 +107,10 @@ async function getConversationContext(conversationId, userId, maxMessages = MAX_
 
 function mapLogToMessage(log) {
   const role = log.sender === 'tool' ? 'tool' : log.sender === 'assistant' ? 'assistant' : 'user';
+  const rawContent = log.content || log.question || '';
   const msg = {
     role,
-    content: log.content || log.question || '',
+    content: redactPII(rawContent),
   };
 
   if (log.toolCalls && log.toolCalls.length > 0) {
@@ -117,7 +119,7 @@ function mapLogToMessage(log) {
       type: 'function',
       function: {
         name: tc.name,
-        arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args || {}),
+        arguments: typeof tc.args === 'string' ? redactPII(tc.args) : JSON.stringify(tc.args || {}),
       },
     }));
   }
@@ -350,6 +352,7 @@ module.exports = {
   MAX_WINDOW_MESSAGES,
   saveMessage,
   getConversationContext,
+  mapLogToMessage,
   listUserConversations,
   getConversationMessages,
   deleteConversation,

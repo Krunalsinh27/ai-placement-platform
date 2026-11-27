@@ -1935,7 +1935,7 @@ const refreshToken = async (req, res, next) => {
     }
 
     const user = await User.findById(decoded.id);
-    if (!user || !user.refreshTokenHash) {
+    if (!user || (!user.refreshTokenHash && !user.previousRefreshTokenHash)) {
       res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
       return res.status(401).json({
         success: false,
@@ -1944,24 +1944,52 @@ const refreshToken = async (req, res, next) => {
     }
 
     const tokenHash = hashToken(token);
-    if (user.refreshTokenHash !== tokenHash) {
-      // Possible reuse/tampering: revoke user session
-      user.refreshTokenHash = null;
+
+    // 1. Check if token matches active rotated hash
+    if (user.refreshTokenHash === tokenHash) {
+      // Rotate refresh token
+      const newRefreshToken = generateRefreshToken(user._id);
+      user.previousRefreshTokenHash = user.refreshTokenHash;
+      user.previousRefreshTokenExpiresAt = new Date(Date.now() + 15000); // 15-second grace window for concurrent requests
+      user.refreshTokenHash = hashToken(newRefreshToken);
       await user.save();
-      res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid refresh token session',
+
+      res.cookie('refreshToken', newRefreshToken, REFRESH_COOKIE_OPTIONS);
+      const newAccessToken = generateToken(user._id);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Access token refreshed successfully',
+        token: newAccessToken,
       });
     }
 
-    // Issue a fresh 15-minute access token
-    const newAccessToken = generateToken(user._id);
+    // 2. Check if token is within session-specific 15-second grace window from recent rotation
+    const isGracePeriodValid =
+      user.previousRefreshTokenHash &&
+      user.previousRefreshTokenHash === tokenHash &&
+      user.previousRefreshTokenExpiresAt &&
+      new Date() < new Date(user.previousRefreshTokenExpiresAt);
 
-    return res.status(200).json({
-      success: true,
-      message: 'Access token refreshed successfully',
-      token: newAccessToken,
+    if (isGracePeriodValid) {
+      // Concurrent request within 15s grace window: return new access token without re-rotating or revoking
+      const newAccessToken = generateToken(user._id);
+      return res.status(200).json({
+        success: true,
+        message: 'Access token refreshed successfully',
+        token: newAccessToken,
+      });
+    }
+
+    // 3. Neither active nor in grace period: possible reuse or tampering -> revoke entire session
+    user.refreshTokenHash = null;
+    user.previousRefreshTokenHash = null;
+    user.previousRefreshTokenExpiresAt = null;
+    await user.save();
+    res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid refresh token session',
     });
   } catch (error) {
     next(error);
@@ -1978,9 +2006,24 @@ const logout = async (req, res, next) => {
     const token = req.cookies?.refreshToken;
     if (token) {
       const tokenHash = hashToken(token);
-      await User.updateOne({ refreshTokenHash: tokenHash }, { $set: { refreshTokenHash: null } });
+      await User.updateOne(
+        { $or: [{ refreshTokenHash: tokenHash }, { previousRefreshTokenHash: tokenHash }] },
+        {
+          $set: {
+            refreshTokenHash: null,
+            previousRefreshTokenHash: null,
+            previousRefreshTokenExpiresAt: null,
+          },
+        }
+      );
     } else if (req.user) {
-      await User.findByIdAndUpdate(req.user._id, { $set: { refreshTokenHash: null } });
+      await User.findByIdAndUpdate(req.user._id, {
+        $set: {
+          refreshTokenHash: null,
+          previousRefreshTokenHash: null,
+          previousRefreshTokenExpiresAt: null,
+        },
+      });
     }
 
     res.clearCookie('refreshToken', CLEAR_COOKIE_OPTIONS);

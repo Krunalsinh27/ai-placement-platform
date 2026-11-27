@@ -78,7 +78,30 @@ router.get('/me/skill-gap-plan', protect, authorize('student'), aiLimiter, async
 router.get('/me/ai-jobs/:jobId', protect, authorize('student'), async (req, res, next) => {
   try {
     const { getAiJobStatus } = require('../services/ai/aiQueue');
-    const status = await getAiJobStatus(req.params.jobId);
+    const status = await getAiJobStatus(req.params.jobId, req.user);
+
+    if (status.status === 'unavailable') {
+      return res.status(503).json({
+        success: false,
+        code: status.code || 'QUEUE_UNAVAILABLE',
+        message: status.error || 'Background processing is temporarily unavailable. Please try again later.',
+      });
+    }
+
+    if (status.status === 'not_found') {
+      return res.status(404).json({
+        success: false,
+        message: status.error || 'AI job not found',
+      });
+    }
+
+    if (status.status === 'forbidden') {
+      return res.status(403).json({
+        success: false,
+        message: status.error || 'Access denied: You do not have permission to view this job',
+      });
+    }
+
     res.status(200).json({
       success: true,
       ...status,
