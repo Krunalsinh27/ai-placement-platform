@@ -136,6 +136,199 @@ const evaluateAttempt = async (attempt, round) => {
 // 1. RECRUITER QUESTION BANK CRUD & SETTINGS
 // =========================================================================
 
+const roundIdParamSchema = z.object({
+  id: z.string().trim().refine((val) => mongoose.Types.ObjectId.isValid(val), {
+    message: 'Invalid round ID format',
+  }),
+});
+
+/**
+ * Get Student Visibility and Test Readiness Diagnostics for a Round
+ * @route GET /api/rounds/:id/test-readiness
+ * @access Private (Recruiter of drive's company, TPO/Admin of drive's college, Superadmin)
+ */
+const getRoundTestReadiness = async (req, res, next) => {
+  try {
+    const paramResult = roundIdParamSchema.safeParse(req.params);
+    if (!paramResult.success) {
+      const msg = paramResult.error?.issues?.[0]?.message || paramResult.error?.errors?.[0]?.message || 'Invalid round ID format';
+      return res.status(400).json({
+        success: false,
+        message: msg,
+      });
+    }
+
+    const round = await Round.findById(req.params.id).populate({
+      path: 'drive',
+      populate: ['company', 'college', 'colleges'],
+    });
+
+    if (!round) {
+      return res.status(404).json({ success: false, message: 'Round not found' });
+    }
+
+    // Ownership and college isolation check
+    if (!verifyDriveAccess(round.drive, req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized: You do not have permission to view readiness for this drive',
+      });
+    }
+
+    const now = new Date();
+    const isPlatformTest = round.deliveryMode === 'platform_test';
+
+    // 1. Delivery Mode Check
+    const deliveryModeCheck = {
+      key: 'deliveryMode',
+      label: 'Delivery Mode',
+      ok: isPlatformTest,
+      value: round.deliveryMode || 'not_configured',
+      message: isPlatformTest
+        ? 'Delivery mode is set to on-platform test'
+        : `Delivery mode is currently "${round.deliveryMode ? round.deliveryMode.replace('_', ' ') : 'Not Configured'}". Must be "platform_test" for students to view questions here.`,
+    };
+
+    // 2. Window Configured Check
+    const hasWindow = Boolean(round.testWindowStart && round.testWindowEnd);
+    const windowStart = round.testWindowStart ? new Date(round.testWindowStart) : null;
+    const windowEnd = round.testWindowEnd ? new Date(round.testWindowEnd) : null;
+    const isWindowValid = hasWindow && !isNaN(windowStart.getTime()) && !isNaN(windowEnd.getTime());
+
+    const windowConfigCheck = {
+      key: 'windowConfig',
+      label: 'Test Window Schedule',
+      ok: isWindowValid,
+      testWindowStart: round.testWindowStart,
+      testWindowEnd: round.testWindowEnd,
+      durationMinutes: round.durationMinutes || 60,
+      message: isWindowValid
+        ? `Window scheduled from ${windowStart.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} to ${windowEnd.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST (${round.durationMinutes || 60}m duration)`
+        : 'Test window start and end dates have not been scheduled yet in Round Settings.',
+    };
+
+    // 3. Window Active Check (Not Already Ended)
+    let isWindowActive = false;
+    let windowActiveMessage = 'Test window has not been scheduled yet.';
+    if (isWindowValid) {
+      if (now > windowEnd) {
+        isWindowActive = false;
+        windowActiveMessage = `Test window closed on ${windowEnd.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST. Students cannot start or submit tests anymore.`;
+      } else if (now < windowStart) {
+        isWindowActive = true;
+        windowActiveMessage = `Test window scheduled to open on ${windowStart.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST. Students will see this under "Upcoming" until open.`;
+      } else {
+        isWindowActive = true;
+        windowActiveMessage = `Test window is OPEN and active right now (closes ${windowEnd.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST).`;
+      }
+    }
+
+    const windowActiveCheck = {
+      key: 'windowActive',
+      label: 'Window Active Status',
+      ok: isWindowValid && now <= windowEnd,
+      isStarted: isWindowValid && now >= windowStart,
+      isEnded: isWindowValid && now > windowEnd,
+      message: windowActiveMessage,
+    };
+
+    // 4. Questions Configured Check
+    const questions = await Question.find({ round: round._id });
+    const questionCount = questions.length;
+    const totalMarks = questions.reduce((sum, q) => sum + (q.marks || 1), 0);
+
+    const questionsCheck = {
+      key: 'questions',
+      label: 'Question Bank',
+      ok: questionCount > 0,
+      questionCount,
+      totalMarks,
+      message:
+        questionCount > 0
+          ? `${questionCount} question${questionCount > 1 ? 's' : ''} configured (${totalMarks} total mark${totalMarks > 1 ? 's' : ''}).`
+          : 'No questions have been configured for this round yet. Add questions or import CSV before students start.',
+    };
+
+    // 5. Participants Enrolled & Excluded Check
+    const totalEnrolled = await RoundParticipant.countDocuments({ round: round._id });
+    const excludedCount = await RoundParticipant.countDocuments({
+      round: round._id,
+      $or: [{ attendance: 'absent' }, { result: 'rejected' }],
+    });
+    const eligibleCount = Math.max(0, totalEnrolled - excludedCount);
+
+    let enrolledMessage = '';
+    let enrolledOk = totalEnrolled > 0;
+
+    if (round.order > 1) {
+      if (totalEnrolled === 0) {
+        enrolledOk = false;
+        enrolledMessage = `Students join this round only after Round ${round.order - 1} results are published and candidates are cleared.`;
+      } else {
+        enrolledMessage = `${totalEnrolled} candidate${totalEnrolled > 1 ? 's' : ''} enrolled from Round ${round.order - 1} results (${eligibleCount} eligible, ${excludedCount} excluded).`;
+      }
+    } else {
+      if (totalEnrolled === 0) {
+        enrolledOk = false;
+        enrolledMessage = 'No students enrolled yet. The college TPO must close applications and freeze candidate list to populate Round 1.';
+      } else {
+        enrolledMessage = `${totalEnrolled} candidate${totalEnrolled > 1 ? 's' : ''} enrolled in Round 1 (${eligibleCount} eligible, ${excludedCount} excluded).`;
+      }
+    }
+
+    const participantsCheck = {
+      key: 'participants',
+      label: 'Candidate Enrollment',
+      ok: enrolledOk && eligibleCount > 0,
+      roundOrder: round.order,
+      totalEnrolled,
+      excludedCount,
+      eligibleCount,
+      message: enrolledMessage,
+    };
+
+    // 6. Visible Students Count right now
+    const visibleStudentCount = isPlatformTest ? eligibleCount : 0;
+
+    // Overall readiness
+    const isReady =
+      isPlatformTest &&
+      isWindowValid &&
+      now <= windowEnd &&
+      questionCount > 0 &&
+      visibleStudentCount > 0;
+
+    return res.status(200).json({
+      success: true,
+      roundId: round._id,
+      roundName: round.name,
+      roundOrder: round.order,
+      deliveryMode: round.deliveryMode,
+      isPlatformTest,
+      isReady,
+      visibleStudentCount,
+      checks: [
+        deliveryModeCheck,
+        windowConfigCheck,
+        windowActiveCheck,
+        questionsCheck,
+        participantsCheck,
+      ],
+      summary: {
+        totalEnrolled,
+        excludedCount,
+        eligibleCount,
+        questionCount,
+        totalMarks,
+        visibleStudentCount,
+        isLocked: isTestLocked(round),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /**
  * Get all questions for a round (Recruiter & TPO preview)
  * @route GET /api/rounds/:id/questions
@@ -1436,6 +1629,7 @@ const getStudentMyTests = async (req, res, next) => {
 };
 
 module.exports = {
+  getRoundTestReadiness,
   getRoundQuestions,
   createQuestion,
   updateQuestion,

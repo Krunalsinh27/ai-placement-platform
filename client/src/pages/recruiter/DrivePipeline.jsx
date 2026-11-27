@@ -127,6 +127,10 @@ const DrivePipeline = () => {
   const [testSummary, setTestSummary] = useState(null);
   const [loadingTestResults, setLoadingTestResults] = useState(false);
 
+  // Student Visibility & Test Readiness State
+  const [testReadiness, setTestReadiness] = useState(null);
+  const [loadingReadiness, setLoadingReadiness] = useState(false);
+
   const [shortlistModalOpen, setShortlistModalOpen] = useState(false);
   const [cutoffInput, setCutoffInput] = useState('');
   const [isApplyingShortlist, setIsApplyingShortlist] = useState(false);
@@ -424,10 +428,28 @@ const DrivePipeline = () => {
     }
   };
 
+  const fetchTestReadiness = async (roundId) => {
+    if (!roundId) return null;
+    setLoadingReadiness(true);
+    try {
+      const res = await api.get(`/rounds/${roundId}/test-readiness`);
+      if (res.data?.success) {
+        setTestReadiness(res.data);
+        return res.data;
+      }
+    } catch (err) {
+      console.error('Failed to load test readiness:', err);
+    } finally {
+      setLoadingReadiness(false);
+    }
+    return null;
+  };
+
   useEffect(() => {
     if (currentRound && currentRound.deliveryMode === 'platform_test') {
       fetchQuestions(currentRound._id);
       fetchTestResults(currentRound._id);
+      fetchTestReadiness(currentRound._id);
     }
   }, [currentRound?._id, currentRound?.deliveryMode]);
 
@@ -478,6 +500,7 @@ const DrivePipeline = () => {
           setQuestionFormModalOpen(false);
           fetchQuestions(currentRound._id);
           fetchDriveProgress();
+          fetchTestReadiness(currentRound._id);
         }
       } else {
         const res = await api.post(`/rounds/${currentRound._id}/questions`, questionForm);
@@ -486,6 +509,7 @@ const DrivePipeline = () => {
           setQuestionFormModalOpen(false);
           fetchQuestions(currentRound._id);
           fetchDriveProgress();
+          fetchTestReadiness(currentRound._id);
         }
       }
     } catch (err) {
@@ -504,6 +528,7 @@ const DrivePipeline = () => {
         toast.success('Question deleted successfully');
         fetchQuestions(currentRound._id);
         fetchDriveProgress();
+        fetchTestReadiness(currentRound._id);
       }
     } catch (err) {
       console.error('Failed to delete question:', err);
@@ -543,6 +568,10 @@ const DrivePipeline = () => {
           toast.success(`Successfully imported ${res.data.importedCount} questions!`);
           fetchQuestions(currentRound._id);
           fetchDriveProgress();
+          const readiness = await fetchTestReadiness(currentRound._id);
+          if (readiness?.visibleStudentCount !== undefined) {
+            toast.info(`${readiness.visibleStudentCount} student${readiness.visibleStudentCount === 1 ? '' : 's'} can now see this test`);
+          }
         }
       }
     } catch (err) {
@@ -1053,6 +1082,12 @@ const DrivePipeline = () => {
         setNotifyConfirmOpen(false);
         setPendingSettingsPayload(null);
         fetchDriveProgress();
+        if (payload.deliveryMode === 'platform_test' || currentRound.deliveryMode === 'platform_test') {
+          const readiness = await fetchTestReadiness(currentRound._id);
+          if (readiness?.visibleStudentCount !== undefined) {
+            toast.info(`${readiness.visibleStudentCount} student${readiness.visibleStudentCount === 1 ? '' : 's'} can now see this test`);
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to update round settings:', err);
@@ -2498,61 +2533,136 @@ const DrivePipeline = () => {
                     </div>
                   </div>
 
-                  {/* Test Readiness Widget */}
+                  {/* Student Visibility & Test Readiness Checklist Panel */}
                   {(() => {
-                    const hasQuestions = (questionStats.questionCount || 0) > 0;
-                    const hasWindow = Boolean(currentRound.testWindowStart && currentRound.testWindowEnd);
-                    const enrolledCount = testSummary?.totalEnrolled ?? currentRound.participants?.length ?? 0;
-                    const isReady = hasQuestions && hasWindow && enrolledCount > 0;
+                    const checks = testReadiness?.checks || [
+                      {
+                        key: 'deliveryMode',
+                        label: 'Delivery Mode',
+                        ok: currentRound.deliveryMode === 'platform_test',
+                        message: currentRound.deliveryMode === 'platform_test' ? 'Delivery mode is set to on-platform test' : 'Delivery mode must be platform_test',
+                      },
+                      {
+                        key: 'windowConfig',
+                        label: 'Test Window Schedule',
+                        ok: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd),
+                        message: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd) ? 'Window scheduled' : 'Test window dates not scheduled yet',
+                      },
+                      {
+                        key: 'windowActive',
+                        label: 'Window Active Status',
+                        ok: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd && new Date() <= new Date(currentRound.testWindowEnd)),
+                        message: 'Window active verification',
+                      },
+                      {
+                        key: 'questions',
+                        label: 'Question Bank',
+                        ok: (questionStats.questionCount || 0) > 0,
+                        message: (questionStats.questionCount || 0) > 0 ? `${questionStats.questionCount} questions configured` : 'No questions configured',
+                      },
+                      {
+                        key: 'participants',
+                        label: 'Candidate Enrollment',
+                        ok: (currentRound.participants?.length || 0) > 0,
+                        message: currentRound.order > 1
+                          ? `Students join this round only after Round ${currentRound.order - 1} results are published`
+                          : `${currentRound.participants?.length || 0} candidates enrolled`,
+                      },
+                    ];
+
+                    const isReady = testReadiness ? testReadiness.isReady : checks.every((c) => c.ok);
+                    const visibleCount = testReadiness?.visibleStudentCount ?? (currentRound.participants?.length || 0);
 
                     return (
-                      <div className={`p-4 rounded-3xl border flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs ${
+                      <div className={`p-5 rounded-3xl border transition-all ${
                         isReady
-                          ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
-                          : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                          ? 'bg-emerald-50/60 border-emerald-200'
+                          : 'bg-amber-50/60 border-amber-200'
                       }`}>
-                        <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                            isReady ? 'bg-emerald-200 text-emerald-800' : 'bg-amber-200 text-amber-800'
-                          }`}>
-                            {isReady ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200/70">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 font-bold shadow-xs ${
+                              isReady ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
+                            }`}>
+                              {isReady ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-slate-900 text-sm">
+                                  Student Visibility &amp; Test Readiness
+                                </h4>
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                  isReady
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                                }`}>
+                                  {isReady ? 'Ready for Candidates' : 'Configuration Pending'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-600 mt-0.5">
+                                Real-time candidate visibility check: verifies delivery mode, scheduling, question bank, and round eligibility.
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-black text-sm">Test Readiness:</span>
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                                isReady ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white'
-                              }`}>
-                                {isReady ? 'Ready to Conduct' : 'Configuration Incomplete'}
+
+                          <div className="flex items-center gap-2.5">
+                            <div className={`px-3.5 py-1.5 rounded-xl border text-xs font-black inline-flex items-center gap-2 shadow-2xs ${
+                              visibleCount > 0
+                                ? 'bg-emerald-100/90 text-emerald-900 border-emerald-300'
+                                : 'bg-amber-100/90 text-amber-900 border-amber-300'
+                            }`}>
+                              <Eye className="w-4 h-4 text-slate-700" />
+                              <span>
+                                {visibleCount} student{visibleCount === 1 ? '' : 's'} can see this test right now
                               </span>
                             </div>
-                            <p className="text-[11px] opacity-80 mt-0.5">
-                              {isReady
-                                ? 'Assessment is fully configured. Enrolled candidates can view and attempt the test within the scheduled window.'
-                                : 'Complete the checklist to ensure candidates can see and attempt this assessment.'}
-                            </p>
+                            <button
+                              type="button"
+                              onClick={() => fetchTestReadiness(currentRound._id)}
+                              disabled={loadingReadiness}
+                              title="Refresh readiness diagnostics"
+                              className="p-2 rounded-xl bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
+                            >
+                              <RotateCw className={`w-3.5 h-3.5 ${loadingReadiness ? 'animate-spin' : ''}`} />
+                            </button>
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-semibold">
-                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
-                            hasQuestions ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            <span className="w-2 h-2 rounded-full bg-current" />
-                            {hasQuestions ? `${questionStats.questionCount} Questions Added` : '0 Questions (Add Questions)'}
-                          </span>
-                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
-                            hasWindow ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            <span className="w-2 h-2 rounded-full bg-current" />
-                            {hasWindow ? 'Window Scheduled' : 'Missing Window (Set Window)'}
-                          </span>
-                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
-                            enrolledCount > 0 ? 'bg-emerald-100/80 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            <span className="w-2 h-2 rounded-full bg-current" />
-                            {enrolledCount > 0 ? `${enrolledCount} Candidates Enrolled` : '0 Candidates Enrolled'}
-                          </span>
+                        {/* Checklist items */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-4">
+                          {checks.map((check) => (
+                            <div
+                              key={check.key}
+                              className={`p-3 rounded-2xl border text-xs flex items-start gap-2.5 shadow-2xs transition-all ${
+                                check.ok
+                                  ? 'bg-white/95 border-emerald-200 text-slate-800'
+                                  : 'bg-white/95 border-amber-200 text-slate-800'
+                              }`}
+                            >
+                              <div className="mt-0.5 shrink-0">
+                                {check.ok ? (
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-1.5">
+                                  <span className="font-bold text-[11px] text-slate-900 truncate">
+                                    {check.label}
+                                  </span>
+                                  <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                    check.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  }`}>
+                                    {check.ok ? 'Pass' : 'Action Needed'}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                                  {check.message}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     );
