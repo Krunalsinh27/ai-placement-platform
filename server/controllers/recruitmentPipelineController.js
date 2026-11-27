@@ -576,6 +576,48 @@ const updateRoundSettings = async (req, res, next) => {
           message: 'Platform test delivery mode is only allowed for aptitude and coding rounds. Interviews and group discussions cannot use platform test.',
         });
       }
+
+      const startToCheck = testWindowStart !== undefined ? testWindowStart : round.testWindowStart;
+      const endToCheck = testWindowEnd !== undefined ? testWindowEnd : round.testWindowEnd;
+      const durationToCheck = durationMinutes !== undefined ? durationMinutes : round.durationMinutes;
+
+      if (!startToCheck || (typeof startToCheck === 'string' && !startToCheck.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test Window Start is required when delivery mode is set to on-platform test.',
+        });
+      }
+
+      if (!endToCheck || (typeof endToCheck === 'string' && !endToCheck.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test Window End is required when delivery mode is set to on-platform test.',
+        });
+      }
+
+      const durNum = Number(durationToCheck);
+      if (durationToCheck === undefined || durationToCheck === null || durationToCheck === '' || isNaN(durNum) || durNum <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test duration is required and must be at least 1 minute when delivery mode is set to on-platform test.',
+        });
+      }
+
+      const startMs = new Date(startToCheck).getTime();
+      const endMs = new Date(endToCheck).getTime();
+      if (isNaN(startMs) || isNaN(endMs)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date/time format for test window schedule.',
+        });
+      }
+
+      if (endMs <= startMs) {
+        return res.status(400).json({
+          success: false,
+          message: 'Test Window End must be after Test Window Start.',
+        });
+      }
     }
 
     if (targetDeliveryMode === 'online_external') {

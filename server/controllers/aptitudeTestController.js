@@ -75,6 +75,9 @@ const isTestLocked = (round) => {
   return new Date() >= new Date(round.testWindowStart);
 };
 
+const TEST_LOCKED_MESSAGE =
+  'Questions cannot be modified once the test window has opened. To add, edit, or import questions, move the test window start time to a later time in Round Settings.';
+
 /**
  * Recalculate and update round totalMarks and questionCount
  */
@@ -204,12 +207,12 @@ const getRoundTestReadiness = async (req, res, next) => {
       durationMinutes: round.durationMinutes || 60,
       message: isWindowValid
         ? `Window scheduled from ${windowStart.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} to ${windowEnd.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST (${round.durationMinutes || 60}m duration)`
-        : 'Test window start and end dates have not been scheduled yet in Round Settings.',
+        : 'Needs a test window: start and end times must be scheduled in Round Settings before candidates can view the test.',
     };
 
     // 3. Window Active Check (Not Already Ended)
     let isWindowActive = false;
-    let windowActiveMessage = 'Test window has not been scheduled yet.';
+    let windowActiveMessage = 'Needs a test window: start and end times must be scheduled in Round Settings.';
     if (isWindowValid) {
       if (now > windowEnd) {
         isWindowActive = false;
@@ -390,7 +393,7 @@ const createQuestion = async (req, res, next) => {
     if (isTestLocked(round)) {
       return res.status(400).json({
         success: false,
-        message: 'Questions cannot be modified once the test window has opened.',
+        message: TEST_LOCKED_MESSAGE,
       });
     }
 
@@ -463,7 +466,7 @@ const updateQuestion = async (req, res, next) => {
     if (isTestLocked(question.round)) {
       return res.status(400).json({
         success: false,
-        message: 'Questions cannot be modified once the test window has opened.',
+        message: TEST_LOCKED_MESSAGE,
       });
     }
 
@@ -544,7 +547,7 @@ const deleteQuestion = async (req, res, next) => {
     if (isTestLocked(question.round)) {
       return res.status(400).json({
         success: false,
-        message: 'Questions cannot be modified once the test window has opened.',
+        message: TEST_LOCKED_MESSAGE,
       });
     }
 
@@ -583,7 +586,7 @@ const importQuestionsCSV = async (req, res, next) => {
     if (isTestLocked(round)) {
       return res.status(400).json({
         success: false,
-        message: 'Questions cannot be modified once the test window has opened.',
+        message: TEST_LOCKED_MESSAGE,
       });
     }
 

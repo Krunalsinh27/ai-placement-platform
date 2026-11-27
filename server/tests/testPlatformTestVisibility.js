@@ -67,8 +67,8 @@ async function runTest() {
     // Clean test data
     await User.deleteMany({ email: /@test-vis\.edu/ });
     await Student.deleteMany({ enrollmentNo: /VIS/ });
-    await College.deleteMany({ code: 'VIS_COL' });
-    await Company.deleteMany({ name: 'Vis Corp' });
+    await College.deleteMany({ code: { $in: ['VIS_COL', 'FOR_COL'] } });
+    await Company.deleteMany({ name: { $in: ['Vis Corp', 'Foreign Corp'] } });
     await Drive.deleteMany({ role: 'Vis Test Engineer' });
     await Round.deleteMany({});
     await RoundParticipant.deleteMany({});
@@ -177,9 +177,85 @@ async function runTest() {
       throw new Error('FAIL: Round 1 has no participants after pipeline initialization');
     }
 
-    // 3. Recruiter sets Round 1 to platform_test with valid test window starting in 2 seconds
+    // 3. Recruiter validation checks: platform_test requires testWindowStart, testWindowEnd, and duration
+    console.log('\n--- Step A0: Validation rules for platform_test settings ---');
+    const missingStartRes = await fetch(`${BASE_URL}/rounds/${round1._id}/settings`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${recruiterToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deliveryMode: 'platform_test',
+        testWindowEnd: new Date(Date.now() + 3600000).toISOString(),
+        durationMinutes: 45,
+      }),
+    });
+    const missingStartData = await missingStartRes.json();
+    console.log('✓ Missing testWindowStart rejected:', missingStartRes.status, missingStartData.message);
+    if (missingStartRes.status !== 400 || !missingStartData.message.includes('Test Window Start is required')) {
+      throw new Error(`FAIL: Expected 400 for missing testWindowStart, got ${missingStartRes.status}`);
+    }
+
+    const missingEndRes = await fetch(`${BASE_URL}/rounds/${round1._id}/settings`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${recruiterToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deliveryMode: 'platform_test',
+        testWindowStart: new Date(Date.now() + 1000).toISOString(),
+        durationMinutes: 45,
+      }),
+    });
+    const missingEndData = await missingEndRes.json();
+    console.log('✓ Missing testWindowEnd rejected:', missingEndRes.status, missingEndData.message);
+    if (missingEndRes.status !== 400 || !missingEndData.message.includes('Test Window End is required')) {
+      throw new Error(`FAIL: Expected 400 for missing testWindowEnd, got ${missingEndRes.status}`);
+    }
+
+    const invalidDurationRes = await fetch(`${BASE_URL}/rounds/${round1._id}/settings`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${recruiterToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deliveryMode: 'platform_test',
+        testWindowStart: new Date(Date.now() + 1000).toISOString(),
+        testWindowEnd: new Date(Date.now() + 3600000).toISOString(),
+        durationMinutes: 0,
+      }),
+    });
+    const invalidDurationData = await invalidDurationRes.json();
+    console.log('✓ Invalid duration rejected:', invalidDurationRes.status, invalidDurationData.message);
+    if (invalidDurationRes.status !== 400 || !invalidDurationData.message.includes('Test duration is required')) {
+      throw new Error(`FAIL: Expected 400 for invalid duration, got ${invalidDurationRes.status}`);
+    }
+
+    // Check other delivery modes (online_external) can be saved without testWindow
+    const externalRes = await fetch(`${BASE_URL}/rounds/${round1._id}/settings`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${recruiterToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deliveryMode: 'online_external',
+        venueOrLink: 'https://meet.google.com/abc-defg-hij',
+      }),
+    });
+    console.log('✓ online_external without testWindow allowed:', externalRes.status);
+    if (externalRes.status !== 200) {
+      throw new Error(`FAIL: Expected 200 for online_external without window, got ${externalRes.status}`);
+    }
+
+    // Check existing round without a window loads and readiness reports "Needs a test window"
+    await Round.findByIdAndUpdate(round1._id, { deliveryMode: 'platform_test', testWindowStart: null, testWindowEnd: null });
+    const noWindowReadinessRes = await fetch(`${BASE_URL}/rounds/${round1._id}/test-readiness`, {
+      headers: { Authorization: `Bearer ${recruiterToken}` },
+    });
+    const noWindowReadiness = await noWindowReadinessRes.json();
+    console.log('✓ Existing round without window loads in readiness:', noWindowReadinessRes.status, {
+      isReady: noWindowReadiness.isReady,
+      windowConfig: noWindowReadiness.checks?.find((c) => c.key === 'windowConfig')?.message,
+    });
+    if (noWindowReadinessRes.status !== 200 || !noWindowReadiness.checks?.find((c) => c.key === 'windowConfig')?.message.includes('Needs a test window')) {
+      throw new Error('FAIL: Expected readiness check to report "Needs a test window" for round without window');
+    }
+
+    // 3. Recruiter sets Round 1 to platform_test with valid test window starting in 2.5 seconds
     const now = new Date();
-    const windowStart = new Date(now.getTime() + 2000).toISOString(); // starts in 2 seconds
+    const windowStart = new Date(now.getTime() + 2500).toISOString(); // starts in 2.5 seconds
     const windowEnd = new Date(now.getTime() + 120 * 60 * 1000).toISOString(); // ends in 2h
 
     console.log('\n--- Step A: Recruiter updates Round 1 settings to platform_test ---');
@@ -241,8 +317,25 @@ async function runTest() {
     console.log(`✓ Questions in DB for Round 1: ${questionsInDb.length}`);
 
     // Wait for window to open
-    console.log('Waiting 2.5s for test window to open...');
-    await new Promise((r) => setTimeout(r, 2500));
+    console.log('Waiting 3s for test window to open...');
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Verify questions are locked once the window opens and error message explains how to fix it
+    console.log('\n--- Step C1: Attempting to add question after window opens ---');
+    const lockedRes = await fetch(`${BASE_URL}/rounds/${round1._id}/questions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${recruiterToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Locked question check?',
+        options: ['A', 'B', 'C', 'D'],
+        correctIndex: 0,
+      }),
+    });
+    const lockedData = await lockedRes.json();
+    console.log('✓ Modification while window open rejected with 400:', lockedRes.status, lockedData.message);
+    if (lockedRes.status !== 400 || !lockedData.message.includes('move the test window start time to a later time in Round Settings')) {
+      throw new Error(`FAIL: Expected locked error explaining how to fix it, got: ${lockedData.message}`);
+    }
 
     // 5B. Test Readiness Endpoint for Round 1
     console.log('\n--- Step C2: Recruiter & TPO call GET /api/rounds/:id/test-readiness ---');

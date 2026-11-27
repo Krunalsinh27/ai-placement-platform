@@ -1018,7 +1018,7 @@ const DriveProgress = () => {
                             key: 'windowConfig',
                             label: 'Test Window Schedule',
                             ok: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd),
-                            message: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd) ? 'Window scheduled' : 'Test window dates not scheduled yet',
+                            message: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd) ? 'Window scheduled' : 'Needs a test window: start and end times must be scheduled in Round Settings',
                           },
                           {
                             key: 'windowActive',
@@ -1126,7 +1126,7 @@ const DriveProgress = () => {
                                       <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
                                         check.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
                                       }`}>
-                                        {check.ok ? 'Pass' : 'Action Needed'}
+                                        {check.ok ? 'Pass' : (check.key === 'windowConfig' ? 'Needs a test window' : 'Action Needed')}
                                       </span>
                                     </div>
                                     <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">

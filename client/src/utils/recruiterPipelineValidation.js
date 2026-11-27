@@ -2,17 +2,29 @@
  * Validates test window timing and duration for platform test rounds.
  *
  * @param {Object} params
- * @param {string|Date} params.testWindowStart
- * @param {string|Date} params.testWindowEnd
+ * @param {string|Date} [params.testWindowStart]
+ * @param {string|Date} [params.testWindowEnd]
  * @param {number|string} [params.durationMinutes]
+ * @param {string} [params.deliveryMode]
  * @returns {{
  *   isValid: boolean,
  *   error?: string,
  *   warning?: string
  * }}
  */
-export function validateTestWindow({ testWindowStart, testWindowEnd, durationMinutes = 60 }) {
-  if (!testWindowStart || !testWindowEnd) {
+export function validateTestWindow({ testWindowStart, testWindowEnd, durationMinutes = 60, deliveryMode }) {
+  if (deliveryMode === 'platform_test') {
+    if (!testWindowStart || (typeof testWindowStart === 'string' && !testWindowStart.trim())) {
+      return { isValid: false, error: 'Test Window Start is required for on-platform tests.' };
+    }
+    if (!testWindowEnd || (typeof testWindowEnd === 'string' && !testWindowEnd.trim())) {
+      return { isValid: false, error: 'Test Window End is required for on-platform tests.' };
+    }
+    const durNum = Number(durationMinutes);
+    if (durationMinutes === undefined || durationMinutes === null || durationMinutes === '' || isNaN(durNum) || durNum <= 0) {
+      return { isValid: false, error: 'Test duration is required for on-platform tests and must be at least 1 minute.' };
+    }
+  } else if (!testWindowStart || !testWindowEnd) {
     return { isValid: true };
   }
 

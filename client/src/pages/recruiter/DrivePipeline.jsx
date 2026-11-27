@@ -1012,6 +1012,7 @@ const DrivePipeline = () => {
         testWindowStart: settingsForm.testWindowStart,
         testWindowEnd: settingsForm.testWindowEnd,
         durationMinutes: settingsForm.durationMinutes,
+        deliveryMode: settingsForm.deliveryMode,
       });
       if (!windowVal.isValid) {
         toast.error(windowVal.error);
@@ -2546,7 +2547,7 @@ const DrivePipeline = () => {
                         key: 'windowConfig',
                         label: 'Test Window Schedule',
                         ok: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd),
-                        message: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd) ? 'Window scheduled' : 'Test window dates not scheduled yet',
+                        message: Boolean(currentRound.testWindowStart && currentRound.testWindowEnd) ? 'Window scheduled' : 'Needs a test window: start and end times must be scheduled in Round Settings',
                       },
                       {
                         key: 'windowActive',
@@ -2654,7 +2655,7 @@ const DrivePipeline = () => {
                                   <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
                                     check.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
                                   }`}>
-                                    {check.ok ? 'Pass' : 'Action Needed'}
+                                    {check.ok ? 'Pass' : (check.key === 'windowConfig' ? 'Needs a test window' : 'Action Needed')}
                                   </span>
                                 </div>
                                 <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
@@ -4292,38 +4293,81 @@ const DrivePipeline = () => {
               {/* MODE SPECIFIC FIELDS: PLATFORM TEST */}
               {settingsForm.deliveryMode === 'platform_test' && (
                 <div className="space-y-3.5 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Setup Timing Rule Hint */}
+                  <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                     <div>
-                      <label className="font-bold text-slate-700 block mb-1">Test Window Start</label>
-                      <input
-                        type="datetime-local"
-                        value={settingsForm.testWindowStart}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowStart: e.target.value })}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Test Window End</label>
-                      <input
-                        type="datetime-local"
-                        value={settingsForm.testWindowEnd}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowEnd: e.target.value })}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                      />
+                      <span className="font-bold block">Important Timing Rule:</span>
+                      <p className="text-[11px] text-amber-800 mt-0.5 leading-snug">
+                        Add your questions before the window start time. Questions are locked once the window opens.
+                      </p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="font-bold text-slate-700 block mb-1">Duration (minutes)</label>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Test Window Start <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="datetime-local"
+                        required
+                        value={settingsForm.testWindowStart}
+                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowStart: e.target.value })}
+                        className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                          !settingsForm.testWindowStart ? 'border-amber-300' : 'border-slate-200'
+                        }`}
+                      />
+                      {!settingsForm.testWindowStart && (
+                        <span className="text-[10px] text-rose-500 font-medium mt-1 block">
+                          Test Window Start is required
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Test Window End <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="datetime-local"
+                        required
+                        value={settingsForm.testWindowEnd}
+                        onChange={(e) => setSettingsForm({ ...settingsForm, testWindowEnd: e.target.value })}
+                        className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                          !settingsForm.testWindowEnd ? 'border-amber-300' : 'border-slate-200'
+                        }`}
+                      />
+                      {!settingsForm.testWindowEnd && (
+                        <span className="text-[10px] text-rose-500 font-medium mt-1 block">
+                          Test Window End is required
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Duration (minutes) <span className="text-rose-500">*</span>
+                      </label>
                       <input
                         type="number"
                         min="1"
+                        required
                         placeholder="e.g. 60"
                         value={settingsForm.durationMinutes}
                         onChange={(e) => setSettingsForm({ ...settingsForm, durationMinutes: e.target.value })}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className={`w-full p-2.5 rounded-xl border bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                          !settingsForm.durationMinutes || Number(settingsForm.durationMinutes) <= 0
+                            ? 'border-amber-300'
+                            : 'border-slate-200'
+                        }`}
                       />
+                      {(!settingsForm.durationMinutes || Number(settingsForm.durationMinutes) <= 0) && (
+                        <span className="text-[10px] text-rose-500 font-medium mt-1 block">
+                          Duration is required (minimum 1 minute)
+                        </span>
+                      )}
                     </div>
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">Cutoff Score (%)</label>
@@ -4345,6 +4389,7 @@ const DrivePipeline = () => {
                       testWindowStart: settingsForm.testWindowStart,
                       testWindowEnd: settingsForm.testWindowEnd,
                       durationMinutes: settingsForm.durationMinutes,
+                      deliveryMode: settingsForm.deliveryMode,
                     });
                     if (!validation.isValid) {
                       return (
