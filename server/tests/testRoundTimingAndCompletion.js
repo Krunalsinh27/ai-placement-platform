@@ -403,7 +403,7 @@ const runTests = async () => {
     const updatedP1 = await RoundParticipant.findById(p1._id);
     assert(updatedP1.attendance === 'present', 'Candidate 1 attendance is "present"');
     assert(updatedP1.score === 10, 'Candidate 1 score updated to 10');
-    assert(updatedP1.result === 'shortlisted', 'Candidate 1 shortlisted against cutoff (10 >= 10)');
+    assert(updatedP1.result === 'cleared', 'Candidate 1 cleared against cutoff (10 >= 10)');
 
     // Verify Student 2 (non-starter)
     const updatedP2 = await RoundParticipant.findById(p2._id);
@@ -835,7 +835,7 @@ const runTests = async () => {
 
       const finalPart1 = await RoundParticipant.findById(part1._id);
       assert(finalPart1.attendance === 'present', 'Participant 1 attendance is present');
-      assert(finalPart1.result === 'shortlisted', 'Participant 1 result is shortlisted (score 5 >= cutoff 1)');
+      assert(finalPart1.result === 'cleared', 'Participant 1 result is cleared (score 5 >= cutoff 1)');
 
       const finalPart2 = await RoundParticipant.findById(part2._id);
       assert(finalPart2.attendance === 'absent', 'Participant 2 attendance is absent');
@@ -844,6 +844,171 @@ const runTests = async () => {
       // Verify no duplicate participants were created
       const allParticipants = await RoundParticipant.find({ round: expiredRound._id });
       assert(allParticipants.length === 2, `Participant count remained exactly 2 (zero duplicates, got: ${allParticipants.length})`);
+    }
+
+    console.log('\n--- TEST SUITE 7: Finalizer Robustness, Schema Validation & Multi-Round Resilience ---');
+
+    // 7A: Direct schema validation: setting result = 'shortlisted' fails validation on .save()
+    {
+      const invalidPart = new RoundParticipant({
+        round: round1._id,
+        drive: drive._id,
+        student: studentProfile1._id,
+        application: app1._id,
+        status: 'enrolled',
+        attendance: 'present',
+        result: 'shortlisted', // invalid enum!
+      });
+
+      let caughtError = null;
+      try {
+        await invalidPart.save();
+      } catch (err) {
+        caughtError = err;
+      }
+
+      assert(caughtError !== null, 'Saving RoundParticipant with result: "shortlisted" is rejected');
+      assert(caughtError?.name === 'ValidationError', `Throws ValidationError (got: ${caughtError?.name})`);
+      assert(
+        caughtError?.message?.includes('is not a valid enum value') ||
+        caughtError?.message?.includes('is not a valid result status') ||
+        caughtError?.message?.includes('validation failed'),
+        `Error contains clear validation failure message: "${caughtError?.message}"`
+      );
+    }
+
+    // 7B: Valid enum assignment: completed round sets result to 'cleared' for >= cutoff
+    {
+      const testRound7B = await Round.create({
+        drive: drive._id,
+        name: 'Enum Assignment Test Round',
+        type: 'aptitude',
+        deliveryMode: 'platform_test',
+        mode: 'online',
+        order: 20,
+        status: 'scheduled',
+        testWindowStart: new Date(Date.now() - 2 * 3600 * 1000),
+        testWindowEnd: new Date(Date.now() - 1 * 3600 * 1000),
+        durationMinutes: 45,
+        cutoffScore: 10,
+      });
+
+      const q7B = await Question.create({
+        round: testRound7B._id,
+        text: 'Question 7B',
+        options: ['Opt A', 'Opt B', 'Opt C', 'Opt D'],
+        correctIndex: 0,
+        marks: 10,
+      });
+
+      const partPass = await RoundParticipant.create({
+        round: testRound7B._id,
+        drive: drive._id,
+        student: studentProfile1._id,
+        application: app1._id,
+        status: 'enrolled',
+        attendance: 'pending',
+        result: 'pending',
+      });
+
+      await TestAttempt.create({
+        round: testRound7B._id,
+        student: studentProfile1._id,
+        application: app1._id,
+        status: 'in_progress',
+        startedAt: new Date(Date.now() - 90 * 60 * 1000),
+        deadlineAt: new Date(Date.now() - 70 * 60 * 1000),
+        answers: [{ question: q7B._id, selectedIndex: 0 }],
+      });
+
+      const res7B = await autoCompletePlatformTestRounds({ roundId: testRound7B._id });
+      assert(res7B.completedRoundIds.includes(testRound7B._id.toString()), 'testRound7B completed successfully');
+
+      const updatedPartPass = await RoundParticipant.findById(partPass._id);
+      assert(updatedPartPass.result === 'cleared', `Passing participant received valid enum 'cleared' (got: ${updatedPartPass.result})`);
+      assert(updatedPartPass.attendance === 'present', 'Passing participant attendance is present');
+      assert(updatedPartPass.score === 10, 'Passing participant score is 10');
+    }
+
+    // 7C: Multi-round batch resilience: failing round does not block other rounds in batch
+    {
+      const roundA = await Round.create({
+        drive: drive._id,
+        name: 'Sabotaged Round A',
+        type: 'aptitude',
+        deliveryMode: 'platform_test',
+        mode: 'online',
+        order: 21,
+        status: 'scheduled',
+        testWindowStart: new Date(Date.now() - 3 * 3600 * 1000),
+        testWindowEnd: new Date(Date.now() - 2 * 3600 * 1000),
+        durationMinutes: 30,
+        cutoffScore: 10,
+      });
+
+      const roundB = await Round.create({
+        drive: drive._id,
+        name: 'Valid Round B',
+        type: 'aptitude',
+        deliveryMode: 'platform_test',
+        mode: 'online',
+        order: 22,
+        status: 'scheduled',
+        testWindowStart: new Date(Date.now() - 3 * 3600 * 1000),
+        testWindowEnd: new Date(Date.now() - 2 * 3600 * 1000),
+        durationMinutes: 30,
+        cutoffScore: 5,
+      });
+
+      // Insert raw participant missing required 'drive' reference so p.save() fails schema validation
+      await RoundParticipant.collection.insertOne({
+        round: roundA._id,
+        student: studentProfile1._id,
+        application: app1._id,
+        attendance: 'pending',
+        result: 'pending',
+        drive: null,
+      });
+
+      // Valid participant for round B
+      await RoundParticipant.create({
+        round: roundB._id,
+        drive: drive._id,
+        student: studentProfile2._id,
+        application: app2._id,
+        status: 'enrolled',
+        attendance: 'pending',
+        result: 'pending',
+      });
+
+      // Run finalizer across the entire batch (no roundId filter)
+      const batchResult = await autoCompletePlatformTestRounds();
+
+      // Round B MUST complete successfully
+      assert(batchResult.completedRoundIds.includes(roundB._id.toString()), 'Valid Round B completed despite Round A failure');
+
+      const checkRoundB = await Round.findById(roundB._id);
+      assert(checkRoundB.status === 'completed', 'Round B status is "completed"');
+      assert(checkRoundB.isFinalizing === false, 'Round B lock released');
+
+      // Round A should NOT be marked completed, and its isFinalizing lock must be released
+      const checkRoundA = await Round.findById(roundA._id);
+      assert(checkRoundA.status !== 'completed', 'Round A did not falsely complete');
+      assert(checkRoundA.isFinalizing === false, 'Round A isFinalizing lock was released after failure');
+
+      // Cleanup test records
+      await RoundParticipant.deleteOne({ round: roundA._id });
+      await Round.deleteOne({ _id: roundA._id });
+    }
+
+    // 7D: Idempotency: Repeated execution is a safe no-op
+    {
+      const idemRun1 = await autoCompletePlatformTestRounds();
+      const idemRun2 = await autoCompletePlatformTestRounds();
+
+      assert(idemRun1.autoSubmittedCount === 0, 'No extra auto-submissions on already-completed rounds');
+      assert(idemRun2.autoSubmittedCount === 0, 'Repeated call remains completely idempotent');
+      assert(idemRun2.completedRoundIds.length === 0, 'No repeated round completions');
     }
 
     console.log('\n======================================================');
